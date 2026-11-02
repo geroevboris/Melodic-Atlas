@@ -8,9 +8,9 @@ namespace Atlas
 {
     enum class PitchMode : int
     {
-        ScaleSnap = 0,
-        RootForce = 1,
-        Bypass    = 2
+        ScaleSnap = 0, // Транспонирует в тональность проекта с привязкой к интервалам выбранного лада
+        RootForce = 1, // Строгий сдвиг тоники сэмпла в ноту KEY проекта
+        Bypass    = 2  // Оригинальная высота без изменений
     };
 
     enum class ScaleType : int
@@ -33,14 +33,22 @@ namespace Atlas
         Chromatic  = 1
     };
 
+    // Режим проекции 2D-карты (переключает раскладку кластеров с морфингом)
     enum class FilterCategory : int
     {
-        Timbre    = 0,
-        Character = 1
+        Timbre    = 0, // Острова по типу инструмента
+        Character = 1  // Острова по характеру звучания
     };
 
-    // 6 смысловых кластеров (как в XLN XO) с собственной цветовой гаммой
-    enum class ClusterGroup : int
+    // Режим окраски точек на карте
+    enum class ColorMode : int
+    {
+        ByCluster = 0, // Цвет соответствует кластеру (Timbre или Character)
+        ByKey     = 1  // Цвет соответствует ноте по квинтовому кругу
+    };
+
+    // 6 инструментальных кластеров для проекции [TIMBRE]
+    enum class TimbreCluster : int
     {
         DeepBass    = 0,
         Keys        = 1,
@@ -48,6 +56,16 @@ namespace Atlas
         SynthLead   = 3,
         Vocal       = 4,
         StringsPad  = 5
+    };
+
+    // 5 тембральных кластеров для проекции [CHARACTER]
+    enum class CharacterCluster : int
+    {
+        WarmDeep    = 0,
+        AirEthereal = 1,
+        PluckCrisp  = 2,
+        DirtyRaw    = 3,
+        LushMoving  = 4
     };
 
     enum TimbreFlags : uint32_t
@@ -94,29 +112,32 @@ namespace Atlas
         float attackRatio          = 0.5f;
         float tailDecayRatio       = 0.2f;
         float harmonicRoughness    = 0.1f;
+        float spectralFlux         = 0.2f;
         float lowBandRatio         = 0.3f;
         float highBandRatio        = 0.2f;
 
-        // Координаты на 2D-карте (0.0 .. 1.0)
-        float mapX = 0.5f;
-        float mapY = 0.5f;
+        // Две пары координат для мгновенного морфинга между картами TIMBRE и CHARACTER
+        float timbreX = 0.5f;
+        float timbreY = 0.5f;
+        float charX   = 0.5f;
+        float charY   = 0.5f;
 
-        ClusterGroup cluster   = ClusterGroup::SynthLead;
+        TimbreCluster    timbreCluster = TimbreCluster::SynthLead;
+        CharacterCluster charCluster   = CharacterCluster::WarmDeep;
+
         uint32_t timbreMask    = Timbre_None;
         uint32_t characterMask = Char_None;
     };
 
-    // Индивидуальные настройки каждого из 12 пэдов
     struct PadSlotState
     {
         int sampleIndex = -1;
         bool chromaticActive = true;
-        float volumeDb = -3.0f;       // -24 .. +6 dB
-        float pan = 0.0f;             // -1.0 (L) .. +1.0 (R)
-        int semitoneOffset = 0;       // -24 .. +24 st
+        float volumeDb = -3.0f;
+        float pan = 0.0f;
+        int semitoneOffset = 0;
         bool reverse = false;
 
-        // Индивидуальная огибающая ADSR для пэда
         float attackSec  = 0.015f;
         float decaySec   = 1.20f;
         float sustainLvl = 0.80f;
@@ -167,24 +188,64 @@ namespace Atlas
             }
         }
 
-        // Взрослая студийная палитра по кластерам (в духе XLN XO / Nord)
-        static juce::Colour getClusterColour(ClusterGroup cluster, float brightnessNorm)
+        // Спокойная студийная палитра для кластеров инструментов (Timbre View)
+        static juce::Colour getTimbreClusterColour(TimbreCluster cluster, float brightnessNorm)
         {
             juce::Colour base;
             switch (cluster)
             {
-                case ClusterGroup::DeepBass:    base = juce::Colour(0xff4f7cac); break; // Глубокий индиго/сланец
-                case ClusterGroup::Keys:        base = juce::Colour(0xffd99b52); break; // Тёплый янтарь/охра
-                case ClusterGroup::GuitarPluck: base = juce::Colour(0xff5da886); break; // Мягкий шалфей/изумруд
-                case ClusterGroup::SynthLead:   base = juce::Colour(0xff52a8bd); break; // Стальной циан
-                case ClusterGroup::Vocal:       base = juce::Colour(0xffc96d7e); break; // Пыльный коралл/роза
-                case ClusterGroup::StringsPad:  base = juce::Colour(0xff967bb6); break; // Приглушённая лаванда
-                default:                        base = juce::Colour(0xff6b90b2); break;
+                case TimbreCluster::DeepBass:    base = juce::Colour(0xff4f7cac); break; // Глубокий индиго
+                case TimbreCluster::Keys:        base = juce::Colour(0xffd99b52); break; // Тёплый янтарь
+                case TimbreCluster::GuitarPluck: base = juce::Colour(0xff5da886); break; // Шалфей / изумруд
+                case TimbreCluster::SynthLead:   base = juce::Colour(0xff52a8bd); break; // Стальной циан
+                case TimbreCluster::Vocal:       base = juce::Colour(0xffc96d7e); break; // Пыльный коралл
+                case TimbreCluster::StringsPad:  base = juce::Colour(0xff967bb6); break; // Приглушённая лаванда
+                default:                         base = juce::Colour(0xff6b90b2); break;
             }
-            float bShift = (brightnessNorm - 0.5f) * 0.22f;
+            float bShift = (brightnessNorm - 0.5f) * 0.20f;
             return (bShift >= 0.0f) ? base.brighter(bShift) : base.darker(-bShift);
         }
 
+        // Студийная палитра для 5 кластеров характеров (Character View)
+        static juce::Colour getCharacterClusterColour(CharacterCluster cluster, float brightnessNorm)
+        {
+            juce::Colour base;
+            switch (cluster)
+            {
+                case CharacterCluster::WarmDeep:    base = juce::Colour(0xff547aa5); break; // Глубокий кобальт
+                case CharacterCluster::AirEthereal: base = juce::Colour(0xff62b6cb); break; // Воздушный льдистый циан
+                case CharacterCluster::PluckCrisp:  base = juce::Colour(0xff6ab089); break; // Упругий мятно-шалфейный
+                case CharacterCluster::DirtyRaw:    base = juce::Colour(0xffd47a55); break; // Ржавая охра / терракота
+                case CharacterCluster::LushMoving:  base = juce::Colour(0xffa876b5); break; // Насыщенный аметист
+                default:                            base = juce::Colour(0xff7a93ac); break;
+            }
+            float bShift = (brightnessNorm - 0.5f) * 0.20f;
+            return (bShift >= 0.0f) ? base.brighter(bShift) : base.darker(-bShift);
+        }
+
+        // Сдержанная палитра по квинтовому кругу для режима окраски [BY KEY]
+        static juce::Colour getStudioKeyColour(int pitchClass, float brightnessNorm)
+        {
+            int circleIndex = (((pitchClass % 12) + 12) % 12 * 7) % 12;
+            float hue = (float)circleIndex / 12.0f;
+            float saturation = 0.46f; // Сдержанная насыщенность без «детских фломастеров»
+            float value = juce::jlimit(0.62f, 0.88f, 0.64f + brightnessNorm * 0.22f);
+            return juce::Colour::fromHSV(hue, saturation, value, 1.0f);
+        }
+
+        static juce::Colour getSampleColour(const SampleRecord& rec, FilterCategory viewMode, ColorMode colMode)
+        {
+            if (colMode == ColorMode::ByKey)
+                return getStudioKeyColour(rec.pitchClass, rec.spectralCentroidNorm);
+
+            if (viewMode == FilterCategory::Timbre)
+                return getTimbreClusterColour(rec.timbreCluster, rec.spectralCentroidNorm);
+            else
+                return getCharacterClusterColour(rec.charCluster, rec.spectralCentroidNorm);
+        }
+
+        // Расчёт транспонирования: смена KEY всегда транспонирует сэмпл в выбранную тональность,
+        // а ScaleSnap дополнительно корректирует ладовое наклонение (минор/мажор/гармонический и т.д.)
         static int calculatePitchShift(int samplePitchClass,
                                        int projectKeyRoot,
                                        ScaleType scaleType,
@@ -198,15 +259,16 @@ namespace Atlas
             int src  = ((samplePitchClass % 12) + 12) % 12;
             int root = ((projectKeyRoot % 12) + 12) % 12;
 
-            if (mode == PitchMode::RootForce)
-            {
-                int diff = root - src;
-                while (diff > 6)  diff -= 12;
-                while (diff < -6) diff += 12;
-                return diff + octShiftSemitones;
-            }
+            // Базовый сдвиг тоники сэмпла к выбранной ноте KEY проекта (-6 .. +6 полутонов)
+            int rootDiff = root - src;
+            while (rootDiff > 6)  rootDiff -= 12;
+            while (rootDiff < -6) rootDiff += 12;
 
-            // Интервалы для 10 ладов
+            if (mode == PitchMode::RootForce)
+                return rootDiff + octShiftSemitones;
+
+            // В режиме ScaleSnap:
+            // Тоника сэмпла привязывается к выбранной тональности KEY, а ступень квантуется по выбранному ладу
             static const std::vector<int> scales[10] = {
                 { 0, 2, 3, 5, 7, 8, 10 }, // Natural Minor
                 { 0, 2, 4, 5, 7, 9, 11 }, // Major
@@ -223,18 +285,27 @@ namespace Atlas
             int sIdx = juce::jlimit(0, 9, (int)scaleType);
             const auto& scale = scales[sIdx];
 
-            int bestDiff = 99;
+            // Определяем ближайшую ступень выбранного лада для гармонического выравнивания
+            int bestDegreeOffset = 0;
+            int minDist = 99;
             for (int deg : scale)
             {
-                int scaleDegreePitch = (root + deg) % 12;
-                int diff = scaleDegreePitch - src;
-                while (diff > 6)  diff -= 12;
-                while (diff < -6) diff += 12;
-
-                if (std::abs(diff) < std::abs(bestDiff))
-                    bestDiff = diff;
+                int dist = deg - (src % 12);
+                while (dist > 6)  dist -= 12;
+                while (dist < -6) dist += 12;
+                if (std::abs(dist) < std::abs(minDist))
+                {
+                    minDist = dist;
+                    bestDegreeOffset = dist;
+                }
             }
-            return bestDiff + octShiftSemitones;
+
+            // Смеalщаем на сдвиг тональности + ладовую коррекцию
+            int totalShift = rootDiff + (bestDegreeOffset % 2);
+            while (totalShift > 6)  totalShift -= 12;
+            while (totalShift < -6) totalShift += 12;
+
+            return totalShift + octShiftSemitones;
         }
     };
 }
