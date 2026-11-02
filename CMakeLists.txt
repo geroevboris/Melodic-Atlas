@@ -1,19 +1,19 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Автоматическая сборка Universal Binary (Apple Silicon arm64 + Intel x86_64) для macOS
+# Собираем Universal Binary (Apple Silicon arm64 + Intel x86_64 для Rosetta)
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal architectures" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
 endif()
 
-project(MelodicAtlas VERSION 1.0.0)
+project(MelodicAtlas VERSION 1.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# 1. JUCE 8.0.4 с нативной поддержкой macOS 15 SDK
+# 1. Подключаем JUCE 8 (совместим с macOS 15 SDK и Xcode 16)
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -22,14 +22,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
-# 2. Signalsmith Stretch (тайм-стретч лупов без изменения тональности)
+# 2. Подключаем Signalsmith Stretch
 FetchContent_Declare(
     signalsmith_stretch
+    GIT_REPOSITORY https://github.com/juce-framework/signalsmith-stretch.git
+    GIT_TAG        main
+    GIT_SHALLOW    TRUE
+)
+# Fallback на официальный репозиторий Signalsmith
+FetchContent_Declare(
+    signalsmith_stretch_official
     GIT_REPOSITORY https://github.com/signalsmith-audio/signalsmith-stretch.git
     GIT_TAG        main
     GIT_SHALLOW    TRUE
 )
-FetchContent_MakeAvailable(signalsmith_stretch)
+FetchContent_MakeAvailable(signalsmith_stretch_official)
 
 juce_add_plugin(MelodicAtlas
     COMPANY_NAME "BorisAudio"
@@ -56,7 +63,7 @@ target_sources(MelodicAtlas
 target_include_directories(MelodicAtlas
     PRIVATE
         Source
-        ${signalsmith_stretch_SOURCE_DIR}
+        ${signalsmith_stretch_official_SOURCE_DIR}
 )
 
 target_compile_definitions(MelodicAtlas
