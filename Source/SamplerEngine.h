@@ -188,7 +188,6 @@ namespace Atlas
             updateReverbParams();
         }
 
-        // Предпрослушка точки на 2D-карте (лупы проигрываются 1 цикл и не зацикливаются бесконечно)
         void auditionSample(int sampleIdx, const SampleRecord& rec)
         {
             auto loaded = loadAudioFromFile(rec.file);
@@ -287,17 +286,17 @@ namespace Atlas
         int getLastAuditionedIndex() const { return lastAuditionedIndex.load(); }
         uint32_t getActivePlayingPadsMask() const { return activePlayingPadsMask.load(); }
 
-        // Клик по пэду в UI: в режиме CHROMATIC запускает сразу все активные (●) пэды вместе!
         void triggerPadFromUI(int padIdx, float velocity = 0.9f)
         {
             const juce::ScopedLock sl(engineLock);
             if (padIdx < 0 || padIdx >= 12 || padSlots[(size_t)padIdx].sampleIndex < 0) return;
 
-            int previewGateSamples = (int)(sampleRate * 1.15); // Авто-релиз через 1.15 сек при клике мышкой
+            int previewGateSamples = (int)(sampleRate * 1.15);
 
             if (bankMode == BankMode::Chromatic && padSlots[(size_t)padIdx].chromaticActive)
             {
-                int targetMidi = 60; // C3
+                // В режиме Chromatic нота при клике берется от выбранной тоники проекта
+                int targetMidi = 48 + ((projectKeyRoot % 12) + 12) % 12;
                 for (int s = 0; s < 12; ++s)
                 {
                     if (padSlots[(size_t)s].sampleIndex >= 0 && padSlots[(size_t)s].chromaticActive && padAudio[(size_t)s] != nullptr)
@@ -392,7 +391,7 @@ namespace Atlas
                 }
             }
 
-            // 2. Голоса 12 пэдов + сбор маски активных пэдов для UI-подсветки
+            // 2. Голоса 12 пэдов
             uint32_t currentPlayingMask = 0;
 
             for (auto& v : voices)
@@ -460,7 +459,7 @@ namespace Atlas
 
             activePlayingPadsMask.store(currentPlayingMask);
 
-            // 3. Constant-Power Reverb (размывает звук в пространство без увеличения пиковой громкости)
+            // 3. ЧИСТЫЙ CONSTANT-POWER DRY/WET КРОССФЕЙД РЕВЕРБЕРАЦИИ (БЕЗ ЛИМИТЕРА!)
             if (reverbWet > 0.005f)
             {
                 juce::AudioBuffer<float> wetBuf(2, numSamples);
@@ -470,9 +469,8 @@ namespace Atlas
                 juce::dsp::ProcessContextReplacing<float> ctx(block);
                 reverb.process(ctx);
 
-                // При добавлении реверба сухой сигнал плавно ослабляется, сохраняя единый выходной уровень
-                const float dryGain = 1.0f - 0.52f * reverbWet;
-                const float wetGain = reverbWet * 0.56f;
+                const float dryGain = std::cos(reverbWet * juce::MathConstants<float>::halfPi);
+                const float wetGain = std::sin(reverbWet * juce::MathConstants<float>::halfPi) * 0.62f;
 
                 const float* wL = wetBuf.getReadPointer(0);
                 const float* wR = wetBuf.getReadPointer(1);
@@ -484,15 +482,10 @@ namespace Atlas
                 }
             }
 
-            // 4. Master Volume + защитный Soft-Clipper против перегруза
-            for (int i = 0; i < numSamples; ++i)
+            // 4. Применяем только линейную ручку MASTER VOLUME (без нелинейных искажений и лимитеров)
+            if (std::abs(masterGainLinear - 1.0f) > 0.001f)
             {
-                float sL = outL[i] * masterGainLinear;
-                float sR = outR[i] * masterGainLinear;
-
-                // Мягкое насыщение выше -1.2 dB, исключающее цифровой клиппинг выше 0 dBFS
-                outL[i] = softLimit(sL);
-                outR[i] = softLimit(sR);
+                dryBuf.applyGain(masterGainLinear);
             }
 
             for (int ch = 0; ch < outputAudio.getNumChannels(); ++ch)
@@ -503,15 +496,6 @@ namespace Atlas
         }
 
     private:
-        static inline float softLimit(float x) noexcept
-        {
-            const float threshold = 0.85f;
-            float absX = std::abs(x);
-            if (absX <= threshold) return x;
-            float sign = (x >= 0.0f) ? 1.0f : -1.0f;
-            return sign * (threshold + (1.0f - threshold) * std::tanh((absX - threshold) / (1.0f - threshold)));
-        }
-
         struct AuditionStream
         {
             std::shared_ptr<LoadedSampleAudio> audio;
@@ -569,7 +553,6 @@ namespace Atlas
             {
                 double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, stream.record.detectedBpm)) : 1.0;
                 double srRatio = stream.audio->sampleRate / sampleRate;
-                // loopWrap = false: луп проигрывается 1 раз и останавливается, не гудя бесконечно
                 bool alive = stream.stretcher.renderSample(buf, bpmRatio * srRatio, pitchRatio, false, outL, outR);
                 outL *= stream.record.normGainLinear;
                 outR *= stream.record.normGainLinear;
@@ -599,11 +582,21 @@ namespace Atlas
             const int totalSamples = buf.getNumSamples();
             if (totalSamples < 4) return false;
 
+            // В режиме PadTrigger пересчитываем высоту на лету при смене KEY/SCALE/OCTAVE
+            if (bankMode == BankMode::PadTrigger)
+            {
+                const auto& slot = padSlots[(size_t)juce::jlimit(0, 11, v.slotIndex)];
+                int semiShift = MusicMath::calculatePitchShift(v.record.pitchClass, projectKeyRoot, scaleType,
+                                                               pitchMode, globalOctaveShift)
+                              + slot.semitoneOffset;
+                double srRatio = v.audio->sampleRate / sampleRate;
+                v.targetPitchRatio = std::pow(2.0, (double)semiShift / 12.0) * srRatio;
+            }
+
             if (v.record.isLoop)
             {
                 double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, v.record.detectedBpm)) : 1.0;
                 double srRatio = v.audio->sampleRate / sampleRate;
-                // Если это превью мышкой — играем 1 проход, если зажата клавиша MIDI — крутим пока зажата клавиша
                 bool wrapLoop = (v.autoGateSamplesRemaining < 0);
                 return v.stretcher.renderSample(buf, bpmRatio * srRatio, v.currentPitchRatio, wrapLoop, outL, outR);
             }
@@ -643,7 +636,6 @@ namespace Atlas
                 return;
             }
 
-            // Режим CHROMATIC: запускаем одновременно все активные (●) слоты
             int lowestNote = *heldNotes.begin();
 
             for (int slotIdx = 0; slotIdx < 12; ++slotIdx)
@@ -731,7 +723,6 @@ namespace Atlas
             auto audio       = padAudio[(size_t)slotIdx];
             if (audio == nullptr) return;
 
-            // В режиме PadTrigger перезапускаем голос того же слота, чтобы лупы не наслаивались сами на себя
             PolyVoice* targetVoice = nullptr;
             if (!chromaticPitch)
             {
@@ -821,7 +812,7 @@ namespace Atlas
             rp.roomSize   = 0.80f;
             rp.damping    = 0.45f;
             rp.width      = 1.0f;
-            rp.wetLevel   = 1.0f; // Чисто wet-шина, смешивание делается по закону сохранения энергии
+            rp.wetLevel   = 1.0f;
             rp.dryLevel   = 0.0f;
             rp.freezeMode = 0.0f;
             reverb.setParameters(rp);
