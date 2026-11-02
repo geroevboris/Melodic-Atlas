@@ -41,7 +41,7 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     {
         if (auto posInfo = playHead->getPosition())
         {
-            if (posInfo->getBpm().hasValue() && syncToHostBpm.load())
+            if (posInfo->getBpm().hasValue() && bpmLockedToHost.load())
             {
                 hostBpm = *posInfo->getBpm();
                 currentBpm.store(hostBpm);
@@ -54,23 +54,20 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
     samplerEngine.setMusicalContext(
         projectKeyRoot.load(),
-        projectIsMinor.load(),
+        static_cast<Atlas::ScaleType>(projectScaleType.load()),
         static_cast<Atlas::PitchMode>(pitchModeIndex.load()),
         octaveShift.load(),
         hostBpm,
-        syncToHostBpm.load(),
+        bpmLockedToHost.load(),
         hostPlaying,
         hostPpq
     );
 
     samplerEngine.setEngineControls(
         static_cast<Atlas::BankMode>(bankModeIndex.load()),
-        adsrAttack.load(),
-        adsrDecay.load(),
-        adsrSustain.load(),
-        adsrRelease.load(),
         glideTime.load(),
-        reverbAmount.load()
+        reverbAmount.load(),
+        masterVolumeDb.load()
     );
 
     samplerEngine.renderNextBlock(buffer, midiMessages);
@@ -99,7 +96,7 @@ void MelodicAtlasAudioProcessor::run()
 
     std::vector<Atlas::SampleRecord> newRecords;
     const int total = audioFiles.size();
-    newRecords.reserve((size_t)std::min(total, 2000));
+    newRecords.reserve((size_t)std::min(total, 4000));
 
     for (int i = 0; i < total; ++i)
     {
@@ -128,12 +125,10 @@ void MelodicAtlasAudioProcessor::run()
     scanning.store(false);
 }
 
-// Генерирует стартовую палитру реальных мелодических WAV-файлов во временной папке,
-// чтобы созвездия, предпрослушка и 12 пэдов работали сразу при первом запуске
 void MelodicAtlasAudioProcessor::generateDemoAtlas()
 {
     juce::File tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                             .getChildFile("MelodicAtlas_DemoSamples");
+                             .getChildFile("MelodicAtlas_DemoSamplesV2");
     tempDir.createDirectory();
 
     struct PresetDef
@@ -143,33 +138,34 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
         bool isLoop;
         float brightness;
         float mobility;
+        float roughness;
+        Atlas::ClusterGroup cluster;
         uint32_t timbre;
         uint32_t character;
     };
 
     static const PresetDef defs[] = {
-        { "Rhodes_Warm_Am",     57, false, 0.32f, 0.18f, Atlas::Timbre_Keys,    Atlas::Char_Warm | Atlas::Char_Clean | Atlas::Char_Sustain },
-        { "Tape_Pad_C",         60, false, 0.40f, 0.25f, Atlas::Timbre_Synth,   Atlas::Char_Warm | Atlas::Char_Ethy  | Atlas::Char_Sustain },
-        { "Sub_Bass_G",         43, false, 0.16f, 0.12f, Atlas::Timbre_Synth,   Atlas::Char_Deep | Atlas::Char_Warm  | Atlas::Char_Clean   },
-        { "Vocal_Air_A",        69, false, 0.72f, 0.48f, Atlas::Timbre_Vox,     Atlas::Char_Ethy | Atlas::Char_Sustain },
-        { "Dust_Pluck_Em",      64, false, 0.58f, 0.65f, Atlas::Timbre_Guitar,  Atlas::Char_Pluck| Atlas::Char_Warm },
-        { "Cello_Swell_D",      50, false, 0.28f, 0.30f, Atlas::Timbre_Strings, Atlas::Char_Deep | Atlas::Char_Warm  | Atlas::Char_Sustain },
-        { "Shimmer_Bell_F#",    78, false, 0.86f, 0.42f, Atlas::Timbre_Keys,    Atlas::Char_Ethy | Atlas::Char_Clean | Atlas::Char_Pluck   },
-        { "Analog_Lead_C#",     61, false, 0.64f, 0.55f, Atlas::Timbre_Synth,   Atlas::Char_Dirty| Atlas::Char_Sustain },
-        { "Velvet_Choir_F",     65, false, 0.52f, 0.22f, Atlas::Timbre_Vox,     Atlas::Char_Warm | Atlas::Char_Ethy  | Atlas::Char_Sustain },
-        { "Glass_Harp_B",       71, false, 0.81f, 0.72f, Atlas::Timbre_Strings, Atlas::Char_Clean| Atlas::Char_Pluck },
-        { "Guitar_Loop_120_Am", 57, true,  0.48f, 0.78f, Atlas::Timbre_Guitar,  Atlas::Char_Warm | Atlas::Char_Pluck },
-        { "Synth_Arp_128_Cm",   60, true,  0.68f, 0.85f, Atlas::Timbre_Synth,   Atlas::Char_Clean| Atlas::Char_Pluck },
-        { "Ethereal_Loop_124_F",65, true,  0.74f, 0.62f, Atlas::Timbre_Vox,     Atlas::Char_Ethy | Atlas::Char_Sustain },
-        { "Strings_Motif_120_D",62, true,  0.44f, 0.70f, Atlas::Timbre_Strings, Atlas::Char_Warm | Atlas::Char_Sustain }
+        { "Rhodes_Warm_Am",     57, false, 0.32f, 0.18f, 0.08f, Atlas::ClusterGroup::Keys,        Atlas::Timbre_Keys,    Atlas::Char_Warm | Atlas::Char_Clean | Atlas::Char_Sustain },
+        { "Tape_Pad_C",         60, false, 0.40f, 0.25f, 0.15f, Atlas::ClusterGroup::StringsPad,  Atlas::Timbre_Synth,   Atlas::Char_Warm | Atlas::Char_Ethy  | Atlas::Char_Sustain },
+        { "Sub_Bass_G",         43, false, 0.16f, 0.12f, 0.05f, Atlas::ClusterGroup::DeepBass,    Atlas::Timbre_Synth,   Atlas::Char_Deep | Atlas::Char_Warm  | Atlas::Char_Clean   },
+        { "Vocal_Air_A",        69, false, 0.72f, 0.48f, 0.10f, Atlas::ClusterGroup::Vocal,       Atlas::Timbre_Vox,     Atlas::Char_Ethy | Atlas::Char_Clean | Atlas::Char_Sustain },
+        { "Dust_Pluck_Em",      64, false, 0.58f, 0.65f, 0.12f, Atlas::ClusterGroup::GuitarPluck, Atlas::Timbre_Guitar,  Atlas::Char_Pluck| Atlas::Char_Warm  | Atlas::Char_Clean   },
+        { "Cello_Swell_D",      50, false, 0.28f, 0.30f, 0.09f, Atlas::ClusterGroup::StringsPad,  Atlas::Timbre_Strings, Atlas::Char_Deep | Atlas::Char_Warm  | Atlas::Char_Sustain },
+        { "Shimmer_Keys_F#",    78, false, 0.82f, 0.42f, 0.07f, Atlas::ClusterGroup::Keys,        Atlas::Timbre_Keys,    Atlas::Char_Ethy | Atlas::Char_Clean | Atlas::Char_Pluck   },
+        { "Dirty_Acid_Lead_C#", 61, false, 0.68f, 0.55f, 0.75f, Atlas::ClusterGroup::SynthLead,   Atlas::Timbre_Synth,   Atlas::Char_Dirty| Atlas::Char_Sustain },
+        { "Velvet_Choir_F",     65, false, 0.52f, 0.22f, 0.11f, Atlas::ClusterGroup::Vocal,       Atlas::Timbre_Vox,     Atlas::Char_Warm | Atlas::Char_Ethy  | Atlas::Char_Sustain },
+        { "Nylon_Pluck_B",      71, false, 0.75f, 0.72f, 0.06f, Atlas::ClusterGroup::GuitarPluck, Atlas::Timbre_Guitar,  Atlas::Char_Clean| Atlas::Char_Pluck },
+        { "Guitar_Loop_120_Am", 57, true,  0.48f, 0.78f, 0.12f, Atlas::ClusterGroup::GuitarPluck, Atlas::Timbre_Guitar,  Atlas::Char_Warm | Atlas::Char_Pluck | Atlas::Char_Clean   },
+        { "Synth_Arp_128_Cm",   60, true,  0.68f, 0.85f, 0.10f, Atlas::ClusterGroup::SynthLead,   Atlas::Timbre_Synth,   Atlas::Char_Clean| Atlas::Char_Pluck },
+        { "Ethereal_Vox_124_F", 65, true,  0.74f, 0.62f, 0.14f, Atlas::ClusterGroup::Vocal,       Atlas::Timbre_Vox,     Atlas::Char_Ethy | Atlas::Char_Sustain },
+        { "Strings_Loop_120_D", 62, true,  0.44f, 0.70f, 0.09f, Atlas::ClusterGroup::StringsPad,  Atlas::Timbre_Strings, Atlas::Char_Warm | Atlas::Char_Sustain }
     };
 
     std::vector<Atlas::SampleRecord> demoRecords;
     const double sr = 44100.0;
-
     juce::Random rng(42);
 
-    for (int idx = 0; idx < 48; ++idx)
+    for (int idx = 0; idx < 60; ++idx)
     {
         const auto& base = defs[idx % 14];
         int pitchVar = (idx / 14) * 2;
@@ -179,7 +175,7 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
         juce::String fileName = juce::String(base.name) + "_" + juce::String(idx + 1) + ".wav";
         juce::File outFile = tempDir.getChildFile(fileName);
 
-        double dur = base.isLoop ? 4.0 : 1.8;
+        double dur = base.isLoop ? 3.2 : 1.6;
         int numSamples = (int)(sr * dur);
 
         if (!outFile.existsAsFile())
@@ -189,16 +185,19 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
             {
                 double t = (double)i / sr;
                 float env = base.isLoop
-                    ? 0.85f
-                    : (float)(std::min(1.0, t / 0.03) * std::exp(-t * (base.character & Atlas::Char_Pluck ? 3.2 : 1.1)));
+                    ? (float)(std::min(1.0, t / 0.02) * std::min(1.0, (dur - t) / 0.05))
+                    : (float)(std::min(1.0, t / 0.015) * std::exp(-t * ((base.character & Atlas::Char_Pluck) ? 3.5 : 1.3)));
 
-                float mod = base.isLoop ? (float)(1.0 + 0.12 * std::sin(t * 6.0 * juce::MathConstants<double>::twoPi)) : 1.0f;
-                float sig = 0.32f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * t))
-                          + 0.14f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * 2.0 * t * mod))
-                          + 0.06f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * 3.002 * t));
+                float mod = base.isLoop ? (float)(1.0 + 0.15 * std::sin(t * 4.0 * juce::MathConstants<double>::twoPi)) : 1.0f;
+                float raw = 0.35f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * t))
+                          + 0.16f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * 2.0 * t * mod))
+                          + 0.08f * std::sin((float)(juce::MathConstants<double>::twoPi * freq * 3.002 * t));
 
-                buf.setSample(0, i, sig * env);
-                buf.setSample(1, i, sig * env * 0.98f);
+                if (base.character & Atlas::Char_Dirty)
+                    raw = std::tanh(raw * 3.8f) * 0.45f;
+
+                buf.setSample(0, i, raw * env);
+                buf.setSample(1, i, raw * env * 0.98f);
             }
 
             juce::WavAudioFormat wavFormat;
@@ -225,10 +224,10 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
         rec.pitchConfidence = 0.92f;
         rec.normGainLinear = 1.0f;
 
-        rec.spectralCentroidNorm = juce::jlimit(0.06f, 0.94f, base.brightness + (rng.nextFloat() - 0.5f) * 0.22f);
-        rec.pitchMobilityNorm    = juce::jlimit(0.06f, 0.94f, base.mobility   + (rng.nextFloat() - 0.5f) * 0.24f);
-        rec.mapX = rec.pitchMobilityNorm;
-        rec.mapY = rec.spectralCentroidNorm;
+        rec.spectralCentroidNorm = juce::jlimit(0.06f, 0.94f, base.brightness + (rng.nextFloat() - 0.5f) * 0.18f);
+        rec.pitchMobilityNorm    = juce::jlimit(0.06f, 0.94f, base.mobility   + (rng.nextFloat() - 0.5f) * 0.18f);
+        rec.harmonicRoughness    = base.roughness;
+        rec.cluster = base.cluster;
         rec.timbreMask = base.timbre;
         rec.characterMask = base.character;
 
@@ -237,7 +236,6 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(demoRecords);
 
-    // По умолчанию загружаем первые 3 звука в слоты 01, 03, 04 для наглядности
     if (demoRecords.size() >= 4)
     {
         samplerEngine.assignSampleToPad(0, 0, demoRecords[0]);
@@ -254,9 +252,12 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
 {
     juce::ValueTree state("MelodicAtlasState");
     state.setProperty("keyRoot", projectKeyRoot.load(), nullptr);
-    state.setProperty("isMinor", projectIsMinor.load(), nullptr);
+    state.setProperty("scaleType", projectScaleType.load(), nullptr);
     state.setProperty("pitchMode", pitchModeIndex.load(), nullptr);
+    state.setProperty("bpmLocked", bpmLockedToHost.load(), nullptr);
+    state.setProperty("manualBpm", currentBpm.load(), nullptr);
     state.setProperty("reverb", reverbAmount.load(), nullptr);
+    state.setProperty("masterDb", masterVolumeDb.load(), nullptr);
     state.setProperty("bankMode", bankModeIndex.load(), nullptr);
     state.setProperty("folder", folderToScan.getFullPathName(), nullptr);
 
@@ -273,9 +274,12 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
         if (state.isValid())
         {
             projectKeyRoot.store(state.getProperty("keyRoot", 9));
-            projectIsMinor.store(state.getProperty("isMinor", true));
+            projectScaleType.store(state.getProperty("scaleType", 0));
             pitchModeIndex.store(state.getProperty("pitchMode", 0));
+            bpmLockedToHost.store(state.getProperty("bpmLocked", true));
+            currentBpm.store(state.getProperty("manualBpm", 128.0));
             reverbAmount.store(state.getProperty("reverb", 0.35f));
+            masterVolumeDb.store(state.getProperty("masterDb", 0.0f));
             bankModeIndex.store(state.getProperty("bankMode", 1));
 
             juce::String savedFolder = state.getProperty("folder", "").toString();
