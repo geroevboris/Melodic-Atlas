@@ -49,28 +49,21 @@ namespace Atlas
             const auto historyRect = bounds.removeFromBottom(historyHeight);
             const auto mapRect = bounds;
 
-            // 1. Фон карты
             g.setColour(juce::Colour(0xff0b0e13));
             g.fillRect(mapRect);
 
-            // 2. Координатная сетка
             drawSubtleGrid(g, mapRect);
-
-            // 3. Цветовая легенда кластеров сверху карты
             drawClusterLegend(g, mapRect);
 
-            // 4. Чёткая отрисовка точек с XO-подобным Spatial LOD (прореживание в отдалении, детализация при зуме)
             if (database != nullptr && !database->empty())
             {
                 const auto& db = *database;
 
-                // Сетка занятости экрана, чтобы точки не слипались в мутную кашу на малом зуме
                 const int gridCellPx = (zoomLevel < 1.8f) ? 6 : ((zoomLevel < 3.5f) ? 4 : 2);
                 const int gridW = std::max(1, (int)mapRect.getWidth() / gridCellPx + 2);
                 const int gridH = std::max(1, (int)mapRect.getHeight() / gridCellPx + 2);
                 std::vector<uint8_t> occupied((size_t)(gridW * gridH), 0);
 
-                // Сначала рисуем фоновые (отфильтрованные) точки
                 if (filterBitMask != 0)
                 {
                     for (size_t i = 0; i < db.size(); ++i)
@@ -84,8 +77,9 @@ namespace Atlas
 
                         int gx = juce::jlimit(0, gridW - 1, (int)(pt.x - mapRect.getX()) / gridCellPx);
                         int gy = juce::jlimit(0, gridH - 1, (int)(pt.y - mapRect.getY()) / gridCellPx);
-                        if (occupied[(size_t)(gy * gridW + gx)]) continue;
-                        occupied[(size_t)(gy * gridW + gx)] = 1;
+                        size_t cellIdx = (size_t)(gy * gridW + gx);
+                        if (occupied[cellIdx]) continue;
+                        occupied[cellIdx] = 1;
 
                         juce::Colour baseCol = MusicMath::getClusterColour(rec.cluster, rec.spectralCentroidNorm);
                         g.setColour(baseCol.withAlpha(0.14f));
@@ -94,7 +88,6 @@ namespace Atlas
                     std::fill(occupied.begin(), occupied.end(), 0);
                 }
 
-                // Рисуем активные точки с идеальной резкостью
                 const float dotRadius = 2.6f;
                 for (int i = 0; i < (int)db.size(); ++i)
                 {
@@ -132,7 +125,6 @@ namespace Atlas
                     }
                     else
                     {
-                        // Чёткая векторная точка с тонким тёмным контуром (как в XO)
                         g.setColour(juce::Colour(0xcc07090c));
                         g.fillEllipse(pt.x - (dotRadius + 0.8f), pt.y - (dotRadius + 0.8f),
                                       (dotRadius + 0.8f) * 2.0f, (dotRadius + 0.8f) * 2.0f);
@@ -142,7 +134,6 @@ namespace Atlas
                     }
                 }
 
-                // 5. Карточка волны над выбранной точкой
                 if (activeSampleIndex >= 0 && activeSampleIndex < (int)db.size())
                 {
                     const auto& rec = db[(size_t)activeSampleIndex];
@@ -161,7 +152,6 @@ namespace Atlas
                            mapRect, juce::Justification::centred, false);
             }
 
-            // 6. Лента истории
             drawHistoryTrack(g, historyRect);
         }
 
@@ -170,7 +160,7 @@ namespace Atlas
             grabKeyboardFocus();
             const float historyHeight = 28.0f;
 
-            if (e.position.y >= getHeight() - historyHeight)
+            if (e.position.y >= (float)getHeight() - historyHeight)
             {
                 handleHistoryClick(e.position);
                 return;
@@ -185,23 +175,20 @@ namespace Atlas
             dragStartPos = e.position;
             isDraggingSample = false;
 
-            // Если кликнули по карточке волны — можно сразу перетаскивать сэмпл или остановить луп
             if (activeSampleIndex >= 0 && lastCalloutBox.contains(e.position))
             {
                 startedOnActivePoint = true;
-                sampler.triggerPadFromUI(-1); // no-op
-                triggerSamplePoint(activeSampleIndex); // Повторный клик перезапускает звук
+                triggerSamplePoint(activeSampleIndex);
                 return;
             }
 
-            // Проверяем, кликнули ли прямо в уже выбранную точку или новую точку (forceRetrigger = true!)
             int prevActive = activeSampleIndex;
             int hitIdx = findClosestSample(e.position);
 
             if (hitIdx >= 0)
             {
                 startedOnActivePoint = (hitIdx == prevActive);
-                triggerSamplePoint(hitIdx); // Всегда проигрываем повторно при клике!
+                triggerSamplePoint(hitIdx);
             }
             else
             {
@@ -226,8 +213,6 @@ namespace Atlas
                 return;
             }
 
-            // Перетаскивание звука в банк пэдов или в Ableton (срабатывает при вытягивании вниз к пэдам,
-            // за пределы карты, при перетаскивании выбранной точки/плашки или с зажатым Cmd/Shift/Alt)
             bool pulledTowardsBankOrDaw = (e.position.y > (float)getHeight() - 24.0f) ||
                                           (e.position.x < 0.0f || e.position.x > (float)getWidth() || e.position.y < 0.0f);
             bool modifierDrag = (e.mods.isCommandDown() || e.mods.isAltDown() || e.mods.isShiftDown());
@@ -245,7 +230,6 @@ namespace Atlas
 
             if (e.position.y < (float)getHeight() - historyHeight)
             {
-                // При серфинге с зажатой мышью переключаем только при переходе на другую точку
                 int hitIdx = findClosestSample(e.position);
                 if (hitIdx >= 0 && hitIdx != activeSampleIndex)
                     triggerSamplePoint(hitIdx);
@@ -266,7 +250,7 @@ namespace Atlas
         void mouseMove(const juce::MouseEvent& e) override
         {
             const float historyHeight = 28.0f;
-            if (e.position.y >= getHeight() - historyHeight)
+            if (e.position.y >= (float)getHeight() - historyHeight)
             {
                 updateHistoryHover(e.position);
             }
@@ -290,7 +274,6 @@ namespace Atlas
             }
             else if (mapRect.contains(e.position))
             {
-                // Зум относительно позиции курсора мыши
                 float relX = (e.position.x - mapRect.getCentreX()) / mapRect.getWidth();
                 float relY = (e.position.y - mapRect.getCentreY()) / mapRect.getHeight();
                 panOffset.x += relX * (1.0f / oldZoom - 1.0f / zoomLevel);
