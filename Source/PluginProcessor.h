@@ -44,7 +44,6 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Управление сканированием папок
     void scanFolderAsync(const juce::File& folder);
     void generateDemoAtlas();
 
@@ -55,23 +54,19 @@ public:
     const std::vector<Atlas::SampleRecord>& getSampleDatabase() const { return sampleDatabase; }
     Atlas::SamplerEngine& getSamplerEngine() { return samplerEngine; }
 
-    // Глобальные параметры интерфейса и движка
     std::atomic<bool> showLoopsTab { false };
-    std::atomic<int>  projectKeyRoot { 9 }; // 9 = A
-    std::atomic<bool> projectIsMinor { true };
+    std::atomic<int>  projectKeyRoot { 9 }; // A
+    std::atomic<int>  projectScaleType { (int)Atlas::ScaleType::NaturalMinor };
     std::atomic<int>  pitchModeIndex { (int)Atlas::PitchMode::ScaleSnap };
     std::atomic<bool> keyLocked { true };
 
     std::atomic<double> currentBpm { 128.0 };
-    std::atomic<bool>   syncToHostBpm { true };
+    std::atomic<bool>   bpmLockedToHost { true }; // По умолчанию закрыт (привязан к DAW)
     std::atomic<int>    octaveShift { 0 };
 
     std::atomic<int>   bankModeIndex { (int)Atlas::BankMode::Chromatic };
     std::atomic<float> reverbAmount { 0.35f };
-    std::atomic<float> adsrAttack { 0.015f };
-    std::atomic<float> adsrDecay { 1.20f };
-    std::atomic<float> adsrSustain { 0.80f };
-    std::atomic<float> adsrRelease { 0.45f };
+    std::atomic<float> masterVolumeDb { 0.0f };
     std::atomic<float> glideTime { 0.0f };
 
     std::atomic<uint64_t> databaseVersion { 1 };
