@@ -5,10 +5,10 @@
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <memory>
+#include <set>
 
 namespace Atlas
 {
-    // Загруженный в память аудио-буфер с превью волны для UI
     struct LoadedSampleAudio
     {
         juce::AudioBuffer<float> buffer;
@@ -40,7 +40,6 @@ namespace Atlas
         }
     };
 
-    // Двухголовый гранулярный стретчер для независимого питча и BPM-синхронизации лупов
     struct DualGrainLoopStretcher
     {
         double timelinePos = 0.0;
@@ -57,7 +56,7 @@ namespace Atlas
             grainPhase = 0.0;
         }
 
-        void renderSample(const juce::AudioBuffer<float>& buf,
+        bool renderSample(const juce::AudioBuffer<float>& buf,
                           double timeRatio,
                           double pitchRatio,
                           bool loopWrap,
@@ -65,7 +64,13 @@ namespace Atlas
                           float& outR)
         {
             const int totalSamples = buf.getNumSamples();
-            if (totalSamples < 4) { outL = 0.0f; outR = 0.0f; return; }
+            if (totalSamples < 4) { outL = 0.0f; outR = 0.0f; return false; }
+
+            if (!loopWrap && timelinePos >= (double)(totalSamples - 4))
+            {
+                outL = 0.0f; outR = 0.0f;
+                return false;
+            }
 
             const int numCh = buf.getNumChannels();
             const float* ch0 = buf.getReadPointer(0);
@@ -91,7 +96,6 @@ namespace Atlas
                 r = ch1[idx0] + frac * (ch1[idx1] - ch1[idx0]);
             };
 
-            // Окно Хэнна для двух зерен со сдвигом фазы на 0.5
             double phaseA = grainPhase;
             double phaseB = grainPhase + 0.5;
             if (phaseB >= 1.0) phaseB -= 1.0;
@@ -106,7 +110,6 @@ namespace Atlas
             outL = lA * winA + lB * winB;
             outR = rA * winA + rB * winB;
 
-            // Продвигаем позиции
             timelinePos += timeRatio;
             if (loopWrap)
             {
@@ -118,19 +121,18 @@ namespace Atlas
             grainPosB += pitchRatio;
 
             double prevPhaseA = phaseA;
-            double prevPhaseB = phaseB;
             grainPhase += 1.0 / kGrainLengthSamples;
 
             if (grainPhase >= 1.0)
             {
                 grainPhase -= 1.0;
-                grainPosA = timelinePos; // Перезапуск зерна А в точке таймлайна
+                grainPosA = timelinePos;
             }
-            if (prevPhaseB > (grainPhase + 0.5 - (grainPhase + 0.5 >= 1.0 ? 1.0 : 0.0)) ||
-                (prevPhaseA < 0.5 && grainPhase >= 0.5))
+            if (prevPhaseA < 0.5 && grainPhase >= 0.5)
             {
-                grainPosB = timelinePos; // Перезапуск зерна B на противофазе
+                grainPosB = timelinePos;
             }
+            return true;
         }
     };
 
@@ -140,7 +142,7 @@ namespace Atlas
         SamplerEngine()
         {
             formatManager.registerBasicFormats();
-            for (int i = 0; i < 12; ++i)
+            for (size_t i = 0; i < 12; ++i)
                 padSlots[i].sampleIndex = -1;
         }
 
@@ -164,12 +166,11 @@ namespace Atlas
             }
         }
 
-        // Обновление глобальных параметров из процессора
-        void setMusicalContext(int keyRoot, bool minorScale, PitchMode pMode, int octShift,
+        void setMusicalContext(int keyRoot, ScaleType sType, PitchMode pMode, int octShift,
                                double dawBpm, bool syncToHost, bool hostIsPlaying, double hostPpqPos)
         {
             projectKeyRoot = keyRoot;
-            isMinor = minorScale;
+            scaleType = sType;
             pitchMode = pMode;
             globalOctaveShift = octShift;
             currentBpm = (dawBpm > 20.0) ? dawBpm : 120.0;
@@ -178,20 +179,16 @@ namespace Atlas
             currentPpq = hostPpqPos;
         }
 
-        void setEngineControls(BankMode mode, float attSec, float decSec, float susLvl, float relSec,
-                               float glideSec, float reverbAmt)
+        void setEngineControls(BankMode mode, float glideSec, float reverbAmt, float masterDb)
         {
             bankMode = mode;
-            adsrParams.attack  = juce::jlimit(0.002f, 5.0f, attSec);
-            adsrParams.decay   = juce::jlimit(0.01f, 5.0f, decSec);
-            adsrParams.sustain = juce::jlimit(0.0f, 1.0f, susLvl);
-            adsrParams.release = juce::jlimit(0.01f, 8.0f, relSec);
-            glideTimeSec       = juce::jlimit(0.0f, 1.0f, glideSec);
-            reverbWet          = juce::jlimit(0.0f, 1.0f, reverbAmt);
+            glideTimeSec = juce::jlimit(0.0f, 1.0f, glideSec);
+            reverbWet    = juce::jlimit(0.0f, 1.0f, reverbAmt);
+            masterGainLinear = juce::Decibels::decibelsToGain(juce::jlimit(-36.0f, 6.0f, masterDb));
             updateReverbParams();
         }
 
-        // Предпрослушка сэмпла с 2D-карты (с 15 мс кроссфейдом)
+        // Предпрослушка точки на 2D-карте (лупы проигрываются 1 цикл и не зацикливаются бесконечно)
         void auditionSample(int sampleIdx, const SampleRecord& rec)
         {
             auto loaded = loadAudioFromFile(rec.file);
@@ -199,7 +196,6 @@ namespace Atlas
 
             const juce::ScopedLock sl(engineLock);
 
-            // Переносим текущий играющий голос в уходящий (для 15 мс кроссфейда без щелчков)
             if (auditionCurrent.playing)
             {
                 auditionFadingOut = auditionCurrent;
@@ -213,12 +209,7 @@ namespace Atlas
             auditionCurrent.stretcher.reset(0.0);
             auditionCurrent.fadeGain = 0.0f;
             auditionCurrent.playing = true;
-
-            // Если это луп и включен SYNC во время проигрывания DAW — ждем начала следующей доли/такта
-            if (rec.isLoop && syncEnabled && dawIsPlaying)
-                auditionCurrent.waitingForBeatSync = true;
-            else
-                auditionCurrent.waitingForBeatSync = false;
+            auditionCurrent.waitingForBeatSync = (rec.isLoop && syncEnabled && dawIsPlaying);
 
             lastAuditionedIndex.store(sampleIdx);
         }
@@ -234,7 +225,8 @@ namespace Atlas
             }
         }
 
-        // Загрузка сэмпла в один из 12 пэдов
+        bool isAuditionPlaying() const { return auditionCurrent.playing; }
+
         void assignSampleToPad(int padIdx, int sampleIdx, const SampleRecord& rec)
         {
             if (padIdx < 0 || padIdx >= 12) return;
@@ -242,41 +234,48 @@ namespace Atlas
             if (loaded == nullptr) return;
 
             const juce::ScopedLock sl(engineLock);
-            padSlots[padIdx].sampleIndex = sampleIdx;
-            // По умолчанию: монофонические ваншоты активны (●), а лупы и аккорды выключены (○) в Chromatic
-            padSlots[padIdx].chromaticActive = !(rec.isLoop || rec.isPolyChord);
-            padSlots[padIdx].volumeDb = -3.0f;
-            padSlots[padIdx].pan = 0.0f;
-            padSlots[padIdx].semitoneOffset = 0;
-            padSlots[padIdx].reverse = false;
+            auto& slot = padSlots[(size_t)padIdx];
+            slot.sampleIndex = sampleIdx;
+            slot.chromaticActive = !(rec.isLoop || rec.isPolyChord);
+            slot.volumeDb = -3.0f;
+            slot.pan = 0.0f;
+            slot.semitoneOffset = 0;
+            slot.reverse = false;
+            slot.attackSec  = 0.015f;
+            slot.decaySec   = 1.20f;
+            slot.sustainLvl = 0.80f;
+            slot.releaseSec = 0.45f;
 
-            padAudio[padIdx] = loaded;
-            padRecords[padIdx] = rec;
+            padAudio[(size_t)padIdx] = loaded;
+            padRecords[(size_t)padIdx] = rec;
         }
 
         void clearAllPads()
         {
             const juce::ScopedLock sl(engineLock);
-            for (int i = 0; i < 12; ++i)
+            for (size_t i = 0; i < 12; ++i)
             {
                 padSlots[i].sampleIndex = -1;
                 padAudio[i].reset();
             }
             for (auto& v : voices)
                 v.active = false;
+            activePlayingPadsMask.store(0);
         }
 
-        PadSlotState& getPadState(int padIdx) { return padSlots[juce::jlimit(0, 11, padIdx)]; }
-        const PadSlotState& getPadState(int padIdx) const { return padSlots[juce::jlimit(0, 11, padIdx)]; }
+        PadSlotState& getPadState(int padIdx) { return padSlots[(size_t)juce::jlimit(0, 11, padIdx)]; }
+        const PadSlotState& getPadState(int padIdx) const { return padSlots[(size_t)juce::jlimit(0, 11, padIdx)]; }
+
         const SampleRecord* getPadRecord(int padIdx) const
         {
-            if (padIdx < 0 || padIdx >= 12 || padSlots[padIdx].sampleIndex < 0) return nullptr;
-            return &padRecords[padIdx];
+            if (padIdx < 0 || padIdx >= 12 || padSlots[(size_t)padIdx].sampleIndex < 0) return nullptr;
+            return &padRecords[(size_t)padIdx];
         }
+
         std::shared_ptr<LoadedSampleAudio> getPadAudio(int padIdx) const
         {
             if (padIdx < 0 || padIdx >= 12) return nullptr;
-            return padAudio[padIdx];
+            return padAudio[(size_t)padIdx];
         }
 
         std::shared_ptr<LoadedSampleAudio> getAuditionAudio() const
@@ -286,16 +285,34 @@ namespace Atlas
         }
 
         int getLastAuditionedIndex() const { return lastAuditionedIndex.load(); }
+        uint32_t getActivePlayingPadsMask() const { return activePlayingPadsMask.load(); }
 
-        // Прямой триггер пэда мышкой из UI
+        // Клик по пэду в UI: в режиме CHROMATIC запускает сразу все активные (●) пэды вместе!
         void triggerPadFromUI(int padIdx, float velocity = 0.9f)
         {
             const juce::ScopedLock sl(engineLock);
-            if (padIdx < 0 || padIdx >= 12 || padSlots[padIdx].sampleIndex < 0) return;
-            startVoiceForSlot(padIdx, 36 + padIdx, velocity, false);
+            if (padIdx < 0 || padIdx >= 12 || padSlots[(size_t)padIdx].sampleIndex < 0) return;
+
+            int previewGateSamples = (int)(sampleRate * 1.15); // Авто-релиз через 1.15 сек при клике мышкой
+
+            if (bankMode == BankMode::Chromatic && padSlots[(size_t)padIdx].chromaticActive)
+            {
+                int targetMidi = 60; // C3
+                for (int s = 0; s < 12; ++s)
+                {
+                    if (padSlots[(size_t)s].sampleIndex >= 0 && padSlots[(size_t)s].chromaticActive && padAudio[(size_t)s] != nullptr)
+                    {
+                        bool isBassType = (padRecords[(size_t)s].isLoop || padRecords[(size_t)s].isPolyChord);
+                        startVoiceForSlot(s, targetMidi, velocity, true, isBassType, previewGateSamples);
+                    }
+                }
+            }
+            else
+            {
+                startVoiceForSlot(padIdx, 36 + padIdx, velocity, false, false, previewGateSamples);
+            }
         }
 
-        // Главный рендер аудио и обработка MIDI
         void renderNextBlock(juce::AudioBuffer<float>& outputAudio, const juce::MidiBuffer& midiData)
         {
             const juce::ScopedLock sl(engineLock);
@@ -319,9 +336,9 @@ namespace Atlas
             float* outL = dryBuf.getWritePointer(0);
             float* outR = dryBuf.getWritePointer(1);
 
-            const float fadeStep = 1.0f / std::max(1.0f, (float)(sampleRate * 0.015)); // 15 мс кроссфейд
+            const float fadeStep = 1.0f / std::max(1.0f, (float)(sampleRate * 0.015));
 
-            // 1. Рендерим предпрослушку карты (Audition)
+            // 1. Предпрослушка карты (Audition)
             if (auditionFadingOut.playing && auditionFadingOut.audio != nullptr)
             {
                 for (int i = 0; i < numSamples; ++i)
@@ -348,7 +365,6 @@ namespace Atlas
 
             if (auditionCurrent.playing && auditionCurrent.audio != nullptr)
             {
-                // Проверяем квантованный старт лупа по сетке такта
                 if (auditionCurrent.waitingForBeatSync)
                 {
                     double fracBeat = currentPpq - std::floor(currentPpq);
@@ -376,15 +392,36 @@ namespace Atlas
                 }
             }
 
-            // 2. Рендерим голоса 12-слотового банка
+            // 2. Голоса 12 пэдов + сбор маски активных пэдов для UI-подсветки
+            uint32_t currentPlayingMask = 0;
+
             for (auto& v : voices)
             {
                 if (!v.active || v.audio == nullptr) continue;
 
-                v.adsr.setParameters(adsrParams);
+                const auto& slot = padSlots[(size_t)juce::jlimit(0, 11, v.slotIndex)];
+                juce::ADSR::Parameters padAdsr {
+                    juce::jlimit(0.002f, 5.0f, slot.attackSec),
+                    juce::jlimit(0.01f,  5.0f, slot.decaySec),
+                    juce::jlimit(0.0f,   1.0f, slot.sustainLvl),
+                    juce::jlimit(0.01f,  8.0f, slot.releaseSec)
+                };
+                v.adsr.setParameters(padAdsr);
+
+                float slotLinearGain = juce::Decibels::decibelsToGain(slot.volumeDb);
+                float panAngle = (slot.pan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+                float panL = std::cos(panAngle);
+                float panR = std::sin(panAngle);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
+                    if (v.autoGateSamplesRemaining > 0)
+                    {
+                        v.autoGateSamplesRemaining--;
+                        if (v.autoGateSamplesRemaining == 0)
+                            v.adsr.noteOff();
+                    }
+
                     float env = v.adsr.getNextSample();
                     if (!v.adsr.isActive())
                     {
@@ -392,7 +429,6 @@ namespace Atlas
                         break;
                     }
 
-                    // Плавный Glide к целевой высоте тона
                     if (glideTimeSec > 0.005f)
                     {
                         double glideCoeff = 1.0 - std::exp(-1.0 / (sampleRate * (double)glideTimeSec * 0.25));
@@ -406,9 +442,9 @@ namespace Atlas
                     float l = 0.0f, r = 0.0f;
                     bool alive = stepVoiceStream(v, l, r);
 
-                    float gain = env * v.velocityGain * v.slotLinearGain * v.normGain;
-                    outL[i] += l * gain * v.panL;
-                    outR[i] += r * gain * v.panR;
+                    float gain = env * v.velocityGain * slotLinearGain * v.normGain;
+                    outL[i] += l * gain * panL;
+                    outR[i] += r * gain * panR;
 
                     if (!alive)
                     {
@@ -417,25 +453,65 @@ namespace Atlas
                         break;
                     }
                 }
+
+                if (v.active && v.slotIndex >= 0 && v.slotIndex < 12)
+                    currentPlayingMask |= (1u << v.slotIndex);
             }
 
-            // 3. Применяем мастер-эффект REVERB
+            activePlayingPadsMask.store(currentPlayingMask);
+
+            // 3. Constant-Power Reverb (размывает звук в пространство без увеличения пиковой громкости)
             if (reverbWet > 0.005f)
             {
-                juce::dsp::AudioBlock<float> block(dryBuf);
+                juce::AudioBuffer<float> wetBuf(2, numSamples);
+                wetBuf.makeCopyOf(dryBuf);
+
+                juce::dsp::AudioBlock<float> block(wetBuf);
                 juce::dsp::ProcessContextReplacing<float> ctx(block);
                 reverb.process(ctx);
+
+                // При добавлении реверба сухой сигнал плавно ослабляется, сохраняя единый выходной уровень
+                const float dryGain = 1.0f - 0.52f * reverbWet;
+                const float wetGain = reverbWet * 0.56f;
+
+                const float* wL = wetBuf.getReadPointer(0);
+                const float* wR = wetBuf.getReadPointer(1);
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    outL[i] = outL[i] * dryGain + wL[i] * wetGain;
+                    outR[i] = outR[i] * dryGain + wR[i] * wetGain;
+                }
             }
 
-            // Копируем в выходной буфер DAW
+            // 4. Master Volume + защитный Soft-Clipper против перегруза
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float sL = outL[i] * masterGainLinear;
+                float sR = outR[i] * masterGainLinear;
+
+                // Мягкое насыщение выше -1.2 dB, исключающее цифровой клиппинг выше 0 dBFS
+                outL[i] = softLimit(sL);
+                outR[i] = softLimit(sR);
+            }
+
             for (int ch = 0; ch < outputAudio.getNumChannels(); ++ch)
             {
-                const float* src = dryBuf.getReadPointer( std::min(ch, 1) );
+                const float* src = dryBuf.getReadPointer(std::min(ch, 1));
                 outputAudio.addFrom(ch, 0, src, numSamples);
             }
         }
 
     private:
+        static inline float softLimit(float x) noexcept
+        {
+            const float threshold = 0.85f;
+            float absX = std::abs(x);
+            if (absX <= threshold) return x;
+            float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+            return sign * (threshold + (1.0f - threshold) * std::tanh((absX - threshold) / (1.0f - threshold)));
+        }
+
         struct AuditionStream
         {
             std::shared_ptr<LoadedSampleAudio> audio;
@@ -454,6 +530,7 @@ namespace Atlas
             int slotIndex = -1;
             int midiNote = -1;
             bool isBassAnchorVoice = false;
+            int autoGateSamplesRemaining = -1;
 
             std::shared_ptr<LoadedSampleAudio> audio;
             SampleRecord record;
@@ -464,10 +541,7 @@ namespace Atlas
             double targetPitchRatio = 1.0;
 
             float velocityGain = 1.0f;
-            float slotLinearGain = 1.0f;
             float normGain = 1.0f;
-            float panL = 1.0f;
-            float panR = 1.0f;
 
             DualGrainLoopStretcher stretcher;
             juce::ADSR adsr;
@@ -475,7 +549,7 @@ namespace Atlas
 
         double calculateAuditionPitchRatio(const SampleRecord& rec) const
         {
-            int semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, isMinor,
+            int semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, scaleType,
                                                            pitchMode, globalOctaveShift);
             double pitchRatio = std::pow(2.0, (double)semiShift / 12.0);
             double srRatio = (auditionCurrent.audio != nullptr)
@@ -495,13 +569,13 @@ namespace Atlas
             {
                 double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, stream.record.detectedBpm)) : 1.0;
                 double srRatio = stream.audio->sampleRate / sampleRate;
-                stream.stretcher.renderSample(buf, bpmRatio * srRatio, pitchRatio, true, outL, outR);
+                // loopWrap = false: луп проигрывается 1 раз и останавливается, не гудя бесконечно
+                bool alive = stream.stretcher.renderSample(buf, bpmRatio * srRatio, pitchRatio, false, outL, outR);
                 outL *= stream.record.normGainLinear;
                 outR *= stream.record.normGainLinear;
-                return true;
+                return alive;
             }
 
-            // Ваншот: чистый ресэмплинг с линейной/кубической интерполяцией
             if (stream.readPos >= (double)(totalSamples - 2))
                 return false;
 
@@ -529,8 +603,9 @@ namespace Atlas
             {
                 double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, v.record.detectedBpm)) : 1.0;
                 double srRatio = v.audio->sampleRate / sampleRate;
-                v.stretcher.renderSample(buf, bpmRatio * srRatio, v.currentPitchRatio, true, outL, outR);
-                return true;
+                // Если это превью мышкой — играем 1 проход, если зажата клавиша MIDI — крутим пока зажата клавиша
+                bool wrapLoop = (v.autoGateSamplesRemaining < 0);
+                return v.stretcher.renderSample(buf, bpmRatio * srRatio, v.currentPitchRatio, wrapLoop, outL, outR);
             }
 
             if (v.readPos < 0.0 || v.readPos >= (double)(totalSamples - 2))
@@ -562,35 +637,27 @@ namespace Atlas
 
             if (bankMode == BankMode::PadTrigger)
             {
-                // Ноты C1..B1 (36..47) или любая октава по модулю 12 запускают слот 0..11
-                int slotIdx = (midiNote >= 36 && midiNote < 48) ? (midiNote - 36) : (midiNote % 12);
-                if (padSlots[slotIdx].sampleIndex >= 0 && padAudio[slotIdx] != nullptr)
-                    startVoiceForSlot(slotIdx, midiNote, velocity, false);
+                int slotIdx = (midiNote >= 36 && midiNote < 48) ? (midiNote - 36) : (((midiNote % 12) + 12) % 12);
+                if (padSlots[(size_t)slotIdx].sampleIndex >= 0 && padAudio[(size_t)slotIdx] != nullptr)
+                    startVoiceForSlot(slotIdx, midiNote, velocity, false, false, -1);
                 return;
             }
 
-            // Режим CHROMATIC:
-            // 1. Все активные (●) монофонические ваншоты играют полифонически
-            // 2. Активные (●) лупы и аккорды работают в режиме Bass Follower (следуют за самой нижней нотой)
+            // Режим CHROMATIC: запускаем одновременно все активные (●) слоты
             int lowestNote = *heldNotes.begin();
 
             for (int slotIdx = 0; slotIdx < 12; ++slotIdx)
             {
-                if (padSlots[slotIdx].sampleIndex < 0 || !padSlots[slotIdx].chromaticActive || padAudio[slotIdx] == nullptr)
+                if (padSlots[(size_t)slotIdx].sampleIndex < 0 || !padSlots[(size_t)slotIdx].chromaticActive || padAudio[(size_t)slotIdx] == nullptr)
                     continue;
 
-                const auto& rec = padRecords[slotIdx];
+                const auto& rec = padRecords[(size_t)slotIdx];
                 bool isBassFollowerType = (rec.isLoop || rec.isPolyChord);
 
                 if (isBassFollowerType)
-                {
-                    // Перенаправляем существующий басовый голос этого слота на нижнюю ноту аккорда
                     updateOrStartBassAnchorVoice(slotIdx, lowestNote, velocity);
-                }
                 else
-                {
-                    startVoiceForSlot(slotIdx, midiNote, velocity, true);
-                }
+                    startVoiceForSlot(slotIdx, midiNote, velocity, true, false, -1);
             }
         }
 
@@ -601,14 +668,11 @@ namespace Atlas
             if (bankMode == BankMode::PadTrigger)
             {
                 for (auto& v : voices)
-                {
                     if (v.active && v.midiNote == midiNote)
                         v.adsr.noteOff();
-                }
                 return;
             }
 
-            // В режиме CHROMATIC:
             int lowestNote = heldNotes.empty() ? -1 : *heldNotes.begin();
 
             for (auto& v : voices)
@@ -646,31 +710,47 @@ namespace Atlas
                     return;
                 }
             }
-            startVoiceForSlot(slotIdx, bassMidiNote, velocity, true, true);
+            startVoiceForSlot(slotIdx, bassMidiNote, velocity, true, true, -1);
         }
 
         void retuneVoiceToMidiNote(PolyVoice& v, int targetMidiNote)
         {
             v.midiNote = targetMidiNote;
             int semiDiff = (targetMidiNote - v.record.rootMidiNote)
-                         + padSlots[v.slotIndex].semitoneOffset
+                         + padSlots[(size_t)v.slotIndex].semitoneOffset
                          + globalOctaveShift * 12;
             double srRatio = v.audio->sampleRate / sampleRate;
             v.targetPitchRatio = std::pow(2.0, (double)semiDiff / 12.0) * srRatio;
         }
 
-        void startVoiceForSlot(int slotIdx, int midiNote, float velocity, bool chromaticPitch, bool isBassAnchor = false)
+        void startVoiceForSlot(int slotIdx, int midiNote, float velocity, bool chromaticPitch,
+                               bool isBassAnchor, int autoGateSamples)
         {
-            const auto& slot = padSlots[slotIdx];
-            const auto& rec  = padRecords[slotIdx];
-            auto audio       = padAudio[slotIdx];
+            const auto& slot = padSlots[(size_t)slotIdx];
+            const auto& rec  = padRecords[(size_t)slotIdx];
+            auto audio       = padAudio[(size_t)slotIdx];
             if (audio == nullptr) return;
 
-            // Ищем свободный голос
+            // В режиме PadTrigger перезапускаем голос того же слота, чтобы лупы не наслаивались сами на себя
             PolyVoice* targetVoice = nullptr;
-            for (auto& v : voices)
+            if (!chromaticPitch)
             {
-                if (!v.active) { targetVoice = &v; break; }
+                for (auto& v : voices)
+                {
+                    if (v.active && v.slotIndex == slotIdx)
+                    {
+                        targetVoice = &v;
+                        break;
+                    }
+                }
+            }
+
+            if (targetVoice == nullptr)
+            {
+                for (auto& v : voices)
+                {
+                    if (!v.active) { targetVoice = &v; break; }
+                }
             }
             if (targetVoice == nullptr)
                 targetVoice = &voices[0];
@@ -681,6 +761,7 @@ namespace Atlas
             targetVoice->slotIndex = slotIdx;
             targetVoice->midiNote = midiNote;
             targetVoice->isBassAnchorVoice = isBassAnchor;
+            targetVoice->autoGateSamplesRemaining = autoGateSamples;
             targetVoice->audio = audio;
             targetVoice->record = rec;
             targetVoice->reverse = slot.reverse;
@@ -694,7 +775,7 @@ namespace Atlas
             }
             else
             {
-                semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, isMinor,
+                semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, scaleType,
                                                            pitchMode, globalOctaveShift)
                           + slot.semitoneOffset;
             }
@@ -704,16 +785,17 @@ namespace Atlas
             targetVoice->currentPitchRatio = (glideTimeSec > 0.005f && prevPitch > 0.0)
                                                 ? prevPitch : targetVoice->targetPitchRatio;
 
-            targetVoice->velocityGain = juce::jlimit(0.1f, 1.0f, velocity);
-            targetVoice->slotLinearGain = juce::Decibels::decibelsToGain(slot.volumeDb);
+            targetVoice->velocityGain = juce::jlimit(0.15f, 1.0f, velocity);
             targetVoice->normGain = rec.normGainLinear;
 
-            float panAngle = (slot.pan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
-            targetVoice->panL = std::cos(panAngle);
-            targetVoice->panR = std::sin(panAngle);
-
+            juce::ADSR::Parameters padAdsr {
+                juce::jlimit(0.002f, 5.0f, slot.attackSec),
+                juce::jlimit(0.01f,  5.0f, slot.decaySec),
+                juce::jlimit(0.0f,   1.0f, slot.sustainLvl),
+                juce::jlimit(0.01f,  8.0f, slot.releaseSec)
+            };
             targetVoice->adsr.setSampleRate(sampleRate);
-            targetVoice->adsr.setParameters(adsrParams);
+            targetVoice->adsr.setParameters(padAdsr);
             targetVoice->adsr.noteOn();
         }
 
@@ -736,11 +818,11 @@ namespace Atlas
         void updateReverbParams()
         {
             juce::dsp::Reverb::Parameters rp;
-            rp.roomSize   = 0.78f;
-            rp.damping    = 0.42f;
+            rp.roomSize   = 0.80f;
+            rp.damping    = 0.45f;
             rp.width      = 1.0f;
-            rp.wetLevel   = reverbWet * 0.55f;
-            rp.dryLevel   = 1.0f - (reverbWet * 0.22f);
+            rp.wetLevel   = 1.0f; // Чисто wet-шина, смешивание делается по закону сохранения энергии
+            rp.dryLevel   = 0.0f;
             rp.freezeMode = 0.0f;
             reverb.setParameters(rp);
         }
@@ -749,8 +831,8 @@ namespace Atlas
         juce::AudioFormatManager formatManager;
         double sampleRate = 44100.0;
 
-        int projectKeyRoot = 9; // По умолчанию A
-        bool isMinor = true;
+        int projectKeyRoot = 9;
+        ScaleType scaleType = ScaleType::NaturalMinor;
         PitchMode pitchMode = PitchMode::ScaleSnap;
         int globalOctaveShift = 0;
 
@@ -760,21 +842,22 @@ namespace Atlas
         double currentPpq = 0.0;
 
         BankMode bankMode = BankMode::Chromatic;
-        juce::ADSR::Parameters adsrParams { 0.012f, 1.2f, 0.80f, 0.35f };
         float glideTimeSec = 0.0f;
         float reverbWet = 0.35f;
+        float masterGainLinear = 1.0f;
 
         juce::dsp::Reverb reverb;
 
         AuditionStream auditionCurrent;
         AuditionStream auditionFadingOut;
         std::atomic<int> lastAuditionedIndex { -1 };
+        std::atomic<uint32_t> activePlayingPadsMask { 0 };
 
         std::array<PadSlotState, 12> padSlots;
         std::array<SampleRecord, 12> padRecords;
         std::array<std::shared_ptr<LoadedSampleAudio>, 12> padAudio;
 
-        std::array<PolyVoice, 24> voices;
+        std::array<PolyVoice, 48> voices;
         std::set<int> heldNotes;
     };
 }
