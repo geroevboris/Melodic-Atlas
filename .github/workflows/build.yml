@@ -5,7 +5,7 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-# Автоматически отменяет старые висящие сборки в очереди при новом пуше
+# Автоматически отменяет старые билды в очереди при сохранении следующего файла
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            artifact_name: Melodic-Atlas-macOS
+            artifact_name: Melodic-Atlas-macOS-Universal
           - os: windows-latest
-            artifact_name: Melodic-Atlas-Windows
+            artifact_name: Melodic-Atlas-Windows-x64
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
