@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Фиксируем совместимость со старыми версиями macOS
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
+# Автоматическая сборка Universal Binary (Apple Silicon arm64 + Intel x86_64) для macOS
+if(APPLE)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal architectures" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
+endif()
 
 project(MelodicAtlas VERSION 1.0.0)
 
@@ -10,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# 1. Подключаем JUCE 8 с поддержкой macOS 15 SDK
+# 1. JUCE 8.0.4 с нативной поддержкой macOS 15 SDK
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -19,7 +22,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
-# 2. Подключаем Signalsmith Stretch
+# 2. Signalsmith Stretch (тайм-стретч лупов без изменения тональности)
 FetchContent_Declare(
     signalsmith_stretch
     GIT_REPOSITORY https://github.com/signalsmith-audio/signalsmith-stretch.git
