@@ -40,10 +40,10 @@ namespace Atlas
 
         void paint(juce::Graphics& g) override
         {
-            const auto bounds = getLocalBounds().toFloat();
+            auto bounds = getLocalBounds().toFloat();
             const float historyHeight = 28.0f;
-            const auto mapRect = bounds.withTrimmedBottom(historyHeight);
             const auto historyRect = bounds.removeFromBottom(historyHeight);
+            const auto mapRect = bounds;
 
             // 1. Глубокий графитовый фон карты
             g.setColour(juce::Colour(0xff0b0e12));
