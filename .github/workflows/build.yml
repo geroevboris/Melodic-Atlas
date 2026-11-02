@@ -5,27 +5,31 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+# Автоматически отменяет старые висящие сборки в очереди при новом пуше
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-14
             artifact_name: Melodic-Atlas-macOS
-            cmake_args: "-DCMAKE_OSX_ARCHITECTURES=\"arm64;x86_64\""
           - os: windows-latest
             artifact_name: Melodic-Atlas-Windows
-            cmake_args: ""
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Plugin (Release)
         run: cmake --build build --config Release --parallel 4
