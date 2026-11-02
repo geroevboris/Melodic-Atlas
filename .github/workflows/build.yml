@@ -13,7 +13,7 @@ jobs:
         include:
           - os: macos-latest
             artifact_name: Melodic-Atlas-macOS
-            cmake_args: "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+            cmake_args: "-DCMAKE_OSX_ARCHITECTURES=\"arm64;x86_64\""
           - os: windows-latest
             artifact_name: Melodic-Atlas-Windows
             cmake_args: ""
@@ -23,14 +23,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Ensure JuceHeader Generation in CMakeLists.txt
-        shell: bash
-        run: |
-          if ! grep -q "juce_generate_juce_header" CMakeLists.txt; then
-            echo "" >> CMakeLists.txt
-            echo "juce_generate_juce_header(MelodicAtlas)" >> CMakeLists.txt
-          fi
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
