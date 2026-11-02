@@ -11,12 +11,13 @@ namespace Atlas
     {
     public:
         std::function<void(int sampleIdx)> onSampleTriggered;
-        std::function<void(int sampleIdx, juce::Point<int> screenPos)> onSampleDragged;
+        std::function<void(int sampleIdx, juce::Point<int> screenPos, bool finished)> onSampleDragged;
 
         MapCanvasComponent(SamplerEngine& engineRef)
             : sampler(engineRef)
         {
             setOpaque(true);
+            setWantsKeyboardFocus(true);
             startTimerHz(30);
         }
 
@@ -30,6 +31,9 @@ namespace Atlas
 
         void setViewFilter(bool showLoopsTab, FilterCategory cat, uint32_t activeMask)
         {
+            if (loopsTabActive != showLoopsTab)
+                sampler.stopAudition();
+
             loopsTabActive = showLoopsTab;
             filterCategory = cat;
             filterBitMask  = activeMask;
@@ -45,66 +49,103 @@ namespace Atlas
             const auto historyRect = bounds.removeFromBottom(historyHeight);
             const auto mapRect = bounds;
 
-            // 1. Глубокий графитовый фон карты
-            g.setColour(juce::Colour(0xff0b0e12));
+            // 1. Фон карты
+            g.setColour(juce::Colour(0xff0b0e13));
             g.fillRect(mapRect);
 
-            // 2. Тонкая перспективная координатная сетка
+            // 2. Координатная сетка
             drawSubtleGrid(g, mapRect);
 
-            // 3. Отрисовка созвездий сэмплов
+            // 3. Цветовая легенда кластеров сверху карты
+            drawClusterLegend(g, mapRect);
+
+            // 4. Чёткая отрисовка точек с XO-подобным Spatial LOD (прореживание в отдалении, детализация при зуме)
             if (database != nullptr && !database->empty())
             {
                 const auto& db = *database;
+
+                // Сетка занятости экрана, чтобы точки не слипались в мутную кашу на малом зуме
+                const int gridCellPx = (zoomLevel < 1.8f) ? 6 : ((zoomLevel < 3.5f) ? 4 : 2);
+                const int gridW = std::max(1, (int)mapRect.getWidth() / gridCellPx + 2);
+                const int gridH = std::max(1, (int)mapRect.getHeight() / gridCellPx + 2);
+                std::vector<uint8_t> occupied((size_t)(gridW * gridH), 0);
+
+                // Сначала рисуем фоновые (отфильтрованные) точки
+                if (filterBitMask != 0)
+                {
+                    for (size_t i = 0; i < db.size(); ++i)
+                    {
+                        const auto& rec = db[i];
+                        if (rec.isLoop != loopsTabActive || checkFilterMatch(rec))
+                            continue;
+
+                        auto pt = mapToScreen(rec.mapX, rec.mapY, mapRect);
+                        if (!mapRect.contains(pt)) continue;
+
+                        int gx = juce::jlimit(0, gridW - 1, (int)(pt.x - mapRect.getX()) / gridCellPx);
+                        int gy = juce::jlimit(0, gridH - 1, (int)(pt.y - mapRect.getY()) / gridCellPx);
+                        if (occupied[(size_t)(gy * gridW + gx)]) continue;
+                        occupied[(size_t)(gy * gridW + gx)] = 1;
+
+                        juce::Colour baseCol = MusicMath::getClusterColour(rec.cluster, rec.spectralCentroidNorm);
+                        g.setColour(baseCol.withAlpha(0.14f));
+                        g.fillEllipse(pt.x - 2.0f, pt.y - 2.0f, 4.0f, 4.0f);
+                    }
+                    std::fill(occupied.begin(), occupied.end(), 0);
+                }
+
+                // Рисуем активные точки с идеальной резкостью
+                const float dotRadius = 2.6f;
                 for (int i = 0; i < (int)db.size(); ++i)
                 {
-                    const auto& rec = db[i];
-                    if (rec.isLoop != loopsTabActive)
+                    const auto& rec = db[(size_t)i];
+                    if (rec.isLoop != loopsTabActive || !checkFilterMatch(rec))
                         continue;
 
                     auto pt = mapToScreen(rec.mapX, rec.mapY, mapRect);
                     if (!mapRect.contains(pt))
                         continue;
 
-                    bool passesFilter = checkFilterMatch(rec);
-                    juce::Colour baseCol = MusicMath::getKeyColour(rec.pitchClass, rec.spectralCentroidNorm);
-
-                    if (!passesFilter)
+                    bool isHoveredOrActive = (i == activeSampleIndex || i == highlightedHistorySampleIndex);
+                    if (!isHoveredOrActive)
                     {
-                        g.setColour(baseCol.withAlpha(0.11f));
-                        g.fillEllipse(pt.x - 2.0f, pt.y - 2.0f, 4.0f, 4.0f);
-                        continue;
+                        int gx = juce::jlimit(0, gridW - 1, (int)(pt.x - mapRect.getX()) / gridCellPx);
+                        int gy = juce::jlimit(0, gridH - 1, (int)(pt.y - mapRect.getY()) / gridCellPx);
+                        size_t cellIdx = (size_t)(gy * gridW + gx);
+                        if (occupied[cellIdx]) continue;
+                        occupied[cellIdx] = 1;
                     }
 
-                    bool isHoveredOrActive = (i == activeSampleIndex || i == highlightedHistorySampleIndex);
+                    juce::Colour col = MusicMath::getClusterColour(rec.cluster, rec.spectralCentroidNorm);
+
                     if (isHoveredOrActive)
                     {
-                        // Внешний пульсирующий ореол вокруг выбранной точки
-                        float pulseRadius = 14.0f + 3.0f * std::sin(pulsePhase);
-                        g.setColour(baseCol.withAlpha(0.22f));
+                        float pulseRadius = 11.0f + 2.5f * std::sin(pulsePhase);
+                        g.setColour(col.withAlpha(0.28f));
                         g.fillEllipse(pt.x - pulseRadius, pt.y - pulseRadius, pulseRadius * 2.0f, pulseRadius * 2.0f);
 
-                        g.setColour(baseCol.withAlpha(0.75f));
-                        g.drawEllipse(pt.x - 10.0f, pt.y - 10.0f, 20.0f, 20.0f, 1.2f);
+                        g.setColour(col);
+                        g.drawEllipse(pt.x - 7.5f, pt.y - 7.5f, 15.0f, 15.0f, 1.5f);
 
                         g.setColour(juce::Colours::white);
-                        g.fillEllipse(pt.x - 4.0f, pt.y - 4.0f, 8.0f, 8.0f);
+                        g.fillEllipse(pt.x - 3.5f, pt.y - 3.5f, 7.0f, 7.0f);
                     }
                     else
                     {
-                        // Мягкое свечение точки
-                        g.setColour(baseCol.withAlpha(0.25f));
-                        g.fillEllipse(pt.x - 5.0f, pt.y - 5.0f, 10.0f, 10.0f);
+                        // Чёткая векторная точка с тонким тёмным контуром (как в XO)
+                        g.setColour(juce::Colour(0xcc07090c));
+                        g.fillEllipse(pt.x - (dotRadius + 0.8f), pt.y - (dotRadius + 0.8f),
+                                      (dotRadius + 0.8f) * 2.0f, (dotRadius + 0.8f) * 2.0f);
 
-                        g.setColour(baseCol.withAlpha(0.92f));
-                        g.fillEllipse(pt.x - 2.6f, pt.y - 2.6f, 5.2f, 5.2f);
+                        g.setColour(col.withAlpha(0.96f));
+                        g.fillEllipse(pt.x - dotRadius, pt.y - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
                     }
                 }
 
-                // 4. Отрисовка всплывающего бокса с волной над активной точкой
+                // 5. Карточка волны над выбранной точкой
                 if (activeSampleIndex >= 0 && activeSampleIndex < (int)db.size())
                 {
-                    const auto& rec = db[activeSampleIndex];
+                    const auto& rec = db[(size_t)activeSampleIndex];
                     if (rec.isLoop == loopsTabActive)
                     {
                         auto pt = mapToScreen(rec.mapX, rec.mapY, mapRect);
@@ -114,20 +155,21 @@ namespace Atlas
             }
             else
             {
-                // Заглушка до загрузки папки
                 g.setColour(juce::Colour(0xff687380));
                 g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain));
-                g.drawText("[ DROP SAMPLE FOLDER HERE OR CLICK 'SCAN FOLDER' IN TOP RIGHT ]",
+                g.drawText("[ DROP SAMPLE FOLDER HERE OR CLICK 'SCAN SAMPLE FOLDER' ]",
                            mapRect, juce::Justification::centred, false);
             }
 
-            // 5. Отрисовка ленты HISTORY TRACK внизу полотна
+            // 6. Лента истории
             drawHistoryTrack(g, historyRect);
         }
 
         void mouseDown(const juce::MouseEvent& e) override
         {
+            grabKeyboardFocus();
             const float historyHeight = 28.0f;
+
             if (e.position.y >= getHeight() - historyHeight)
             {
                 handleHistoryClick(e.position);
@@ -142,14 +184,36 @@ namespace Atlas
 
             dragStartPos = e.position;
             isDraggingSample = false;
-            surfAtPosition(e.position);
+
+            // Если кликнули по карточке волны — можно сразу перетаскивать сэмпл или остановить луп
+            if (activeSampleIndex >= 0 && lastCalloutBox.contains(e.position))
+            {
+                startedOnActivePoint = true;
+                sampler.triggerPadFromUI(-1); // no-op
+                triggerSamplePoint(activeSampleIndex); // Повторный клик перезапускает звук
+                return;
+            }
+
+            // Проверяем, кликнули ли прямо в уже выбранную точку или новую точку (forceRetrigger = true!)
+            int prevActive = activeSampleIndex;
+            int hitIdx = findClosestSample(e.position);
+
+            if (hitIdx >= 0)
+            {
+                startedOnActivePoint = (hitIdx == prevActive);
+                triggerSamplePoint(hitIdx); // Всегда проигрываем повторно при клике!
+            }
+            else
+            {
+                startedOnActivePoint = false;
+                sampler.stopAudition();
+                repaint();
+            }
         }
 
         void mouseDrag(const juce::MouseEvent& e) override
         {
             const float historyHeight = 28.0f;
-            if (e.position.y >= getHeight() - historyHeight)
-                return;
 
             if (e.mods.isRightButtonDown() || e.mods.isMiddleButtonDown())
             {
@@ -162,20 +226,41 @@ namespace Atlas
                 return;
             }
 
-            // Если зажат Command/Alt или Shift — перетаскиваем активный сэмпл в пэд или в DAW
-            if ((e.mods.isCommandDown() || e.mods.isAltDown() || e.mods.isShiftDown()) && activeSampleIndex >= 0)
+            // Перетаскивание звука в банк пэдов или в Ableton (срабатывает при вытягивании вниз к пэдам,
+            // за пределы карты, при перетаскивании выбранной точки/плашки или с зажатым Cmd/Shift/Alt)
+            bool pulledTowardsBankOrDaw = (e.position.y > (float)getHeight() - 24.0f) ||
+                                          (e.position.x < 0.0f || e.position.x > (float)getWidth() || e.position.y < 0.0f);
+            bool modifierDrag = (e.mods.isCommandDown() || e.mods.isAltDown() || e.mods.isShiftDown());
+
+            if (activeSampleIndex >= 0 && (isDraggingSample || startedOnActivePoint || pulledTowardsBankOrDaw || modifierDrag))
             {
-                if (!isDraggingSample && e.position.getDistanceFrom(dragStartPos) > 6.0f)
+                if (e.position.getDistanceFrom(dragStartPos) > 7.0f)
                 {
                     isDraggingSample = true;
                     if (onSampleDragged)
-                        onSampleDragged(activeSampleIndex, localPointToGlobal(e.position.toInt()));
+                        onSampleDragged(activeSampleIndex, localPointToGlobal(e.position.toInt()), false);
+                    return;
                 }
-                return;
             }
 
-            // Бесшовный серфинг по созвездиям
-            surfAtPosition(e.position);
+            if (e.position.y < (float)getHeight() - historyHeight)
+            {
+                // При серфинге с зажатой мышью переключаем только при переходе на другую точку
+                int hitIdx = findClosestSample(e.position);
+                if (hitIdx >= 0 && hitIdx != activeSampleIndex)
+                    triggerSamplePoint(hitIdx);
+            }
+        }
+
+        void mouseUp(const juce::MouseEvent& e) override
+        {
+            if (isDraggingSample && activeSampleIndex >= 0)
+            {
+                isDraggingSample = false;
+                if (onSampleDragged)
+                    onSampleDragged(activeSampleIndex, localPointToGlobal(e.position.toInt()), true);
+            }
+            startedOnActivePoint = false;
         }
 
         void mouseMove(const juce::MouseEvent& e) override
@@ -192,13 +277,38 @@ namespace Atlas
             }
         }
 
-        void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
+        void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
         {
-            float factor = (wheel.deltaY > 0.0f) ? 1.15f : 0.87f;
-            zoomLevel = juce::jlimit(1.0f, 7.0f, zoomLevel * factor);
+            const auto mapRect = getLocalBounds().toFloat().withTrimmedBottom(28.0f);
+            float oldZoom = zoomLevel;
+            float factor = (wheel.deltaY > 0.0f) ? 1.18f : 0.85f;
+            zoomLevel = juce::jlimit(1.0f, 10.0f, zoomLevel * factor);
+
             if (zoomLevel <= 1.02f)
+            {
                 panOffset = { 0.0f, 0.0f };
+            }
+            else if (mapRect.contains(e.position))
+            {
+                // Зум относительно позиции курсора мыши
+                float relX = (e.position.x - mapRect.getCentreX()) / mapRect.getWidth();
+                float relY = (e.position.y - mapRect.getCentreY()) / mapRect.getHeight();
+                panOffset.x += relX * (1.0f / oldZoom - 1.0f / zoomLevel);
+                panOffset.y += relY * (1.0f / oldZoom - 1.0f / zoomLevel);
+                panOffset.x = juce::jlimit(-0.48f, 0.48f, panOffset.x);
+                panOffset.y = juce::jlimit(-0.48f, 0.48f, panOffset.y);
+            }
             repaint();
+        }
+
+        bool keyPressed(const juce::KeyPress& key) override
+        {
+            if (key == juce::KeyPress::spaceKey)
+            {
+                sampler.stopAudition();
+                return true;
+            }
+            return false;
         }
 
     private:
@@ -226,30 +336,32 @@ namespace Atlas
         juce::Point<float> mapToScreen(float normX, float normY, const juce::Rectangle<float>& rect) const
         {
             float zx = (normX - 0.5f - panOffset.x) * zoomLevel + 0.5f;
-            float zy = (1.0f - normY - 0.5f - panOffset.y) * zoomLevel + 0.5f; // Яркие сверху, темные снизу
+            float zy = (1.0f - normY - 0.5f - panOffset.y) * zoomLevel + 0.5f;
 
-            float px = rect.getX() + 28.0f + zx * (rect.getWidth() - 56.0f);
-            float py = rect.getY() + 24.0f + zy * (rect.getHeight() - 48.0f);
+            float px = rect.getX() + 24.0f + zx * (rect.getWidth() - 48.0f);
+            float py = rect.getY() + 26.0f + zy * (rect.getHeight() - 44.0f);
             return { px, py };
         }
 
-        void surfAtPosition(juce::Point<float> mousePos)
+        int findClosestSample(juce::Point<float> mousePos) const
         {
-            if (database == nullptr || database->empty()) return;
+            if (database == nullptr || database->empty()) return -1;
 
             const auto mapRect = getLocalBounds().toFloat().withTrimmedBottom(28.0f);
             const auto& db = *database;
 
             int closestIdx = -1;
-            float minDistSq = 22.0f * 22.0f; // Радиус захвата курсором 22 пикселя
+            float minDistSq = 18.0f * 18.0f;
 
             for (int i = 0; i < (int)db.size(); ++i)
             {
-                const auto& rec = db[i];
+                const auto& rec = db[(size_t)i];
                 if (rec.isLoop != loopsTabActive || !checkFilterMatch(rec))
                     continue;
 
                 auto pt = mapToScreen(rec.mapX, rec.mapY, mapRect);
+                if (!mapRect.contains(pt)) continue;
+
                 float dSq = pt.getDistanceSquaredFrom(mousePos);
                 if (dSq < minDistSq)
                 {
@@ -257,11 +369,7 @@ namespace Atlas
                     closestIdx = i;
                 }
             }
-
-            if (closestIdx >= 0 && closestIdx != activeSampleIndex)
-            {
-                triggerSamplePoint(closestIdx);
-            }
+            return closestIdx;
         }
 
         void triggerSamplePoint(int idx)
@@ -270,9 +378,8 @@ namespace Atlas
                 return;
 
             activeSampleIndex = idx;
-            sampler.auditionSample(idx, (*database)[idx]);
+            sampler.auditionSample(idx, (*database)[(size_t)idx]);
 
-            // Добавляем в историю (до 15 точек без дублирования подряд)
             if (historyIndices.empty() || historyIndices.back() != idx)
             {
                 historyIndices.push_back(idx);
@@ -288,7 +395,7 @@ namespace Atlas
 
         void drawSubtleGrid(juce::Graphics& g, const juce::Rectangle<float>& rect)
         {
-            g.setColour(juce::Colour(0xff161b22));
+            g.setColour(juce::Colour(0xff141920));
             const int vLines = 16;
             const int hLines = 8;
 
@@ -307,35 +414,70 @@ namespace Atlas
             g.drawRect(rect, 1.0f);
         }
 
+        void drawClusterLegend(juce::Graphics& g, const juce::Rectangle<float>& mapRect)
+        {
+            struct LegendItem { ClusterGroup group; const char* title; };
+            static const LegendItem items[6] = {
+                { ClusterGroup::DeepBass,    "DEEP/BASS" },
+                { ClusterGroup::Keys,        "KEYS" },
+                { ClusterGroup::GuitarPluck, "GUITAR/PLUCK" },
+                { ClusterGroup::SynthLead,   "SYNTH" },
+                { ClusterGroup::Vocal,       "VOX" },
+                { ClusterGroup::StringsPad,  "STRINGS/PAD" }
+            };
+
+            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 10.5f, juce::Font::plain));
+            float x = mapRect.getX() + 10.0f;
+            float y = mapRect.getY() + 6.0f;
+
+            for (int i = 0; i < 6; ++i)
+            {
+                juce::Colour c = MusicMath::getClusterColour(items[i].group, 0.6f);
+                g.setColour(c);
+                g.fillEllipse(x, y + 3.0f, 6.5f, 6.5f);
+
+                g.setColour(juce::Colour(0xff7f8c9b));
+                juce::String lbl(items[i].title);
+                float tw = (float)lbl.length() * 6.5f + 16.0f;
+                g.drawText(lbl, (int)(x + 10.0f), (int)y - 1, (int)tw, 14, juce::Justification::centredLeft, false);
+                x += tw + 8.0f;
+            }
+
+            if (zoomLevel > 1.05f)
+            {
+                g.setColour(juce::Colour(0xff7ec8a3));
+                g.drawText("ZOOM: " + juce::String(zoomLevel, 1) + "x (R-Click Pan)",
+                           (int)mapRect.getRight() - 165, (int)y - 1, 155, 14, juce::Justification::centredRight, false);
+            }
+        }
+
         void drawWaveformCallout(juce::Graphics& g, juce::Point<float> pt,
                                  const SampleRecord& rec, const juce::Rectangle<float>& mapRect)
         {
-            const float boxW = 168.0f;
-            const float boxH = 54.0f;
+            const float boxW = 192.0f;
+            const float boxH = 56.0f;
 
-            float bx = pt.x + 16.0f;
+            float bx = pt.x + 14.0f;
             float by = pt.y - boxH - 10.0f;
-            if (bx + boxW > mapRect.getRight() - 8.0f) bx = pt.x - boxW - 16.0f;
-            if (by < mapRect.getY() + 8.0f) by = pt.y + 16.0f;
+            if (bx + boxW > mapRect.getRight() - 8.0f) bx = pt.x - boxW - 14.0f;
+            if (by < mapRect.getY() + 20.0f) by = pt.y + 14.0f;
 
-            juce::Rectangle<float> box(bx, by, boxW, boxH);
+            lastCalloutBox = { bx, by, boxW, boxH };
 
-            // Тонкая соединительная линия от точки к карточке волны
             g.setColour(juce::Colour(0xaa8b98a9));
-            g.drawLine(pt.x, pt.y, box.getCentreX(), box.getBottom(), 1.0f);
+            g.drawLine(pt.x, pt.y, lastCalloutBox.getCentreX(), lastCalloutBox.getBottom(), 1.0f);
 
-            g.setColour(juce::Colour(0xe8141920));
-            g.fillRoundedRectangle(box, 3.0f);
-            g.setColour(juce::Colour(0xff384454));
-            g.drawRoundedRectangle(box, 3.0f, 1.0f);
+            g.setColour(juce::Colour(0xf0131820));
+            g.fillRoundedRectangle(lastCalloutBox, 3.5f);
+            juce::Colour col = MusicMath::getClusterColour(rec.cluster, 0.75f);
+            g.setColour(col.withAlpha(0.85f));
+            g.drawRoundedRectangle(lastCalloutBox, 3.5f, 1.2f);
 
-            // Рисуем мини-волну
             auto audio = sampler.getAuditionAudio();
             if (audio != nullptr)
             {
-                auto waveArea = box.reduced(8.0f, 6.0f).withTrimmedBottom(16.0f);
-                juce::Colour waveCol = MusicMath::getKeyColour(rec.pitchClass, 0.8f);
-                g.setColour(waveCol.withAlpha(0.85f));
+                auto waveArea = lastCalloutBox.reduced(8.0f, 6.0f).withTrimmedBottom(17.0f);
+                g.setColour(col.withAlpha(0.92f));
 
                 const auto& peaks = audio->waveformPeaks;
                 const float barW = waveArea.getWidth() / (float)peaks.size();
@@ -343,16 +485,15 @@ namespace Atlas
 
                 for (size_t k = 0; k < peaks.size(); ++k)
                 {
-                    float h = std::max(1.5f, peaks[k] * waveArea.getHeight() * 0.9f);
-                    g.fillRect(waveArea.getX() + (float)k * barW, midY - h * 0.5f, std::max(1.0f, barW - 0.5f), h);
+                    float h = std::max(1.5f, peaks[k] * waveArea.getHeight() * 0.92f);
+                    g.fillRect(waveArea.getX() + (float)k * barW, midY - h * 0.5f, std::max(1.0f, barW - 0.4f), h);
                 }
             }
 
-            // Имя сэмпла и его нота
-            g.setColour(juce::Colour(0xffd5dde6));
-            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 11.5f, juce::Font::plain));
-            juce::String label = rec.name.substring(0, 18) + " [" + MusicMath::getNoteName(rec.pitchClass) + "]";
-            g.drawText(label, box.reduced(6.0f, 3.0f).removeFromBottom(16.0f),
+            g.setColour(juce::Colour(0xffdce5f0));
+            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 11.0f, juce::Font::plain));
+            juce::String label = rec.name.substring(0, 16) + " [" + MusicMath::getNoteName(rec.pitchClass) + "] DRAG->";
+            g.drawText(label, lastCalloutBox.reduced(7.0f, 3.0f).removeFromBottom(16.0f),
                        juce::Justification::centredLeft, true);
         }
 
@@ -371,7 +512,6 @@ namespace Atlas
             const float stepX = 24.0f;
             const float cy = rect.getCentreY();
 
-            // Отрисовка 15 узлов истории
             for (int i = 0; i < 15; ++i)
             {
                 float cx = startX + (float)i * stepX;
@@ -383,14 +523,14 @@ namespace Atlas
 
                 if (i < (int)historyIndices.size() && database != nullptr)
                 {
-                    int sIdx = historyIndices[i];
-                    const auto& rec = (*database)[sIdx];
+                    int sIdx = historyIndices[(size_t)i];
+                    const auto& rec = (*database)[(size_t)sIdx];
                     bool isHovered = (sIdx == highlightedHistorySampleIndex);
                     bool isLatest  = (i == (int)historyIndices.size() - 1);
 
                     if (isHovered)
                     {
-                        juce::Colour keyCol = MusicMath::getKeyColour(rec.pitchClass, 0.85f);
+                        juce::Colour keyCol = MusicMath::getClusterColour(rec.cluster, 0.8f);
                         g.setColour(keyCol);
                         g.fillEllipse(cx - 5.0f, cy - 5.0f, 10.0f, 10.0f);
                     }
@@ -412,13 +552,13 @@ namespace Atlas
                 }
             }
 
-            // Справа выводим имя последнего прослушанного сэмпла
             if (database != nullptr && activeSampleIndex >= 0 && activeSampleIndex < (int)database->size())
             {
-                const auto& rec = (*database)[activeSampleIndex];
+                const auto& rec = (*database)[(size_t)activeSampleIndex];
                 g.setColour(juce::Colour(0xff8c99a8));
-                juce::String info = rec.name + ".wav  [" + MusicMath::getNoteName(rec.pitchClass) + " | -6dB]";
-                g.drawText(info, rect.withTrimmedRight(12.0f).withWidth(280.0f).withX(rect.getRight() - 292.0f),
+                juce::String typeStr = rec.isLoop ? "LOOP" : "1-SHOT";
+                juce::String info = rec.name + " [" + MusicMath::getNoteName(rec.pitchClass) + " | " + typeStr + "]";
+                g.drawText(info, rect.withTrimmedRight(12.0f).withWidth(340.0f).withX(rect.getRight() - 352.0f),
                            juce::Justification::centredRight, true);
             }
         }
@@ -432,9 +572,9 @@ namespace Atlas
             for (int i = 0; i < (int)historyIndices.size(); ++i)
             {
                 float cx = startX + (float)i * stepX;
-                if ( std::abs(pos.x - cx) < 10.0f )
+                if (std::abs(pos.x - cx) < 10.0f)
                 {
-                    foundSampleIdx = historyIndices[i];
+                    foundSampleIdx = historyIndices[(size_t)i];
                     break;
                 }
             }
@@ -463,12 +603,14 @@ namespace Atlas
         int activeSampleIndex = -1;
         int highlightedHistorySampleIndex = -1;
         std::deque<int> historyIndices;
+        juce::Rectangle<float> lastCalloutBox;
 
         float zoomLevel = 1.0f;
         juce::Point<float> panOffset { 0.0f, 0.0f };
         juce::Point<float> lastPanPos;
         juce::Point<float> dragStartPos;
         bool isDraggingSample = false;
+        bool startedOnActivePoint = false;
         float pulsePhase = 0.0f;
     };
 }
