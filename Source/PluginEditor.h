@@ -27,18 +27,18 @@ namespace Atlas
             const float toAngle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
             juce::Path bgArc;
-            bgArc.addCentredArc(centreX, centreY, radius + 3.2f, radius + 3.2f,
+            bgArc.addCentredArc(centreX, centreY, radius + 3.0f, radius + 3.0f,
                                 0.0f, rotaryStartAngle, rotaryEndAngle, true);
             g.setColour(juce::Colour(0xff262e38));
-            g.strokePath(bgArc, juce::PathStrokeType(2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.strokePath(bgArc, juce::PathStrokeType(2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
             if (sliderPosProportional > 0.005f)
             {
                 juce::Path valArc;
-                valArc.addCentredArc(centreX, centreY, radius + 3.2f, radius + 3.2f,
+                valArc.addCentredArc(centreX, centreY, radius + 3.0f, radius + 3.0f,
                                      0.0f, rotaryStartAngle, toAngle, true);
                 g.setColour(juce::Colour(0xff7ec8a3));
-                g.strokePath(valArc, juce::PathStrokeType(2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.strokePath(valArc, juce::PathStrokeType(2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
 
             g.setColour(juce::Colour(0xff171c22));
@@ -48,7 +48,7 @@ namespace Atlas
 
             juce::Path pointer;
             const float pointerLen = radius * 0.72f;
-            pointer.addRectangle(-1.1f, -radius + 2.2f, 2.2f, pointerLen);
+            pointer.addRectangle(-1.1f, -radius + 2.0f, 2.2f, pointerLen);
             g.setColour(juce::Colour(0xffe8eef5));
             g.fillPath(pointer, juce::AffineTransform::rotation(toAngle).translated(centreX, centreY));
         }
@@ -82,6 +82,14 @@ private:
     void drawFilterBar(juce::Graphics& g);
     void drawBankSection(juce::Graphics& g);
     void drawPadSlot(juce::Graphics& g, int padIdx, const juce::Rectangle<float>& r, bool isPlayingNow);
+    void drawPadNormalView(juce::Graphics& g, int padIdx, const juce::Rectangle<float>& r,
+                           const Atlas::PadSlotState& padState, const Atlas::SampleRecord* rec,
+                           std::shared_ptr<Atlas::CachedAudioData> audio, bool isPlayingNow);
+    void drawPadGearSettingsView(juce::Graphics& g, int padIdx, const juce::Rectangle<float>& r,
+                                 const Atlas::PadSlotState& padState,
+                                 std::shared_ptr<Atlas::CachedAudioData> audio);
+    void drawMiniDial(juce::Graphics& g, juce::Rectangle<float> dialRect, float normVal,
+                      const juce::String& label, const juce::String& valStr, bool bipolar = false);
 
     void handleTopHeaderClick(juce::Point<float> pt);
     void handleFilterBarClick(juce::Point<float> pt);
@@ -89,9 +97,6 @@ private:
 
     void showKeyPopupMenu();
     void showScalePopupMenu();
-    void syncKnobsFromSelectedPad();
-    void applyToTargetPads(std::function<void(Atlas::PadSlotState&)> fn);
-
     void exportPadsToDaw(const std::vector<int>& padIndices);
     void openFolderChooser();
 
@@ -99,48 +104,59 @@ private:
     Atlas::AtlasLookAndFeel atlasLookAndFeel;
     Atlas::MapCanvasComponent mapCanvas;
 
-    // Верхние мастер-крутилки
-    juce::Slider reverbSlider;
-    juce::Slider masterVolSlider;
+    // Глобальные крутилки (верхняя панель + мастер-панель банка справа)
+    juce::Slider previewTuneSlider; // Общая крутилка высоты тона для предпрослушивания
+    juce::Slider mapReverbSlider;   // Реверб предпрослушивания на карте
+    juce::Slider bankReverbSlider;  // Отдельная ручка реверба для банка с отобранными сэмплами
+    juce::Slider glideSlider;       // Портаменто банка
+    juce::Slider masterVolSlider;   // Выходная громкость
 
-    // 8 крутилок инспектора пэда справа внизу (VOL, PAN, TUNE, GLIDE + A, D, S, R)
-    juce::Slider padVolSlider;
-    juce::Slider padPanSlider;
-    juce::Slider padTuneSlider;
-    juce::Slider glideSlider;
-
-    juce::Slider attackSlider;
-    juce::Slider decaySlider;
-    juce::Slider sustainSlider;
-    juce::Slider releaseSlider;
-
-    Atlas::FilterCategory activeFilterCategory = Atlas::FilterCategory::Timbre;
-    uint32_t activeTimbreMask = 0;
-    uint32_t activeCharacterMask = 0;
+    // Фильтры единой карты: -1 = ВСЕ, 0..7 = конкретная группа (Keys, Synth, Bass, Vox, Strings, Guitar, FX, Other)
+    int selectedClusterFilter = -1;
+    uint32_t activeSubFilterMask = 0;
 
     std::set<int> selectedPads { 0 };
     int primarySelectedPad = 0;
     int hoveredDropPadIndex = -1;
     uint32_t lastPlayingMask = 0;
 
-    // Состояние перетаскивания параметров прямо на пэде или BPM
-    int draggingPadIndex = -1;
-    int inlineEditPadIndex = -1;
-    int inlineEditParamType = 0; // 1 = Vol, 2 = Pan, 3 = Tune
-    float inlineEditStartVal = 0.0f;
-    bool draggingBpmValue = false;
-    double bpmDragStartVal = 128.0;
+    // Интерактивное редактирование внутри пэда (под шестерёнкой ⚙ или перетаскивание)
+    enum class PadDragAction
+    {
+        None = 0,
+        DragPadToDaw,
+        RegionStart,
+        RegionEnd,
+        DialSemitones,
+        DialCents,
+        DialVol,
+        DialPan,
+        DialAttack,
+        DialDecay,
+        DialSustain,
+        DialRelease
+    };
+
+    PadDragAction currentPadDragAction = PadDragAction::None;
+    int activeDragPadIndex = -1;
+    float dragStartParamValue = 0.0f;
     juce::Point<float> padDragStartPos;
 
-    // Геометрия кнопок
+    // Ручная подстройка BPM при выключенной кнопке синхронизации
+    bool draggingBpmValue = false;
+    double bpmDragStartVal = 120.0;
+
+    // Прямоугольники элементов интерфейса
     std::array<juce::Rectangle<float>, 12> padRects;
     juce::Rectangle<float> btnOneShots, btnLoops;
-    juce::Rectangle<float> btnKeyRoot, btnScaleType, btnPitchMode, btnKeyLock;
-    juce::Rectangle<float> btnBpmValue, btnBpmLock, btnOctDown, btnOctUp, btnScanFolder;
-    juce::Rectangle<float> btnModeTimbre, btnModeCharacter;
-    std::array<juce::Rectangle<float>, 5> timbreTagRects;
-    std::array<juce::Rectangle<float>, 7> charTagRects;
-    juce::Rectangle<float> btnPadTriggerMode, btnChromaticMode;
+    juce::Rectangle<float> btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
+    juce::Rectangle<float> btnBpmSync; // Единая кнопка BPM (горит = Sync ON, не горит = Sync OFF)
+    juce::Rectangle<float> btnOctDown, btnOctUp, btnScanFolder;
+
+    std::array<juce::Rectangle<float>, 9> groupFilterRects; // [ALL] + 8 групп
+    std::array<juce::Rectangle<float>, 7> subFilterRects;   // 7 уточняющих подгрупп
+
+    juce::Rectangle<float> btnPadTriggerMode, btnChromaticMode, btnLockPadSettings;
     juce::Rectangle<float> btnClearAllBank, btnDragAllAudio;
 
     uint64_t lastSeenDbVersion = 0;
