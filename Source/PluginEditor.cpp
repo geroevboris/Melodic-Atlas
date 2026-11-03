@@ -11,7 +11,7 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(MelodicAtlasA
     addAndMakeVisible(mapCanvas);
     mapCanvas.setSampleDatabase(&audioProcessor.getSampleDatabase());
 
-    // Правый клик по точке на карте — мгновенное добавление звука в выделенный пэд
+    // Правый клик по точке на карте — мгновенное добавление звука в выделенный пэд без меню
     mapCanvas.onSampleRightClicked = [this](int sampleIdx)
     {
         if (selectedPads.empty())
@@ -22,7 +22,6 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(MelodicAtlasA
             audioProcessor.assignSampleToPadWithPreviewSettings(pIdx, sampleIdx);
             primarySelectedPad = pIdx;
         }
-        syncKnobsFromSelectedPad();
         audioProcessor.getSamplerEngine().triggerPadFromUI(primarySelectedPad);
         repaint();
     };
@@ -60,7 +59,6 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(MelodicAtlasA
                 selectedPads.clear();
                 selectedPads.insert(overPad);
                 primarySelectedPad = overPad;
-                syncKnobsFromSelectedPad();
                 audioProcessor.getSamplerEngine().triggerPadFromUI(overPad);
                 repaint();
                 return;
@@ -460,7 +458,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(juce::Graphics& g, int 
 void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(juce::Graphics& g, int padIdx,
                                                                const juce::Rectangle<float>& r,
                                                                const Atlas::PadSlotState& padState,
-                                                               std::shared_ptr<Atlas::CachedAudioData> audio)
+                                                               std::shared_ptr<Atlas::CachedAudioData>)
 {
     const juce::Font monoSmall(juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::plain);
 
@@ -489,7 +487,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(juce::Graphics& g
 }
 
 void MelodicAtlasAudioProcessorEditor::drawMiniDial(juce::Graphics& g, juce::Rectangle<float> rect, float normVal,
-                                                    const juce::String& label, const juce::String& valStr, bool)
+                                                    const juce::String& label, const juce::String&, bool)
 {
     g.setColour(juce::Colour(0xff181d25));
     g.fillEllipse(rect);
@@ -671,12 +669,10 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(juce::Point<float> p
         bool curSync = audioProcessor.bpmLockedToHost.load();
         if (curSync)
         {
-            // Кликнули — выключаем синхронизацию (кнопка гаснет, включается ручной режим BPM)
             audioProcessor.bpmLockedToHost.store(false);
         }
         else
         {
-            // Зажатие или клик при выключенной кнопке — включаем обратно Sync с DAW или открываем драг
             audioProcessor.bpmLockedToHost.store(true);
         }
         repaint(630, 0, 110, 40);
@@ -695,19 +691,17 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(juce::Point<float> p
 
 void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(juce::Point<float> pt)
 {
-    // 1. Клик по группам карты ([ALL] + 8 групп)
     for (int i = 0; i < 9; ++i)
     {
         if (groupFilterRects[(size_t)i].contains(pt))
         {
-            selectedClusterFilter = i - 1; // -1 = ALL, 0..7 = ClusterGroup
+            selectedClusterFilter = i - 1;
             mapCanvas.setViewFilter(audioProcessor.showLoopsTab.load(), selectedClusterFilter, activeSubFilterMask);
             repaint();
             return;
         }
     }
 
-    // 2. Клик по подгруппам характера
     static const uint32_t subBits[7] = {
         Atlas::Sub_Clean, Atlas::Sub_Noisy, Atlas::Sub_Warm,
         Atlas::Sub_Pluck, Atlas::Sub_Sustain, Atlas::Sub_RiserSweep, Atlas::Sub_Textural
@@ -776,7 +770,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
             auto& padState = audioProcessor.getSamplerEngine().getPadState(i);
             primarySelectedPad = i;
 
-            // Клик по иконке шестерёнки ⚙ в правом верхнем углу пэда
             juce::Rectangle<float> gearZone(r.getRight() - 28.0f, r.getY(), 26.0f, 20.0f);
             if (gearZone.contains(pt))
             {
@@ -785,7 +778,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
                 return;
             }
 
-            // Клик по кнопке Undo (↶)
             juce::Rectangle<float> undoZone(r.getX() + 98.0f, r.getY(), 18.0f, 18.0f);
             if (undoZone.contains(pt))
             {
@@ -794,7 +786,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
                 return;
             }
 
-            // Клик по стрелочкам листания похожих звуков ◄ / ► прямо в пэде
             juce::Rectangle<float> leftArrowZone(r.getX() + 68.0f, r.getY(), 16.0f, 18.0f);
             juce::Rectangle<float> rightArrowZone(r.getX() + 84.0f, r.getY(), 16.0f, 18.0f);
             if (leftArrowZone.contains(pt))
@@ -810,7 +801,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
                 return;
             }
 
-            // Клик по кнопке [+] для назначения текущего выбранного на карте звука в пэд
             juce::Rectangle<float> plusZone(r.getX() + 112.0f, r.getY(), 18.0f, 18.0f);
             if (plusZone.contains(pt))
             {
@@ -825,7 +815,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
                 return;
             }
 
-            // Если открыты настройки шестерёнки — обрабатываем слайдеры
             if (padState.settingsViewOpen)
             {
                 activeDragPadIndex = i;
@@ -838,7 +827,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankClick(const juce::MouseEvent& e
                 return;
             }
 
-            // Если пэд пустой, по клику назначаем текущий активный сэмпл с карты
             int activeMapIdx = mapCanvas.getActiveSampleIndex();
             const auto& db = audioProcessor.getSampleDatabase();
             if (padState.sampleIndex < 0 && activeMapIdx >= 0 && activeMapIdx < (int)db.size())
