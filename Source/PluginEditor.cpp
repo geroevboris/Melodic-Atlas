@@ -53,7 +53,7 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(MelodicAtlasA
         else if (localPt.x < 6.0f || localPt.x > (float)getWidth() - 6.0f ||
                  localPt.y < 6.0f || localPt.y > (float)getHeight() - 6.0f)
         {
-            // Как только курсор с точкой ведут к границе окна плагина — отдаём .wav напрямую в Ableton Live!
+            // Как только курсор с точкой ведут к границе окна плагина — отдаём .wav напрямую в Ableton Live
             hoveredDropPadIndex = -1;
             if (db[(size_t)sampleIdx].file.existsAsFile())
             {
@@ -411,7 +411,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadSlot(juce::Graphics& g, int padIdx
     bool isSelected = (selectedPads.count(padIdx) > 0);
     bool isDropTarget = (hoveredDropPadIndex == padIdx);
 
-    // Подсветка фона пэда при воспроизведении (в обоих режимах!)
+    // Подсветка фона пэда при воспроизведении (в обоих режимах)
     juce::Colour bgCol = (rec != nullptr) ? juce::Colour(0xff202630) : juce::Colour(0xff1a1f27);
     if (isPlayingNow)
         bgCol = juce::Colour(0xff263d35);
@@ -480,7 +480,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadSlot(juce::Graphics& g, int padIdx
     g.setColour(isPlayingNow ? waveCol.brighter(0.4f) : waveCol.withAlpha(0.82f));
 
     const auto& peaks = audio->waveformPeaks;
-    const int step = 2;
+    const size_t step = 2;
     const float barW = waveRect.getWidth() / (float)(peaks.size() / step);
     const float midY = waveRect.getCentreY();
 
