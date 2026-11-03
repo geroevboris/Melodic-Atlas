@@ -7,7 +7,7 @@ namespace Atlas
     class AudioAnalyzer
     {
     public:
-        static constexpr float kTargetMinus6dBLinear = 0.50118723f; // -6.0 dBFS True Peak
+        static constexpr float kTargetMinus6dBLinear = 0.50118723f;
         static constexpr int kFftOrder = 11;
         static constexpr int kFftSize  = 1 << kFftOrder;
 
@@ -59,7 +59,6 @@ namespace Atlas
             if (maxPeak < 0.002f)
                 return false;
 
-            // 1. Анализ огибающей по 16 сегментам для точного распознавания Loop vs One-Shot
             const int numSegs = 16;
             const int segLen = std::max(1, maxSamplesToRead / numSegs);
             std::array<float, numSegs> segRms { 0.0f };
@@ -87,7 +86,7 @@ namespace Atlas
                     rhythmicOnsets++;
             }
 
-            const int earlySamples = std::min(maxSamplesToRead, (int)(reader->sampleRate * 0.085));
+            const int earlySamples = std::min(maxSamplesToRead, (int)(reader->sampleRate * 0.090));
             double earlyEnergy = 0.0;
             double totalEnergy = 0.0;
             int clippedSamples = 0;
@@ -106,20 +105,18 @@ namespace Atlas
             float crestFactor = maxPeak / (globalRms + 1e-6f);
             float clipDensity = (float)clippedSamples / (float)maxSamplesToRead;
 
-            // 2. Спектральный анализ + вычисление Spectral Flux (движение спектра во времени)
             juce::dsp::FFT fft(kFftOrder);
             juce::dsp::WindowingFunction<float> window(kFftSize, juce::dsp::WindowingFunction<float>::hann);
 
             std::vector<float> fftData(kFftSize * 2, 0.0f);
-            std::vector<float> prevMagnitudes(kFftSize / 2, 0.0f);
             int numFrames = std::min(20, std::max(1, (maxSamplesToRead - kFftSize) / (kFftSize / 2)));
 
             float sumFlatness = 0.0f;
             float sumCentroidHz = 0.0f;
             float sumLowBand = 0.0f;
+            float sumWarmBand = 0.0f;
             float sumHighBand = 0.0f;
             float sumRoughness = 0.0f;
-            float sumSpectralFlux = 0.0f;
 
             std::vector<int> framePitches;
             float sumPitchConfidence = 0.0f;
@@ -145,7 +142,7 @@ namespace Atlas
 
                 const int numBins = kFftSize / 2;
                 double logSum = 0.0, arithSum = 0.0, weightedFreqSum = 0.0, magSum = 0.0;
-                double lowE = 0.0, highE = 0.0, hfJaggedness = 0.0, frameFlux = 0.0;
+                double lowE = 0.0, warmE = 0.0, highE = 0.0, hfJaggedness = 0.0;
 
                 for (int b = 1; b < numBins; ++b)
                 {
@@ -158,20 +155,14 @@ namespace Atlas
                     weightedFreqSum += freqHz * mag;
                     magSum += mag;
 
-                    if (freqHz <= 250.0) lowE += power;
+                    if (freqHz <= 240.0) lowE += power;
+                    else if (freqHz <= 950.0) warmE += power;
                     else if (freqHz >= 2400.0)
                     {
                         highE += power;
                         if (b > 1)
                             hfJaggedness += std::abs(fftData[(size_t)b] - fftData[(size_t)(b - 1)]);
                     }
-
-                    if (validFrames > 0)
-                    {
-                        double diff = mag - (double)prevMagnitudes[(size_t)b];
-                        if (diff > 0.0) frameFlux += diff;
-                    }
-                    prevMagnitudes[(size_t)b] = (float)mag;
                 }
 
                 double geomMean = std::exp(logSum / (double)(numBins - 1));
@@ -182,10 +173,9 @@ namespace Atlas
                 sumFlatness += flatness;
                 sumCentroidHz += centroidHz;
                 sumLowBand += (float)(lowE / (arithSum + 1e-12));
+                sumWarmBand += (float)(warmE / (arithSum + 1e-12));
                 sumHighBand += (float)(highE / (arithSum + 1e-12));
                 sumRoughness += (float)(hfJaggedness / (magSum + 1e-12));
-                if (validFrames > 0)
-                    sumSpectralFlux += (float)(frameFlux / (magSum + 1e-12));
 
                 float conf = 0.0f;
                 float f0 = detectPitchYIN(mono.data() + startSample, kFftSize, (float)reader->sampleRate, conf);
@@ -205,9 +195,9 @@ namespace Atlas
             float avgFlatness   = sumFlatness / (float)validFrames;
             float avgCentroidHz = sumCentroidHz / (float)validFrames;
             float avgLowBand    = sumLowBand / (float)validFrames;
+            float avgWarmBand   = sumWarmBand / (float)validFrames;
             float avgHighBand   = sumHighBand / (float)validFrames;
             float avgRoughness  = sumRoughness / (float)validFrames;
-            float avgFlux       = (validFrames > 1) ? (sumSpectralFlux / (float)(validFrames - 1)) : 0.1f;
             float avgConfidence = framePitches.empty() ? 0.0f : (sumPitchConfidence / (float)framePitches.size());
 
             if (avgFlatness > 0.40f && avgConfidence < 0.62f)
@@ -240,7 +230,6 @@ namespace Atlas
 
             float pitchMobility = juce::jlimit(0.0f, 1.0f, (float)(uniquePitchClasses - 1) / 5.0f);
 
-            // Точное разделение One-Shots vs Loops
             bool explicitOneShot = lowerPath.contains("oneshot") || lowerPath.contains("one-shot") ||
                                    lowerPath.contains("one_shot") || lowerPath.contains("1shot") ||
                                    lowerName.contains("shot") || lowerName.contains("stab") ||
@@ -254,13 +243,21 @@ namespace Atlas
 
             bool isDetectedLoop = false;
             if (duration < 1.40 || (explicitOneShot && !explicitLoop))
+            {
                 isDetectedLoop = false;
+            }
             else if (explicitLoop && duration >= 1.45)
+            {
                 isDetectedLoop = true;
+            }
             else if (tailDecayRatio < 0.34f && rhythmicOnsets <= 1)
+            {
                 isDetectedLoop = false;
+            }
             else if (duration >= 1.85 && tailDecayRatio >= 0.42f && (rhythmicOnsets >= 2 || uniquePitchClasses >= 3))
+            {
                 isDetectedLoop = true;
+            }
 
             outRecord.file = file;
             outRecord.name = file.getFileNameWithoutExtension();
@@ -282,23 +279,18 @@ namespace Atlas
             outRecord.tailDecayRatio       = tailDecayRatio;
             outRecord.lowBandRatio         = avgLowBand;
             outRecord.highBandRatio        = avgHighBand;
-            outRecord.spectralFlux         = juce::jlimit(0.0f, 1.0f, avgFlux * 1.8f + pitchMobility * 0.4f);
 
             float compressionScore = juce::jlimit(0.0f, 1.0f, (4.5f - crestFactor) / 3.5f);
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, avgRoughness * 1.4f + clipDensity * 4.5f + compressionScore * 0.25f);
 
-            assignAccurateTagsAndClusters(lowerPath, lowerName, outRecord);
+            assignAccurateTagsAndCluster(lowerPath, lowerName, outRecord);
             return true;
         }
 
-        // Формирует сразу две кластерные проекции:
-        // 1) Timbre View (6 инструментальных островов)
-        // 2) Character View (5 островов по характеру звука)
         static void relaxMapCoordinates(std::vector<SampleRecord>& samples)
         {
             if (samples.empty()) return;
 
-            // Калибруем порог Dirty / Clean относительно распределения реальной папки
             std::vector<float> roughnessVals;
             roughnessVals.reserve(samples.size());
             for (const auto& s : samples)
@@ -316,109 +308,57 @@ namespace Atlas
 
                 s.characterMask &= ~(Char_Dirty | Char_Clean);
                 if (hasDirtyWord || (s.harmonicRoughness >= std::max(0.32f, dirtyPercentileThreshold) && s.pitchConfidence < 0.88f))
-                {
                     s.characterMask |= Char_Dirty;
-                    s.charCluster = CharacterCluster::DirtyRaw;
-                }
-                else
-                {
-                    if (s.pitchConfidence >= 0.72f && s.harmonicRoughness < dirtyPercentileThreshold * 0.92f)
-                        s.characterMask |= Char_Clean;
-
-                    // Распределяем по остальным 4 кластерам характеров
-                    if (s.characterMask & Char_Pluck)
-                        s.charCluster = CharacterCluster::PluckCrisp;
-                    else if (s.characterMask & Char_Ethy)
-                        s.charCluster = CharacterCluster::AirEthereal;
-                    else if (s.spectralFlux >= 0.42f || s.pitchMobilityNorm >= 0.55f)
-                        s.charCluster = CharacterCluster::LushMoving;
-                    else
-                        s.charCluster = CharacterCluster::WarmDeep;
-                }
+                else if (s.pitchConfidence >= 0.72f && s.harmonicRoughness < dirtyPercentileThreshold * 0.92f)
+                    s.characterMask |= Char_Clean;
             }
 
             struct ClusterCenter { float cx; float cy; float rx; float ry; };
-
-            // Центры 6 островов для [TIMBRE VIEW]
-            static const ClusterCenter timbreCenters[6] = {
-                { 0.18f, 0.26f, 0.12f, 0.15f }, // 0: Deep / Bass
-                { 0.50f, 0.26f, 0.13f, 0.15f }, // 1: Keys
-                { 0.82f, 0.26f, 0.12f, 0.15f }, // 2: Guitar / Pluck
-                { 0.20f, 0.73f, 0.13f, 0.16f }, // 3: Synth / Lead
-                { 0.52f, 0.74f, 0.13f, 0.15f }, // 4: Vocal
-                { 0.82f, 0.73f, 0.12f, 0.16f }  // 5: Strings / Pad
+            static const ClusterCenter centers[6] = {
+                { 0.18f, 0.25f, 0.12f, 0.15f },
+                { 0.50f, 0.26f, 0.13f, 0.15f },
+                { 0.82f, 0.26f, 0.12f, 0.15f },
+                { 0.20f, 0.73f, 0.13f, 0.16f },
+                { 0.52f, 0.74f, 0.13f, 0.15f },
+                { 0.82f, 0.73f, 0.12f, 0.16f }
             };
-
-            // Центры 5 островов для [CHARACTER VIEW]
-            static const ClusterCenter charCenters[5] = {
-                { 0.20f, 0.27f, 0.13f, 0.16f }, // 0: Warm & Deep
-                { 0.52f, 0.25f, 0.13f, 0.15f }, // 1: Air & Ethereal
-                { 0.82f, 0.28f, 0.12f, 0.15f }, // 2: Pluck & Crisp
-                { 0.32f, 0.74f, 0.14f, 0.16f }, // 3: Dirty & Raw
-                { 0.70f, 0.74f, 0.14f, 0.16f }  // 4: Lush & Moving
-            };
-
-            const float goldenAngle = 2.39996323f;
 
             for (int loopPass = 0; loopPass < 2; ++loopPass)
             {
                 bool targetLoop = (loopPass == 1);
-
-                // 1. Раскладка для [TIMBRE VIEW]
                 for (int c = 0; c < 6; ++c)
                 {
                     std::vector<size_t> indices;
                     for (size_t i = 0; i < samples.size(); ++i)
-                        if (samples[i].isLoop == targetLoop && (int)samples[i].timbreCluster == c)
+                    {
+                        if (samples[i].isLoop == targetLoop && (int)samples[i].cluster == c)
                             indices.push_back(i);
+                    }
 
                     if (indices.empty()) continue;
 
-                    std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+                    std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b)
+                    {
                         return (samples[a].spectralCentroidNorm * 2.0f + (float)samples[a].pitchClass * 0.05f)
                              < (samples[b].spectralCentroidNorm * 2.0f + (float)samples[b].pitchClass * 0.05f);
                     });
 
-                    const auto& cc = timbreCenters[c];
+                    const auto& cc = centers[c];
                     const size_t count = indices.size();
+                    const float goldenAngle = 2.39996323f;
+
                     for (size_t k = 0; k < count; ++k)
                     {
                         auto& rec = samples[indices[k]];
-                        float r = std::sqrt(((float)k + 0.5f) / (float)count);
+                        float normIdx = ((float)k + 0.5f) / (float)count;
+                        float r = std::sqrt(normIdx);
                         float theta = (float)k * goldenAngle + (rec.pitchMobilityNorm - 0.5f) * 0.8f;
-                        float lx = 0.72f * (r * std::cos(theta)) + 0.28f * (rec.pitchMobilityNorm * 2.0f - 1.0f);
-                        float ly = 0.72f * (r * std::sin(theta)) + 0.28f * (rec.spectralCentroidNorm * 2.0f - 1.0f);
-                        rec.timbreX = juce::jlimit(0.05f, 0.95f, cc.cx + lx * cc.rx);
-                        rec.timbreY = juce::jlimit(0.06f, 0.94f, cc.cy + ly * cc.ry);
-                    }
-                }
 
-                // 2. Раскладка для [CHARACTER VIEW]
-                for (int c = 0; c < 5; ++c)
-                {
-                    std::vector<size_t> indices;
-                    for (size_t i = 0; i < samples.size(); ++i)
-                        if (samples[i].isLoop == targetLoop && (int)samples[i].charCluster == c)
-                            indices.push_back(i);
+                        float localX = 0.72f * (r * std::cos(theta)) + 0.28f * (rec.pitchMobilityNorm * 2.0f - 1.0f);
+                        float localY = 0.72f * (r * std::sin(theta)) + 0.28f * (rec.spectralCentroidNorm * 2.0f - 1.0f);
 
-                    if (indices.empty()) continue;
-
-                    std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
-                        return (samples[a].harmonicRoughness + samples[a].spectralCentroidNorm)
-                             < (samples[b].harmonicRoughness + samples[b].spectralCentroidNorm);
-                    });
-
-                    const auto& cc = charCenters[c];
-                    const size_t count = indices.size();
-                    for (size_t k = 0; k < count; ++k)
-                    {
-                        auto& rec = samples[indices[k]];
-                        float r = std::sqrt(((float)k + 0.5f) / (float)count);
-                        float theta = (float)k * goldenAngle + (rec.harmonicRoughness - 0.3f) * 0.9f;
-                        float lx = 0.72f * (r * std::cos(theta)) + 0.28f * (rec.harmonicRoughness * 2.0f - 1.0f);
-                        float ly = 0.72f * (r * std::sin(theta)) + 0.28f * (rec.spectralCentroidNorm * 2.0f - 1.0f);
-                        rec.charX = juce::jlimit(0.05f, 0.95f, cc.cx + lx * cc.rx);
-                        rec.charY = juce::jlimit(0.06f, 0.94f, cc.cy + ly * cc.ry);
+                        rec.mapX = juce::jlimit(0.05f, 0.95f, cc.cx + localX * cc.rx);
+                        rec.mapY = juce::jlimit(0.06f, 0.94f, cc.cy + localY * cc.ry);
                     }
                 }
             }
@@ -508,9 +448,9 @@ namespace Atlas
             return 120.0;
         }
 
-        static void assignAccurateTagsAndClusters(const juce::String& lowerPath,
-                                                  const juce::String& lowerName,
-                                                  SampleRecord& rec)
+        static void assignAccurateTagsAndCluster(const juce::String& lowerPath,
+                                                 const juce::String& lowerName,
+                                                 SampleRecord& rec)
         {
             if (lowerPath.contains("key") || lowerPath.contains("piano") || lowerPath.contains("rhodes") ||
                 lowerPath.contains("wurli") || lowerPath.contains("organ") || lowerPath.contains("epiano"))
@@ -552,17 +492,17 @@ namespace Atlas
                 rec.characterMask |= Char_Sustain;
 
             if (rec.timbreMask & Timbre_Vox)
-                rec.timbreCluster = TimbreCluster::Vocal;
+                rec.cluster = ClusterGroup::Vocal;
             else if (rec.timbreMask & Timbre_Keys)
-                rec.timbreCluster = TimbreCluster::Keys;
+                rec.cluster = ClusterGroup::Keys;
             else if ((rec.timbreMask & Timbre_Guitar) || (rec.characterMask & Char_Pluck))
-                rec.timbreCluster = TimbreCluster::GuitarPluck;
+                rec.cluster = ClusterGroup::GuitarPluck;
             else if (isBassOrDeep)
-                rec.timbreCluster = TimbreCluster::DeepBass;
+                rec.cluster = ClusterGroup::DeepBass;
             else if ((rec.timbreMask & Timbre_Strings) || (rec.characterMask & Char_Ethy))
-                rec.timbreCluster = TimbreCluster::StringsPad;
+                rec.cluster = ClusterGroup::StringsPad;
             else
-                rec.timbreCluster = TimbreCluster::SynthLead;
+                rec.cluster = ClusterGroup::SynthLead;
         }
     };
 }
