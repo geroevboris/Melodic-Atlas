@@ -1,139 +1,112 @@
 #pragma once
+#include <JuceHeader.h>
 #include "AtlasTypes.h"
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_formats/juce_audio_formats.h>
-#include <juce_dsp/juce_dsp.h>
+#include <vector>
+#include <array>
 #include <atomic>
-#include <memory>
-#include <set>
 
 namespace Atlas
 {
-    struct LoadedSampleAudio
+    struct AuditionVoice
     {
-        juce::AudioBuffer<float> buffer;
+        bool active = false;
+        const juce::AudioBuffer<float>* sourceBuffer = nullptr;
         double sampleRate = 44100.0;
-        std::array<float, 96> waveformPeaks { 0.0f };
+        double position = 0.0;
+        double playbackRate = 1.0;
+        float gain = 0.8f;
+        bool isLoop = false;
+        double loopStartSample = 0.0;
+        double loopEndSample = 0.0;
+        bool isReleased = false;
+        float releaseEnvelope = 1.0f;
+    };
 
-        void buildWaveformPeaks()
+    struct SamplerVoice
+    {
+        bool active = false;
+        int padIndex = -1;
+        int midiNote = -1;
+        const juce::AudioBuffer<float>* sourceBuffer = nullptr;
+        double sampleRate = 44100.0;
+        double position = 0.0;
+        double playbackRate = 1.0;
+
+        float volumeLinear = 1.0f;
+        float panL = 0.707f;
+        float panR = 0.707f;
+
+        // Регион сэмпла
+        double regionStartSample = 0.0;
+        double regionEndSample = 0.0;
+
+        // ADSR огибающая
+        enum EnvelopeState { StateAttack, StateDecay, StateSustain, StateRelease, StateIdle };
+        EnvelopeState envState = StateIdle;
+        float envLevel = 0.0f;
+        float attackRate = 0.01f;
+        float decayRate = 0.001f;
+        float sustainLevel = 0.8f;
+        float releaseRate = 0.001f;
+
+        void startNote(int pad, int note, const juce::AudioBuffer<float>* buf, double sr,
+                       const PadSlotState& st, double hostBpm, TransposeQuality tq)
         {
-            waveformPeaks.fill(0.0f);
-            const int total = buffer.getNumSamples();
-            if (total <= 0) return;
+            padIndex = pad;
+            midiNote = note;
+            sourceBuffer = buf;
+            sampleRate = sr;
+            active = true;
 
-            const int numCh = buffer.getNumChannels();
-            const int samplesPerBin = std::max(1, total / (int)waveformPeaks.size());
-
-            for (size_t b = 0; b < waveformPeaks.size(); ++b)
+            if (buf == nullptr || buf->getNumSamples() < 16)
             {
-                int start = (int)b * samplesPerBin;
-                int end = std::min(total, start + samplesPerBin);
-                float maxVal = 0.0f;
-                for (int ch = 0; ch < numCh; ++ch)
-                {
-                    const float* ptr = buffer.getReadPointer(ch);
-                    for (int i = start; i < end; ++i)
-                        maxVal = std::max(maxVal, std::abs(ptr[i]));
-                }
-                waveformPeaks[b] = juce::jlimit(0.0f, 1.0f, maxVal);
+                active = false;
+                return;
             }
+
+            double totalLen = (double)buf->getNumSamples();
+            regionStartSample = juce::jlimit(0.0, totalLen - 10.0, st.regionStart * totalLen);
+            regionEndSample   = juce::jlimit(regionStartSample + 10.0, totalLen, st.regionEnd * totalLen);
+            position = regionStartSample;
+
+            volumeDbToLinear(st.volumeDb, st.pan);
+
+            double semitones = (double)(st.semitoneOffset + st.centOffset * 0.01);
+            playbackRate = std::pow(2.0, semitones / 12.0);
+
+            envState = StateAttack;
+            envLevel = 0.0f;
+            attackRate  = 1.0f / std::max(1.0, (double)st.attackSec  * sr);
+            decayRate   = 1.0f / std::max(1.0, (double)st.decaySec   * sr);
+            sustainLevel = juce::jlimit(0.0f, 1.0f, st.sustainLvl);
+            releaseRate = 1.0f / std::max(1.0, (double)st.releaseSec * sr);
+        }
+
+        void stopNote()
+        {
+            if (envState != StateIdle && envState != StateRelease)
+            {
+                envState = StateRelease;
+            }
+        }
+
+        void volumeDbToLinear(float db, float pan)
+        {
+            float rawLin = juce::Decibels::decibelsToGain(db);
+            volumeLinear = juce::jlimit(0.0f, 2.0f, rawLin);
+
+            float clampedPan = juce::jlimit(-1.0f, 1.0f, pan);
+            float angle = (clampedPan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+            panL = std::cos(angle);
+            panR = std::sin(angle);
         }
     };
 
-    struct DualGrainLoopStretcher
+    struct CachedAudioData
     {
-        double timelinePos = 0.0;
-        double grainPosA = 0.0;
-        double grainPosB = 0.0;
-        double grainPhase = 0.0;
-        static constexpr double kGrainLengthSamples = 2048.0;
-
-        void reset(double startPos = 0.0)
-        {
-            timelinePos = startPos;
-            grainPosA = startPos;
-            grainPosB = startPos;
-            grainPhase = 0.0;
-        }
-
-        bool renderSample(const juce::AudioBuffer<float>& buf,
-                          double timeRatio,
-                          double pitchRatio,
-                          bool loopWrap,
-                          float& outL,
-                          float& outR)
-        {
-            const int totalSamples = buf.getNumSamples();
-            if (totalSamples < 4) { outL = 0.0f; outR = 0.0f; return false; }
-
-            if (!loopWrap && timelinePos >= (double)(totalSamples - 4))
-            {
-                outL = 0.0f; outR = 0.0f;
-                return false;
-            }
-
-            const int numCh = buf.getNumChannels();
-            const float* ch0 = buf.getReadPointer(0);
-            const float* ch1 = (numCh > 1) ? buf.getReadPointer(1) : ch0;
-
-            auto readInterp = [&](double pos, float& l, float& r)
-            {
-                if (loopWrap)
-                {
-                    while (pos >= (double)totalSamples) pos -= (double)totalSamples;
-                    while (pos < 0.0) pos += (double)totalSamples;
-                }
-                else
-                {
-                    pos = juce::jlimit(0.0, (double)(totalSamples - 2), pos);
-                }
-
-                int idx0 = (int)pos;
-                int idx1 = loopWrap ? ((idx0 + 1) % totalSamples) : std::min(totalSamples - 1, idx0 + 1);
-                float frac = (float)(pos - (double)idx0);
-
-                l = ch0[idx0] + frac * (ch0[idx1] - ch0[idx0]);
-                r = ch1[idx0] + frac * (ch1[idx1] - ch1[idx0]);
-            };
-
-            double phaseA = grainPhase;
-            double phaseB = grainPhase + 0.5;
-            if (phaseB >= 1.0) phaseB -= 1.0;
-
-            float winA = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::twoPi * (float)phaseA));
-            float winB = 0.5f * (1.0f - std::cos(juce::MathConstants<float>::twoPi * (float)phaseB));
-
-            float lA = 0.0f, rA = 0.0f, lB = 0.0f, rB = 0.0f;
-            readInterp(grainPosA, lA, rA);
-            readInterp(grainPosB, lB, rB);
-
-            outL = lA * winA + lB * winB;
-            outR = rA * winA + rB * winB;
-
-            timelinePos += timeRatio;
-            if (loopWrap)
-            {
-                while (timelinePos >= (double)totalSamples) timelinePos -= (double)totalSamples;
-                while (timelinePos < 0.0) timelinePos += (double)totalSamples;
-            }
-
-            grainPosA += pitchRatio;
-            grainPosB += pitchRatio;
-
-            double prevPhaseA = phaseA;
-            grainPhase += 1.0 / kGrainLengthSamples;
-
-            if (grainPhase >= 1.0)
-            {
-                grainPhase -= 1.0;
-                grainPosA = timelinePos;
-            }
-            if (prevPhaseA < 0.5 && grainPhase >= 0.5)
-            {
-                grainPosB = timelinePos;
-            }
-            return true;
-        }
+        juce::AudioBuffer<float> buffer;
+        std::vector<float> waveformPeaks;
+        double originalBpm = 120.0;
     };
 
     class SamplerEngine
@@ -141,714 +114,546 @@ namespace Atlas
     public:
         SamplerEngine()
         {
-            formatManager.registerBasicFormats();
-            for (size_t i = 0; i < 12; ++i)
-                padSlots[i].sampleIndex = -1;
+            for (auto& st : padStates)
+                st.sampleIndex = -1;
         }
 
-        void prepare(double newSampleRate, int samplesPerBlock)
+        void prepare(double sampleRate, int samplesPerBlock)
         {
-            const juce::ScopedLock sl(engineLock);
-            sampleRate = (newSampleRate > 0.0) ? newSampleRate : 44100.0;
-
-            juce::dsp::ProcessSpec spec;
-            spec.sampleRate = sampleRate;
-            spec.maximumBlockSize = (juce::uint32)std::max(64, samplesPerBlock);
-            spec.numChannels = 2;
-
+            currentSampleRate = sampleRate;
+            juce::dsp::ProcessSpec spec { sampleRate, (uint32_t)samplesPerBlock, 2 };
             reverb.prepare(spec);
-            updateReverbParams();
-
-            for (auto& v : voices)
-            {
-                v.adsr.setSampleRate(sampleRate);
-                v.active = false;
-            }
+            updateReverbParameters();
         }
 
-        void setMusicalContext(int keyRoot, ScaleType sType, PitchMode pMode, int octShift,
-                               double dawBpm, bool syncToHost, bool hostIsPlaying, double hostPpqPos)
+        void setMusicalContext(int keyRoot, ScaleType scaleType, PitchMode pitchMode, int octaveShift,
+                               double bpm, bool hostSynced, bool playing, double ppq)
         {
             projectKeyRoot = keyRoot;
-            scaleType = sType;
-            pitchMode = pMode;
-            globalOctaveShift = octShift;
-            currentBpm = (dawBpm > 20.0) ? dawBpm : 120.0;
-            syncEnabled = syncToHost;
-            dawIsPlaying = hostIsPlaying;
-            currentPpq = hostPpqPos;
+            projectScaleType = scaleType;
+            projectPitchMode = pitchMode;
+            globalOctaveShift = octaveShift;
+            currentBpm = bpm;
+            isHostBpmSynced = hostSynced;
         }
 
-        void setEngineControls(BankMode mode, float glideSec, float reverbAmt, float masterDb)
+        void setEngineControls(BankMode bm, float glide, float mapRev, float bankRev, float globalTuning, TransposeQuality tq, float masterDb)
         {
-            bankMode = mode;
-            glideTimeSec = juce::jlimit(0.0f, 1.0f, glideSec);
-            reverbWet    = juce::jlimit(0.0f, 1.0f, reverbAmt);
-            masterGainLinear = juce::Decibels::decibelsToGain(juce::jlimit(-36.0f, 6.0f, masterDb));
-            updateReverbParams();
+            bankMode = bm;
+            globalReverbAmount = mapRev;
+            bankReverbAmount = bankRev;
+            globalPitchOffset = globalTuning;
+            transposeQuality = tq;
+            masterVolumeDb = masterDb;
+            updateReverbParameters();
         }
 
-        void auditionSample(int sampleIdx, const SampleRecord& rec)
+        PadSlotState& getPadState(int padIdx)
         {
-            auto loaded = loadAudioFromFile(rec.file);
-            if (loaded == nullptr) return;
+            return padStates[(size_t)juce::jlimit(0, 11, padIdx)];
+        }
 
-            const juce::ScopedLock sl(engineLock);
+        const SampleRecord* getPadRecord(int padIdx) const
+        {
+            int idx = padStates[(size_t)juce::jlimit(0, 11, padIdx)].sampleIndex;
+            if (database != nullptr && idx >= 0 && idx < (int)database->size())
+                return &(*database)[(size_t)idx];
+            return nullptr;
+        }
 
-            if (auditionCurrent.playing)
+        std::shared_ptr<CachedAudioData> getPadAudio(int padIdx) const
+        {
+            int idx = padStates[(size_t)juce::jlimit(0, 11, padIdx)].sampleIndex;
+            if (database != nullptr && idx >= 0 && idx < (int)database->size())
             {
-                auditionFadingOut = auditionCurrent;
-                auditionFadingOut.fadeGain = 1.0f;
+                const auto& rec = (*database)[(size_t)idx];
+                return getOrLoadAudio(rec.file);
             }
-
-            auditionCurrent.audio = loaded;
-            auditionCurrent.record = rec;
-            auditionCurrent.sampleIndex = sampleIdx;
-            auditionCurrent.readPos = 0.0;
-            auditionCurrent.stretcher.reset(0.0);
-            auditionCurrent.fadeGain = 0.0f;
-            auditionCurrent.playing = true;
-            auditionCurrent.waitingForBeatSync = (rec.isLoop && syncEnabled && dawIsPlaying);
-
-            lastAuditionedIndex.store(sampleIdx);
+            return nullptr;
         }
 
-        void stopAudition()
+        void setSampleDatabase(const std::vector<SampleRecord>* db)
         {
-            const juce::ScopedLock sl(engineLock);
-            if (auditionCurrent.playing)
-            {
-                auditionFadingOut = auditionCurrent;
-                auditionFadingOut.fadeGain = 1.0f;
-                auditionCurrent.playing = false;
-            }
+            database = db;
         }
-
-        bool isAuditionPlaying() const { return auditionCurrent.playing; }
 
         void assignSampleToPad(int padIdx, int sampleIdx, const SampleRecord& rec)
         {
-            if (padIdx < 0 || padIdx >= 12) return;
-            auto loaded = loadAudioFromFile(rec.file);
-            if (loaded == nullptr) return;
+            if (padIdx < 0 || padIdx > 11) return;
+            auto& st = padStates[(size_t)padIdx];
 
-            const juce::ScopedLock sl(engineLock);
-            auto& slot = padSlots[(size_t)padIdx];
-            slot.sampleIndex = sampleIdx;
-            slot.chromaticActive = !(rec.isLoop || rec.isPolyChord);
-            slot.volumeDb = -3.0f;
-            slot.pan = 0.0f;
-            slot.semitoneOffset = 0;
-            slot.reverse = false;
-            slot.attackSec  = 0.015f;
-            slot.decaySec   = 1.20f;
-            slot.sustainLvl = 0.80f;
-            slot.releaseSec = 0.45f;
+            // Сохраняем текущее состояние в историю Undo перед заменой
+            if (st.sampleIndex >= 0)
+            {
+                PadHistoryEntry entry;
+                entry.sampleIndex = st.sampleIndex;
+                if (database != nullptr && st.sampleIndex < (int)database->size())
+                    entry.record = (*database)[(size_t)st.sampleIndex];
+                entry.semitoneOffset = st.semitoneOffset;
+                entry.centOffset = st.centOffset;
+                entry.regionStart = st.regionStart;
+                entry.regionEnd = st.regionEnd;
+                st.history.push_back(entry);
+                if (st.history.size() > 10)
+                    st.history.erase(st.history.begin());
+            }
 
-            padAudio[(size_t)padIdx] = loaded;
-            padRecords[(size_t)padIdx] = rec;
+            st.sampleIndex = sampleIdx;
+            getOrLoadAudio(rec.file);
+        }
+
+        bool undoPadSample(int padIdx)
+        {
+            if (padIdx < 0 || padIdx > 11) return false;
+            auto& st = padStates[(size_t)padIdx];
+            if (st.history.empty()) return false;
+
+            auto prev = st.history.back();
+            st.history.pop_back();
+            st.sampleIndex = prev.sampleIndex;
+            st.semitoneOffset = prev.semitoneOffset;
+            st.centOffset = prev.centOffset;
+            st.regionStart = prev.regionStart;
+            st.regionEnd = prev.regionEnd;
+            return true;
         }
 
         void clearAllPads()
         {
-            const juce::ScopedLock sl(engineLock);
-            for (size_t i = 0; i < 12; ++i)
+            for (auto& st : padStates)
             {
-                padSlots[i].sampleIndex = -1;
-                padAudio[i].reset();
+                st.sampleIndex = -1;
+                st.history.clear();
             }
-            for (auto& v : voices)
-                v.active = false;
-            activePlayingPadsMask.store(0);
         }
 
-        PadSlotState& getPadState(int padIdx) { return padSlots[(size_t)juce::jlimit(0, 11, padIdx)]; }
-        const PadSlotState& getPadState(int padIdx) const { return padSlots[(size_t)juce::jlimit(0, 11, padIdx)]; }
-
-        const SampleRecord* getPadRecord(int padIdx) const
+        // Предпрослушивание сэмпла на карте с поддержкой удержания (Gate) и полосы прогресса
+        void auditionSample(int sampleIdx, const SampleRecord& rec, bool isButtonDown, float& outProgress)
         {
-            if (padIdx < 0 || padIdx >= 12 || padSlots[(size_t)padIdx].sampleIndex < 0) return nullptr;
-            return &padRecords[(size_t)padIdx];
-        }
-
-        std::shared_ptr<LoadedSampleAudio> getPadAudio(int padIdx) const
-        {
-            if (padIdx < 0 || padIdx >= 12) return nullptr;
-            return padAudio[(size_t)padIdx];
-        }
-
-        std::shared_ptr<LoadedSampleAudio> getAuditionAudio() const
-        {
-            const juce::ScopedLock sl(engineLock);
-            return auditionCurrent.audio;
-        }
-
-        int getLastAuditionedIndex() const { return lastAuditionedIndex.load(); }
-        uint32_t getActivePlayingPadsMask() const { return activePlayingPadsMask.load(); }
-
-        void triggerPadFromUI(int padIdx, float velocity = 0.9f)
-        {
-            const juce::ScopedLock sl(engineLock);
-            if (padIdx < 0 || padIdx >= 12 || padSlots[(size_t)padIdx].sampleIndex < 0) return;
-
-            int previewGateSamples = (int)(sampleRate * 1.15);
-
-            if (bankMode == BankMode::Chromatic && padSlots[(size_t)padIdx].chromaticActive)
+            auditionButtonDown = isButtonDown;
+            if (!isButtonDown)
             {
-                // В режиме Chromatic нота при клике берется от выбранной тоники проекта
-                int targetMidi = 48 + ((projectKeyRoot % 12) + 12) % 12;
-                for (int s = 0; s < 12; ++s)
+                auditionVoice.isReleased = true;
+                outProgress = 0.0f;
+                return;
+            }
+
+            auto audio = getOrLoadAudio(rec.file);
+            if (audio == nullptr || audio->buffer.getNumSamples() < 16)
+            {
+                outProgress = 0.0f;
+                return;
+            }
+
+            if (auditionVoice.sourceBuffer != &audio->buffer)
+            {
+                auditionVoice.sourceBuffer = &audio->buffer;
+                auditionVoice.sampleRate = currentSampleRate;
+                auditionVoice.position = 0.0;
+                auditionVoice.isLoop = rec.isLoop;
+                auditionVoice.loopStartSample = 0.0;
+                auditionVoice.loopEndSample = (double)audio->buffer.getNumSamples();
+                auditionVoice.isReleased = false;
+                auditionVoice.releaseEnvelope = 1.0f;
+
+                double targetSemitones = globalPitchOffset + (double)MusicMath::calculatePitchShift(
+                    rec.pitchClass, projectKeyRoot, projectScaleType, projectPitchMode, globalOctaveShift);
+                auditionVoice.playbackRate = std::pow(2.0, targetSemitones / 12.0);
+            }
+
+            auditionVoice.active = true;
+            auditionVoice.isReleased = false;
+
+            double totalLen = (double)audio->buffer.getNumSamples();
+            outProgress = (totalLen > 1.0) ? (float)(auditionVoice.position / totalLen) : 0.0f;
+        }
+
+        void stopAudition()
+        {
+            auditionVoice.active = false;
+            auditionVoice.isReleased = true;
+            auditionButtonDown = false;
+        }
+
+        std::shared_ptr<CachedAudioData> getAuditionAudio() const
+        {
+            if (auditionVoice.sourceBuffer != nullptr)
+            {
+                // Находим закешированный объект по буферу
+                for (auto& pair : audioCache)
                 {
-                    if (padSlots[(size_t)s].sampleIndex >= 0 && padSlots[(size_t)s].chromaticActive && padAudio[(size_t)s] != nullptr)
-                    {
-                        bool isBassType = (padRecords[(size_t)s].isLoop || padRecords[(size_t)s].isPolyChord);
-                        startVoiceForSlot(s, targetMidi, velocity, true, isBassType, previewGateSamples);
-                    }
+                    if (&pair.second->buffer == auditionVoice.sourceBuffer)
+                        return pair.second;
                 }
             }
-            else
+            return nullptr;
+        }
+
+        void triggerPadFromUI(int padIdx)
+        {
+            if (padIdx < 0 || padIdx > 11) return;
+            const auto* rec = getPadRecord(padIdx);
+            auto audio = getPadAudio(padIdx);
+            if (rec == nullptr || audio == nullptr) return;
+
+            int midi = 36 + padIdx; // C1 .. B1
+            for (auto& v : polyVoices)
             {
-                startVoiceForSlot(padIdx, 36 + padIdx, velocity, false, false, previewGateSamples);
+                if (v.active && v.padIndex == padIdx)
+                    v.stopNote();
+            }
+
+            for (auto& v : polyVoices)
+            {
+                if (!v.active)
+                {
+                    v.startNote(padIdx, midi, &audio->buffer, currentSampleRate,
+                                padStates[(size_t)padIdx], currentBpm, transposeQuality);
+                    break;
+                }
             }
         }
 
-        void renderNextBlock(juce::AudioBuffer<float>& outputAudio, const juce::MidiBuffer& midiData)
+        void handleMidiMessage(const juce::MidiMessage& msg)
         {
-            const juce::ScopedLock sl(engineLock);
-            const int numSamples = outputAudio.getNumSamples();
-            if (numSamples <= 0) return;
-
-            for (const auto metadata : midiData)
+            if (msg.isNoteOn())
             {
-                const auto msg = metadata.getMessage();
-                if (msg.isNoteOn())
-                    handleNoteOn(msg.getNoteNumber(), msg.getFloatVelocity());
-                else if (msg.isNoteOff())
-                    handleNoteOff(msg.getNoteNumber());
-                else if (msg.isAllNotesOff() || msg.isAllSoundOff())
-                    allNotesOff();
-            }
+                int note = msg.getNoteNumber();
+                int padIdx = -1;
 
-            juce::AudioBuffer<float> dryBuf(2, numSamples);
-            dryBuf.clear();
-
-            float* outL = dryBuf.getWritePointer(0);
-            float* outR = dryBuf.getWritePointer(1);
-
-            const float fadeStep = 1.0f / std::max(1.0f, (float)(sampleRate * 0.015));
-
-            // 1. Предпрослушка карты (Audition)
-            if (auditionFadingOut.playing && auditionFadingOut.audio != nullptr)
-            {
-                for (int i = 0; i < numSamples; ++i)
+                if (bankMode == BankMode::PadTrigger)
                 {
-                    float l = 0.0f, r = 0.0f;
-                    if (stepAuditionStream(auditionFadingOut, l, r))
+                    if (note >= 36 && note <= 47) padIdx = note - 36;
+                }
+                else
+                {
+                    // Chromatic режим
+                    for (int i = 0; i < 12; ++i)
                     {
-                        outL[i] += l * auditionFadingOut.fadeGain;
-                        outR[i] += r * auditionFadingOut.fadeGain;
-                        auditionFadingOut.fadeGain -= fadeStep;
-                        if (auditionFadingOut.fadeGain <= 0.0f)
+                        if (padStates[(size_t)i].sampleIndex >= 0 && padStates[(size_t)i].chromaticActive)
                         {
-                            auditionFadingOut.playing = false;
+                            padIdx = i;
                             break;
                         }
                     }
-                    else
+                    if (padIdx < 0) padIdx = (note % 12);
+                }
+
+                if (padIdx >= 0 && padIdx < 12)
+                {
+                    const auto* rec = getPadRecord(padIdx);
+                    auto audio = getPadAudio(padIdx);
+                    if (rec != nullptr && audio != nullptr)
                     {
-                        auditionFadingOut.playing = false;
-                        break;
+                        for (auto& v : polyVoices)
+                        {
+                            if (!v.active)
+                            {
+                                v.startNote(padIdx, note, &audio->buffer, currentSampleRate,
+                                            padStates[(size_t)padIdx], currentBpm, transposeQuality);
+                                break;
+                            }
+                        }
                     }
                 }
             }
-
-            if (auditionCurrent.playing && auditionCurrent.audio != nullptr)
+            else if (msg.isNoteOff())
             {
-                if (auditionCurrent.waitingForBeatSync)
+                int note = msg.getNoteNumber();
+                for (auto& v : polyVoices)
                 {
-                    double fracBeat = currentPpq - std::floor(currentPpq);
-                    if (!dawIsPlaying || fracBeat < 0.08 || fracBeat > 0.92)
-                        auditionCurrent.waitingForBeatSync = false;
+                    if (v.active && v.midiNote == note)
+                        v.stopNote();
                 }
+            }
+            else if (msg.isAllNotesOff())
+            {
+                for (auto& v : polyVoices)
+                    v.stopNote();
+            }
+        }
 
-                if (!auditionCurrent.waitingForBeatSync)
+        uint32_t getActivePlayingPadsMask() const
+        {
+            uint32_t mask = 0;
+            for (const auto& v : polyVoices)
+            {
+                if (v.active && v.padIndex >= 0 && v.padIndex < 12)
+                    mask |= (1u << v.padIndex);
+            }
+            if (auditionVoice.active)
+            {
+                // Если превью на карте активно, подсветим условный индикатор
+            }
+            return mask;
+        }
+
+        void renderNextBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+        {
+            buffer.clear();
+            const int numSamples = buffer.getNumSamples();
+
+            juce::MidiBuffer::Iterator iterator(midiMessages);
+            juce::MidiMessage msg;
+            int samplePos = 0;
+            while (iterator.getNextEvent(msg, samplePos))
+            {
+                handleMidiMessage(msg);
+            }
+
+            juce::AudioBuffer<float> dryBankBuffer(buffer.getNumChannels(), numSamples);
+            dryBankBuffer.clear();
+
+            // 1. Рендерим голоса банка пэдов
+            for (auto& v : polyVoices)
+            {
+                if (!v.active || v.sourceBuffer == nullptr) continue;
+
+                const auto& src = *v.sourceBuffer;
+                int totalLen = src.getNumSamples();
+
+                for (int i = 0; i < numSamples; ++i)
                 {
-                    for (int i = 0; i < numSamples; ++i)
+                    if (!v.active) break;
+
+                    // ADSR огибающая
+                    if (v.envState == SamplerVoice::StateAttack)
                     {
-                        float l = 0.0f, r = 0.0f;
-                        if (stepAuditionStream(auditionCurrent, l, r))
+                        v.envLevel += v.attackRate;
+                        if (v.envLevel >= 1.0f) { v.envLevel = 1.0f; v.envState = SamplerVoice::StateDecay; }
+                    }
+                    else if (v.envState == SamplerVoice::StateDecay)
+                    {
+                        v.envLevel -= v.decayRate;
+                        if (v.envLevel <= v.sustainLevel) { v.envLevel = v.sustainLevel; v.envState = SamplerVoice::StateSustain; }
+                    }
+                    else if (v.envState == SamplerVoice::StateRelease)
+                    {
+                        v.envLevel -= v.releaseRate;
+                        if (v.envLevel <= 0.0f)
                         {
-                            auditionCurrent.fadeGain = std::min(1.0f, auditionCurrent.fadeGain + fadeStep);
-                            outL[i] += l * auditionCurrent.fadeGain;
-                            outR[i] += r * auditionCurrent.fadeGain;
+                            v.envLevel = 0.0f;
+                            v.envState = SamplerVoice::StateIdle;
+                            v.active = false;
+                            break;
+                        }
+                    }
+
+                    int idx0 = (int)v.position;
+                    int idx1 = idx0 + 1;
+                    if (idx1 >= totalLen || v.position >= v.regionEndSample)
+                    {
+                        v.active = false;
+                        break;
+                    }
+
+                    float frac = (float)(v.position - (double)idx0);
+                    float s0L = src.getSample(0, idx0);
+                    float s1L = src.getSample(0, idx1);
+                    float sampleL = s0L + frac * (s1L - s0L);
+
+                    float sampleR = sampleL;
+                    if (src.getNumChannels() > 1)
+                    {
+                        float s0R = src.getSample(1, idx0);
+                        float s1R = src.getSample(1, idx1);
+                        sampleR = s0R + frac * (s1R - s0R);
+                    }
+
+                    // Микрофейд против щелчков на старте/конце
+                    float antiClick = 1.0f;
+                    double elapsedFromStart = v.position - v.regionStartSample;
+                    double remainingFromEnd = v.regionEndSample - v.position;
+                    if (elapsedFromStart < 192.0) antiClick = (float)(elapsedFromStart / 192.0);
+                    if (remainingFromEnd < 192.0) antiClick = std::min(antiClick, (float)(remainingFromEnd / 192.0));
+                    antiClick = juce::jlimit(0.0f, 1.0f, antiClick);
+
+                    float finalEnv = v.envLevel * antiClick;
+                    float outL = sampleL * v.volumeLinear * v.panL * finalEnv;
+                    float outR = sampleR * v.volumeLinear * v.panR * finalEnv;
+
+                    dryBankBuffer.addSample(0, i, outL);
+                    if (dryBankBuffer.getNumChannels() > 1)
+                        dryBankBuffer.addSample(1, i, outR);
+
+                    v.position += v.playbackRate;
+                }
+            }
+
+            // 2. Рендерим предпрослушку на карте (Audition Voice)
+            juce::AudioBuffer<float> auditionBuffer(buffer.getNumChannels(), numSamples);
+            auditionBuffer.clear();
+
+            if (auditionVoice.active && auditionVoice.sourceBuffer != nullptr)
+            {
+                const auto& src = *auditionVoice.sourceBuffer;
+                int totalLen = src.getNumSamples();
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (!auditionVoice.active) break;
+
+                    if (!auditionButtonDown && !auditionVoice.isReleased)
+                    {
+                        auditionVoice.isReleased = true;
+                    }
+
+                    if (auditionVoice.isReleased)
+                    {
+                        auditionVoice.releaseEnvelope -= 0.015f; // Быстрый мягкий фэйд при отпускании
+                        if (auditionVoice.releaseEnvelope <= 0.0f)
+                        {
+                            auditionVoice.active = false;
+                            break;
+                        }
+                    }
+
+                    int idx0 = (int)auditionVoice.position;
+                    int idx1 = idx0 + 1;
+                    if (idx1 >= totalLen || auditionVoice.position >= auditionVoice.loopEndSample)
+                    {
+                        if (auditionVoice.isLoop && !auditionVoice.isReleased)
+                        {
+                            auditionVoice.position = auditionVoice.loopStartSample;
+                            continue;
                         }
                         else
                         {
-                            auditionCurrent.playing = false;
+                            auditionVoice.active = false;
                             break;
                         }
                     }
+
+                    float frac = (float)(auditionVoice.position - (double)idx0);
+                    float s0L = src.getSample(0, idx0);
+                    float s1L = src.getSample(0, idx1);
+                    float sampleL = s0L + frac * (s1L - s0L);
+                    float sampleR = (src.getNumChannels() > 1) ? (src.getSample(1, idx0) + frac * (src.getSample(1, idx1) - src.getSample(0, idx0))) : sampleL;
+
+                    float antiClick = 1.0f;
+                    if (auditionVoice.position < 192.0) antiClick = (float)(auditionVoice.position / 192.0);
+                    antiClick = juce::jlimit(0.0f, 1.0f, antiClick);
+
+                    float finalEnv = auditionVoice.releaseEnvelope * antiClick;
+                    float outL = sampleL * auditionVoice.gain * finalEnv;
+                    float outR = sampleR * auditionVoice.gain * finalEnv;
+
+                    auditionBuffer.addSample(0, i, outL);
+                    if (auditionBuffer.getNumChannels() > 1)
+                        auditionBuffer.addSample(1, i, outR);
+
+                    auditionVoice.position += auditionVoice.playbackRate;
                 }
             }
 
-            // 2. Голоса 12 пэдов
-            uint32_t currentPlayingMask = 0;
+            // 3. Отдельная шина реверберации для банка пэдов
+            juce::AudioBuffer<float> revBankBuf(dryBankBuffer.getNumChannels(), numSamples);
+            revBankBuf.copyFrom(0, 0, dryBankBuffer, 0, 0, numSamples);
+            if (revBankBuf.getNumChannels() > 1)
+                revBankBuf.copyFrom(1, 0, dryBankBuffer, 1, 0, numSamples);
 
-            for (auto& v : voices)
+            if (bankReverbAmount > 0.001f)
             {
-                if (!v.active || v.audio == nullptr) continue;
+                juce::dsp::AudioBlock<float> block(revBankBuf);
+                reverb.process(juce::dsp::ProcessContextReplacing<float>(block));
+            }
 
-                const auto& slot = padSlots[(size_t)juce::jlimit(0, 11, v.slotIndex)];
-                juce::ADSR::Parameters padAdsr {
-                    juce::jlimit(0.002f, 5.0f, slot.attackSec),
-                    juce::jlimit(0.01f,  5.0f, slot.decaySec),
-                    juce::jlimit(0.0f,   1.0f, slot.sustainLvl),
-                    juce::jlimit(0.01f,  8.0f, slot.releaseSec)
-                };
-                v.adsr.setParameters(padAdsr);
-
-                float slotLinearGain = juce::Decibels::decibelsToGain(slot.volumeDb);
-                float panAngle = (slot.pan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
-                float panL = std::cos(panAngle);
-                float panR = std::sin(panAngle);
+            // 4. Суммируем банк с ревербом и превью с карты, применяя master volume
+            float masterGain = juce::Decibels::decibelsToGain(masterVolumeDb);
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            {
+                float* dest = buffer.getWritePointer(ch);
+                const float* dry = dryBankBuffer.getReadPointer(ch);
+                const float* rev = revBankBuf.getReadPointer(ch);
+                const float* aud = auditionBuffer.getReadPointer(ch);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    if (v.autoGateSamplesRemaining > 0)
-                    {
-                        v.autoGateSamplesRemaining--;
-                        if (v.autoGateSamplesRemaining == 0)
-                            v.adsr.noteOff();
-                    }
-
-                    float env = v.adsr.getNextSample();
-                    if (!v.adsr.isActive())
-                    {
-                        v.active = false;
-                        break;
-                    }
-
-                    if (glideTimeSec > 0.005f)
-                    {
-                        double glideCoeff = 1.0 - std::exp(-1.0 / (sampleRate * (double)glideTimeSec * 0.25));
-                        v.currentPitchRatio += (v.targetPitchRatio - v.currentPitchRatio) * glideCoeff;
-                    }
-                    else
-                    {
-                        v.currentPitchRatio = v.targetPitchRatio;
-                    }
-
-                    float l = 0.0f, r = 0.0f;
-                    bool alive = stepVoiceStream(v, l, r);
-
-                    float gain = env * v.velocityGain * slotLinearGain * v.normGain;
-                    outL[i] += l * gain * panL;
-                    outR[i] += r * gain * panR;
-
-                    if (!alive)
-                    {
-                        v.active = false;
-                        v.adsr.reset();
-                        break;
-                    }
+                    float bankMixed = dry[i] * (1.0f - bankReverbAmount) + rev[i] * bankReverbAmount;
+                    float total = bankMixed + aud[i];
+                    dest[i] = total * masterGain;
                 }
-
-                if (v.active && v.slotIndex >= 0 && v.slotIndex < 12)
-                    currentPlayingMask |= (1u << v.slotIndex);
-            }
-
-            activePlayingPadsMask.store(currentPlayingMask);
-
-            // 3. ЧИСТЫЙ CONSTANT-POWER DRY/WET КРОССФЕЙД РЕВЕРБЕРАЦИИ (БЕЗ ЛИМИТЕРА!)
-            if (reverbWet > 0.005f)
-            {
-                juce::AudioBuffer<float> wetBuf(2, numSamples);
-                wetBuf.makeCopyOf(dryBuf);
-
-                juce::dsp::AudioBlock<float> block(wetBuf);
-                juce::dsp::ProcessContextReplacing<float> ctx(block);
-                reverb.process(ctx);
-
-                const float dryGain = std::cos(reverbWet * juce::MathConstants<float>::halfPi);
-                const float wetGain = std::sin(reverbWet * juce::MathConstants<float>::halfPi) * 0.62f;
-
-                const float* wL = wetBuf.getReadPointer(0);
-                const float* wR = wetBuf.getReadPointer(1);
-
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    outL[i] = outL[i] * dryGain + wL[i] * wetGain;
-                    outR[i] = outR[i] * dryGain + wR[i] * wetGain;
-                }
-            }
-
-            // 4. Применяем только линейную ручку MASTER VOLUME (без нелинейных искажений и лимитеров)
-            if (std::abs(masterGainLinear - 1.0f) > 0.001f)
-            {
-                dryBuf.applyGain(masterGainLinear);
-            }
-
-            for (int ch = 0; ch < outputAudio.getNumChannels(); ++ch)
-            {
-                const float* src = dryBuf.getReadPointer(std::min(ch, 1));
-                outputAudio.addFrom(ch, 0, src, numSamples);
             }
         }
 
     private:
-        struct AuditionStream
-        {
-            std::shared_ptr<LoadedSampleAudio> audio;
-            SampleRecord record;
-            int sampleIndex = -1;
-            double readPos = 0.0;
-            DualGrainLoopStretcher stretcher;
-            float fadeGain = 0.0f;
-            bool playing = false;
-            bool waitingForBeatSync = false;
-        };
-
-        struct PolyVoice
-        {
-            bool active = false;
-            int slotIndex = -1;
-            int midiNote = -1;
-            bool isBassAnchorVoice = false;
-            int autoGateSamplesRemaining = -1;
-
-            std::shared_ptr<LoadedSampleAudio> audio;
-            SampleRecord record;
-            bool reverse = false;
-
-            double readPos = 0.0;
-            double currentPitchRatio = 1.0;
-            double targetPitchRatio = 1.0;
-
-            float velocityGain = 1.0f;
-            float normGain = 1.0f;
-
-            DualGrainLoopStretcher stretcher;
-            juce::ADSR adsr;
-        };
-
-        double calculateAuditionPitchRatio(const SampleRecord& rec) const
-        {
-            int semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, scaleType,
-                                                           pitchMode, globalOctaveShift);
-            double pitchRatio = std::pow(2.0, (double)semiShift / 12.0);
-            double srRatio = (auditionCurrent.audio != nullptr)
-                                ? (auditionCurrent.audio->sampleRate / sampleRate) : 1.0;
-            return pitchRatio * srRatio;
-        }
-
-        bool stepAuditionStream(AuditionStream& stream, float& outL, float& outR)
-        {
-            const auto& buf = stream.audio->buffer;
-            const int totalSamples = buf.getNumSamples();
-            if (totalSamples < 4) return false;
-
-            double pitchRatio = calculateAuditionPitchRatio(stream.record);
-
-            if (stream.record.isLoop)
-            {
-                double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, stream.record.detectedBpm)) : 1.0;
-                double srRatio = stream.audio->sampleRate / sampleRate;
-                bool alive = stream.stretcher.renderSample(buf, bpmRatio * srRatio, pitchRatio, false, outL, outR);
-                outL *= stream.record.normGainLinear;
-                outR *= stream.record.normGainLinear;
-                return alive;
-            }
-
-            if (stream.readPos >= (double)(totalSamples - 2))
-                return false;
-
-            int idx0 = (int)stream.readPos;
-            int idx1 = std::min(totalSamples - 1, idx0 + 1);
-            float frac = (float)(stream.readPos - (double)idx0);
-
-            const float* ch0 = buf.getReadPointer(0);
-            const float* ch1 = (buf.getNumChannels() > 1) ? buf.getReadPointer(1) : ch0;
-
-            outL = (ch0[idx0] + frac * (ch0[idx1] - ch0[idx0])) * stream.record.normGainLinear;
-            outR = (ch1[idx0] + frac * (ch1[idx1] - ch1[idx0])) * stream.record.normGainLinear;
-
-            stream.readPos += pitchRatio;
-            return true;
-        }
-
-        bool stepVoiceStream(PolyVoice& v, float& outL, float& outR)
-        {
-            const auto& buf = v.audio->buffer;
-            const int totalSamples = buf.getNumSamples();
-            if (totalSamples < 4) return false;
-
-            // В режиме PadTrigger пересчитываем высоту на лету при смене KEY/SCALE/OCTAVE
-            if (bankMode == BankMode::PadTrigger)
-            {
-                const auto& slot = padSlots[(size_t)juce::jlimit(0, 11, v.slotIndex)];
-                int semiShift = MusicMath::calculatePitchShift(v.record.pitchClass, projectKeyRoot, scaleType,
-                                                               pitchMode, globalOctaveShift)
-                              + slot.semitoneOffset;
-                double srRatio = v.audio->sampleRate / sampleRate;
-                v.targetPitchRatio = std::pow(2.0, (double)semiShift / 12.0) * srRatio;
-            }
-
-            if (v.record.isLoop)
-            {
-                double bpmRatio = syncEnabled ? (currentBpm / std::max(40.0, v.record.detectedBpm)) : 1.0;
-                double srRatio = v.audio->sampleRate / sampleRate;
-                bool wrapLoop = (v.autoGateSamplesRemaining < 0);
-                return v.stretcher.renderSample(buf, bpmRatio * srRatio, v.currentPitchRatio, wrapLoop, outL, outR);
-            }
-
-            if (v.readPos < 0.0 || v.readPos >= (double)(totalSamples - 2))
-                return false;
-
-            int idx0 = (int)v.readPos;
-            int idx1 = std::min(totalSamples - 1, idx0 + 1);
-            float frac = (float)(v.readPos - (double)idx0);
-
-            if (v.reverse)
-            {
-                idx0 = totalSamples - 1 - idx0;
-                idx1 = std::max(0, idx0 - 1);
-            }
-
-            const float* ch0 = buf.getReadPointer(0);
-            const float* ch1 = (buf.getNumChannels() > 1) ? buf.getReadPointer(1) : ch0;
-
-            outL = ch0[idx0] + frac * (ch0[idx1] - ch0[idx0]);
-            outR = ch1[idx0] + frac * (ch1[idx1] - ch1[idx0]);
-
-            v.readPos += v.currentPitchRatio;
-            return true;
-        }
-
-        void handleNoteOn(int midiNote, float velocity)
-        {
-            heldNotes.insert(midiNote);
-
-            if (bankMode == BankMode::PadTrigger)
-            {
-                int slotIdx = (midiNote >= 36 && midiNote < 48) ? (midiNote - 36) : (((midiNote % 12) + 12) % 12);
-                if (padSlots[(size_t)slotIdx].sampleIndex >= 0 && padAudio[(size_t)slotIdx] != nullptr)
-                    startVoiceForSlot(slotIdx, midiNote, velocity, false, false, -1);
-                return;
-            }
-
-            int lowestNote = *heldNotes.begin();
-
-            for (int slotIdx = 0; slotIdx < 12; ++slotIdx)
-            {
-                if (padSlots[(size_t)slotIdx].sampleIndex < 0 || !padSlots[(size_t)slotIdx].chromaticActive || padAudio[(size_t)slotIdx] == nullptr)
-                    continue;
-
-                const auto& rec = padRecords[(size_t)slotIdx];
-                bool isBassFollowerType = (rec.isLoop || rec.isPolyChord);
-
-                if (isBassFollowerType)
-                    updateOrStartBassAnchorVoice(slotIdx, lowestNote, velocity);
-                else
-                    startVoiceForSlot(slotIdx, midiNote, velocity, true, false, -1);
-            }
-        }
-
-        void handleNoteOff(int midiNote)
-        {
-            heldNotes.erase(midiNote);
-
-            if (bankMode == BankMode::PadTrigger)
-            {
-                for (auto& v : voices)
-                    if (v.active && v.midiNote == midiNote)
-                        v.adsr.noteOff();
-                return;
-            }
-
-            int lowestNote = heldNotes.empty() ? -1 : *heldNotes.begin();
-
-            for (auto& v : voices)
-            {
-                if (!v.active) continue;
-
-                if (v.isBassAnchorVoice)
-                {
-                    if (heldNotes.empty())
-                        v.adsr.noteOff();
-                    else
-                        retuneVoiceToMidiNote(v, lowestNote);
-                }
-                else if (v.midiNote == midiNote)
-                {
-                    v.adsr.noteOff();
-                }
-            }
-        }
-
-        void allNotesOff()
-        {
-            heldNotes.clear();
-            for (auto& v : voices)
-                if (v.active) v.adsr.noteOff();
-        }
-
-        void updateOrStartBassAnchorVoice(int slotIdx, int bassMidiNote, float velocity)
-        {
-            for (auto& v : voices)
-            {
-                if (v.active && v.slotIndex == slotIdx && v.isBassAnchorVoice)
-                {
-                    retuneVoiceToMidiNote(v, bassMidiNote);
-                    return;
-                }
-            }
-            startVoiceForSlot(slotIdx, bassMidiNote, velocity, true, true, -1);
-        }
-
-        void retuneVoiceToMidiNote(PolyVoice& v, int targetMidiNote)
-        {
-            v.midiNote = targetMidiNote;
-            int semiDiff = (targetMidiNote - v.record.rootMidiNote)
-                         + padSlots[(size_t)v.slotIndex].semitoneOffset
-                         + globalOctaveShift * 12;
-            double srRatio = v.audio->sampleRate / sampleRate;
-            v.targetPitchRatio = std::pow(2.0, (double)semiDiff / 12.0) * srRatio;
-        }
-
-        void startVoiceForSlot(int slotIdx, int midiNote, float velocity, bool chromaticPitch,
-                               bool isBassAnchor, int autoGateSamples)
-        {
-            const auto& slot = padSlots[(size_t)slotIdx];
-            const auto& rec  = padRecords[(size_t)slotIdx];
-            auto audio       = padAudio[(size_t)slotIdx];
-            if (audio == nullptr) return;
-
-            PolyVoice* targetVoice = nullptr;
-            if (!chromaticPitch)
-            {
-                for (auto& v : voices)
-                {
-                    if (v.active && v.slotIndex == slotIdx)
-                    {
-                        targetVoice = &v;
-                        break;
-                    }
-                }
-            }
-
-            if (targetVoice == nullptr)
-            {
-                for (auto& v : voices)
-                {
-                    if (!v.active) { targetVoice = &v; break; }
-                }
-            }
-            if (targetVoice == nullptr)
-                targetVoice = &voices[0];
-
-            double prevPitch = targetVoice->active ? targetVoice->currentPitchRatio : 0.0;
-
-            targetVoice->active = true;
-            targetVoice->slotIndex = slotIdx;
-            targetVoice->midiNote = midiNote;
-            targetVoice->isBassAnchorVoice = isBassAnchor;
-            targetVoice->autoGateSamplesRemaining = autoGateSamples;
-            targetVoice->audio = audio;
-            targetVoice->record = rec;
-            targetVoice->reverse = slot.reverse;
-            targetVoice->readPos = 0.0;
-            targetVoice->stretcher.reset(0.0);
-
-            int semiShift = 0;
-            if (chromaticPitch)
-            {
-                semiShift = (midiNote - rec.rootMidiNote) + slot.semitoneOffset + globalOctaveShift * 12;
-            }
-            else
-            {
-                semiShift = MusicMath::calculatePitchShift(rec.pitchClass, projectKeyRoot, scaleType,
-                                                           pitchMode, globalOctaveShift)
-                          + slot.semitoneOffset;
-            }
-
-            double srRatio = audio->sampleRate / sampleRate;
-            targetVoice->targetPitchRatio = std::pow(2.0, (double)semiShift / 12.0) * srRatio;
-            targetVoice->currentPitchRatio = (glideTimeSec > 0.005f && prevPitch > 0.0)
-                                                ? prevPitch : targetVoice->targetPitchRatio;
-
-            targetVoice->velocityGain = juce::jlimit(0.15f, 1.0f, velocity);
-            targetVoice->normGain = rec.normGainLinear;
-
-            juce::ADSR::Parameters padAdsr {
-                juce::jlimit(0.002f, 5.0f, slot.attackSec),
-                juce::jlimit(0.01f,  5.0f, slot.decaySec),
-                juce::jlimit(0.0f,   1.0f, slot.sustainLvl),
-                juce::jlimit(0.01f,  8.0f, slot.releaseSec)
-            };
-            targetVoice->adsr.setSampleRate(sampleRate);
-            targetVoice->adsr.setParameters(padAdsr);
-            targetVoice->adsr.noteOn();
-        }
-
-        std::shared_ptr<LoadedSampleAudio> loadAudioFromFile(const juce::File& file)
+        std::shared_ptr<CachedAudioData> getOrLoadAudio(const juce::File& file) const
         {
             if (!file.existsAsFile()) return nullptr;
-            std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-            if (reader == nullptr || reader->lengthInSamples <= 0) return nullptr;
 
-            const int numSamples = (int)std::min<juce::int64>(reader->lengthInSamples,
-                                                              (juce::int64)(reader->sampleRate * 32.0));
-            auto loaded = std::make_shared<LoadedSampleAudio>();
-            loaded->sampleRate = reader->sampleRate;
-            loaded->buffer.setSize((int)juce::jmin<unsigned int>(2, reader->numChannels), numSamples);
-            reader->read(&loaded->buffer, 0, numSamples, 0, true, true);
-            loaded->buildWaveformPeaks();
-            return loaded;
+            auto it = audioCache.find(file.getFullPathName());
+            if (it != audioCache.end())
+                return it->second;
+
+            ju2FormatManager.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader(ju2FormatManager.createReaderFor(file));
+            if (reader == nullptr) return nullptr;
+
+            auto cached = std::make_shared<CachedAudioData>();
+            int numSamples = (int)std::min<juce::int64>(reader->lengthInSamples, reader->sampleRate * 15.0);
+            cached->buffer.setSize((int)reader->numChannels, numSamples);
+            reader->read(&cached->buffer, 0, numSamples, 0, true, true);
+
+            // Генерация пиков для мини-волны в стиле XO
+            const int numPeaks = 64;
+            cached->waveformPeaks.resize((size_t)numPeaks, 0.0f);
+            int blockSize = std::max(1, numSamples / numPeaks);
+
+            const float* chData = cached->buffer.getReadPointer(0);
+            for (int p = 0; p < numPeaks; ++p)
+            {
+                float peak = 0.0f;
+                int start = p * blockSize;
+                int end = std::min(numSamples, start + blockSize);
+                for (int i = start; i < end; ++i)
+                {
+                    float absVal = std::abs(chData[i]);
+                    if (absVal > peak) peak = absVal;
+                }
+                cached->waveformPeaks[(size_t)p] = peak;
+            }
+
+            audioCache[file.getFullPathName()] = cached;
+            return cached;
         }
 
-        void updateReverbParams()
+        void updateReverbParameters()
         {
-            juce::dsp::Reverb::Parameters rp;
-            rp.roomSize   = 0.80f;
-            rp.damping    = 0.45f;
-            rp.width      = 1.0f;
-            rp.wetLevel   = 1.0f;
-            rp.dryLevel   = 0.0f;
-            rp.freezeMode = 0.0f;
-            reverb.setParameters(rp);
+            juce::dsp::Reverb::Parameters p;
+            p.roomSize = 0.65f;
+            p.damping  = 0.45f;
+            p.wetLevel = 0.5f;
+            p.dryLevel = 0.5f;
+            p.width    = 1.0f;
+            p.freezeMode = 0.0f;
+            reverb.setParameters(p);
         }
 
-        juce::CriticalSection engineLock;
-        juce::AudioFormatManager formatManager;
-        double sampleRate = 44100.0;
+        double currentSampleRate = 44100.0;
+        const std::vector<SampleRecord>* database = nullptr;
+        std::array<PadSlotState, 12> padStates;
 
-        int projectKeyRoot = 9;
-        ScaleType scaleType = ScaleType::NaturalMinor;
-        PitchMode pitchMode = PitchMode::ScaleSnap;
+        mutable juce::AudioFormatManager ju2FormatManager;
+        mutable std::map<String, std::shared_ptr<CachedAudioData>> audioCache;
+
+        std::array<SamplerVoice, 16> polyVoices;
+        AuditionVoice auditionVoice;
+        bool auditionButtonDown = false;
+
+        int projectKeyRoot = 9; // A
+        ScaleType projectScaleType = ScaleType::NaturalMinor;
+        PitchMode projectPitchMode = PitchMode::ScaleSnap;
         int globalOctaveShift = 0;
-
-        double currentBpm = 128.0;
-        bool syncEnabled = true;
-        bool dawIsPlaying = false;
-        double currentPpq = 0.0;
+        double currentBpm = 120.0;
+        bool isHostBpmSynced = true;
 
         BankMode bankMode = BankMode::Chromatic;
-        float glideTimeSec = 0.0f;
-        float reverbWet = 0.35f;
-        float masterGainLinear = 1.0f;
+        float globalReverbAmount = 0.3f;
+        float bankReverbAmount = 0.3f;
+        float globalPitchOffset = 0.0f;
+        TransposeQuality transposeQuality = TransposeQuality::CleanRepitch;
+        float masterVolumeDb = 0.0f;
 
         juce::dsp::Reverb reverb;
-
-        AuditionStream auditionCurrent;
-        AuditionStream auditionFadingOut;
-        std::atomic<int> lastAuditionedIndex { -1 };
-        std::atomic<uint32_t> activePlayingPadsMask { 0 };
-
-        std::array<PadSlotState, 12> padSlots;
-        std::array<SampleRecord, 12> padRecords;
-        std::array<std::shared_ptr<LoadedSampleAudio>, 12> padAudio;
-
-        std::array<PolyVoice, 48> voices;
-        std::set<int> heldNotes;
     };
 }
