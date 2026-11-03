@@ -13,6 +13,13 @@ namespace Atlas
         Bypass    = 2
     };
 
+    // Режим транспонирования: чистый ресэмплинг без искажений или сохранение длительности
+    enum class TransposeQuality : int
+    {
+        CleanRepitch = 0,
+        TimeStretch  = 1
+    };
+
     enum class ScaleType : int
     {
         NaturalMinor    = 0,
@@ -33,49 +40,30 @@ namespace Atlas
         Chromatic  = 1
     };
 
-    enum class FilterCategory : int
-    {
-        Timbre    = 0,
-        Character = 1
-    };
-
-    enum class ColorMode : int
-    {
-        ByCluster    = 0,
-        ByMusicalKey = 1
-    };
-
-    // 6 смысловых кластеров с собственной взрослой палитрой
+    // 8 основных кластеров на единой карте (6 явных инструментов + FX + Other)
     enum class ClusterGroup : int
     {
-        DeepBass    = 0,
-        Keys        = 1,
-        GuitarPluck = 2,
-        SynthLead   = 3,
-        Vocal       = 4,
-        StringsPad  = 5
+        Keys    = 0,
+        Synth   = 1,
+        Bass    = 2,
+        Vocal   = 3,
+        Strings = 4,
+        Guitar  = 5,
+        FX      = 6,
+        Other   = 7
     };
 
-    enum TimbreFlags : uint32_t
+    // Подгруппы для уточняющей фильтрации и категории внутри Other / FX
+    enum SubFilterFlags : uint32_t
     {
-        Timbre_None    = 0,
-        Timbre_Keys    = 1 << 0,
-        Timbre_Guitar  = 1 << 1,
-        Timbre_Vox     = 1 << 2,
-        Timbre_Synth   = 1 << 3,
-        Timbre_Strings = 1 << 4
-    };
-
-    enum CharacterFlags : uint32_t
-    {
-        Char_None    = 0,
-        Char_Warm    = 1 << 0,
-        Char_Deep    = 1 << 1,
-        Char_Ethy    = 1 << 2,
-        Char_Clean   = 1 << 3,
-        Char_Dirty   = 1 << 4,
-        Char_Pluck   = 1 << 5,
-        Char_Sustain = 1 << 6
+        Sub_None       = 0,
+        Sub_Clean      = 1 << 0,
+        Sub_Noisy      = 1 << 1,
+        Sub_Warm       = 1 << 2,
+        Sub_Pluck      = 1 << 3,
+        Sub_Sustain    = 1 << 4,
+        Sub_RiserSweep = 1 << 5,
+        Sub_Textural   = 1 << 6
     };
 
     struct SampleRecord
@@ -103,37 +91,50 @@ namespace Atlas
         float lowBandRatio         = 0.3f;
         float highBandRatio        = 0.2f;
 
-        // Координаты на 2D-карте (0.0 .. 1.0)
+        // Координаты на плотной 2D-карте (0.0 .. 1.0)
         float mapX = 0.5f;
         float mapY = 0.5f;
 
-        // Дополнительные координаты проекций (для совместимости)
-        float timbreX = 0.5f;
-        float timbreY = 0.5f;
-        float charX   = 0.5f;
-        float charY   = 0.5f;
+        ClusterGroup cluster = ClusterGroup::Synth;
+        uint32_t subMask     = Sub_None;
 
-        ClusterGroup cluster   = ClusterGroup::SynthLead;
-        int timbreCluster      = 3;
-        int charCluster        = 0;
+        // 3 дискретные ступени оттенка по высоте тона: 0 = низкий, 1 = средний, 2 = высокий
+        int toneShadeBucket  = 1;
+    };
 
-        uint32_t timbreMask    = Timbre_None;
-        uint32_t characterMask = Char_None;
+    struct PadHistoryEntry
+    {
+        int sampleIndex = -1;
+        SampleRecord record;
+        int semitoneOffset = 0;
+        int centOffset = 0;
+        float regionStart = 0.0f;
+        float regionEnd = 1.0f;
     };
 
     struct PadSlotState
     {
         int sampleIndex = -1;
         bool chromaticActive = true;
-        float volumeDb = -3.0f;
-        float pan = 0.0f;
-        int semitoneOffset = 0;
+        bool settingsViewOpen = false; // Открыты ли настройки под шестерёнкой ⚙ внутри пэда
+
+        float volumeDb = -3.0f;        // -24 .. +6 dB
+        float pan = 0.0f;              // -1.0 (L) .. +1.0 (R)
+        int semitoneOffset = 0;        // -24 .. +24 полутонов
+        int centOffset = 0;            // -100 .. +100 центов
+
+        float regionStart = 0.0f;      // Начало выбранного участка (0.0 .. 0.95)
+        float regionEnd   = 1.0f;      // Конец выбранного участка (0.05 .. 1.0)
         bool reverse = false;
 
-        float attackSec  = 0.015f;
+        // Огибающая ADSR пэда
+        float attackSec  = 0.008f;
         float decaySec   = 1.20f;
-        float sustainLvl = 0.80f;
-        float releaseSec = 0.45f;
+        float sustainLvl = 0.85f;
+        float releaseSec = 0.35f;
+
+        // Стек истории замен сэмплов для кнопки Undo (↶)
+        std::vector<PadHistoryEntry> history;
     };
 
     struct MusicMath
@@ -180,42 +181,48 @@ namespace Atlas
             }
         }
 
-        static juce::Colour getClusterColour(ClusterGroup cluster, float brightnessNorm)
+        static juce::String getClusterName(ClusterGroup cluster)
+        {
+            switch (cluster)
+            {
+                case ClusterGroup::Keys:    return "KEYS";
+                case ClusterGroup::Synth:   return "SYNTH";
+                case ClusterGroup::Bass:    return "BASS";
+                case ClusterGroup::Vocal:   return "VOX";
+                case ClusterGroup::Strings: return "STRINGS";
+                case ClusterGroup::Guitar:  return "GUITAR";
+                case ClusterGroup::FX:      return "FX";
+                case ClusterGroup::Other:   return "OTHER";
+                default:                    return "OTHER";
+            }
+        }
+
+        // Спокойная взрослая палитра кластеров + ровно 3 градации оттенка по высоте тона (0: темнее, 1: база, 2: светлее)
+        static juce::Colour getClusterColour(ClusterGroup cluster, int toneShadeBucket)
         {
             juce::Colour base;
             switch (cluster)
             {
-                case ClusterGroup::DeepBass:    base = juce::Colour(0xff4f7cac); break;
-                case ClusterGroup::Keys:        base = juce::Colour(0xffd99b52); break;
-                case ClusterGroup::GuitarPluck: base = juce::Colour(0xff5da886); break;
-                case ClusterGroup::SynthLead:   base = juce::Colour(0xff52a8bd); break;
-                case ClusterGroup::Vocal:       base = juce::Colour(0xffc96d7e); break;
-                case ClusterGroup::StringsPad:  base = juce::Colour(0xff967bb6); break;
-                default:                        base = juce::Colour(0xff6b90b2); break;
+                case ClusterGroup::Keys:    base = juce::Colour(0xffd99b52); break; // Тёплый янтарь
+                case ClusterGroup::Synth:   base = juce::Colour(0xff4fa8be); break; // Стальной циан
+                case ClusterGroup::Bass:    base = juce::Colour(0xff4a72a8); break; // Глубокий индиго
+                case ClusterGroup::Vocal:   base = juce::Colour(0xffcf6d7e); break; // Приглушённый коралл
+                case ClusterGroup::Strings: base = juce::Colour(0xff967bb6); break; // Мягкая лаванда
+                case ClusterGroup::Guitar:  base = juce::Colour(0xff5da886); break; // Шалфейно-изумрудный
+                case ClusterGroup::FX:      base = juce::Colour(0xffc47db8); break; // Аметистовый FX
+                case ClusterGroup::Other:   base = juce::Colour(0xff8ca0b5); break; // Нейтральный серо-голубой сланец
+                default:                    base = juce::Colour(0xff8ca0b5); break;
             }
-            float bShift = (brightnessNorm - 0.5f) * 0.22f;
-            return (bShift >= 0.0f) ? base.brighter(bShift) : base.darker(-bShift);
+
+            int bucket = juce::jlimit(0, 2, toneShadeBucket);
+            if (bucket == 0)
+                return base.darker(0.24f);   // Низкий тон
+            if (bucket == 2)
+                return base.brighter(0.26f); // Высокий тон
+            return base;                     // Средний тон
         }
 
-        static juce::Colour getKeyColour(int pitchClass, float brightnessNorm)
-        {
-            static const uint32_t keyPalette[12] = {
-                0xff4f7cac, 0xff52a8bd, 0xff5da886, 0xff7fb069,
-                0xffd99b52, 0xffd07a56, 0xffc96d7e, 0xffb56598,
-                0xff967bb6, 0xff7475b8, 0xff5b85b8, 0xff4e97a8
-            };
-            juce::Colour base(keyPalette[((pitchClass % 12) + 12) % 12]);
-            float bShift = (brightnessNorm - 0.5f) * 0.20f;
-            return (bShift >= 0.0f) ? base.brighter(bShift) : base.darker(-bShift);
-        }
-
-        static juce::Colour getSampleColour(const SampleRecord& rec, FilterCategory, ColorMode colMode)
-        {
-            if (colMode == ColorMode::ByMusicalKey)
-                return getKeyColour(rec.pitchClass, rec.spectralCentroidNorm);
-            return getClusterColour(rec.cluster, rec.spectralCentroidNorm);
-        }
-
+        // Расчёт транспонирования для предпрослушивания (реагирует на смену тоники и лада)
         static int calculatePitchShift(int samplePitchClass,
                                        int projectKeyRoot,
                                        ScaleType scaleType,
@@ -229,6 +236,7 @@ namespace Atlas
             int src  = ((samplePitchClass % 12) + 12) % 12;
             int root = ((projectKeyRoot % 12) + 12) % 12;
 
+            // В режиме RootForce всегда приводим ноту сэмпла к выбранной тонике проекта
             if (mode == PitchMode::RootForce)
             {
                 int diff = root - src;
@@ -237,17 +245,19 @@ namespace Atlas
                 return diff + octShiftSemitones;
             }
 
+            // В режиме ScaleSnap: транспонируем относительно базовой тоники A (9) + квантуем в выбранный лад,
+            // чтобы переключение ноты KEY всегда реально транспонировало проигрываемый сэмпл/луп
             static const std::vector<int> scales[10] = {
-                { 0, 2, 3, 5, 7, 8, 10 },
-                { 0, 2, 4, 5, 7, 9, 11 },
-                { 0, 2, 3, 5, 7, 8, 11 },
-                { 0, 2, 3, 5, 7, 9, 11 },
-                { 0, 2, 3, 5, 7, 9, 10 },
-                { 0, 1, 3, 5, 7, 8, 10 },
-                { 0, 2, 4, 6, 7, 9, 11 },
-                { 0, 2, 4, 5, 7, 9, 10 },
-                { 0, 3, 5, 7, 10 },
-                { 0, 2, 4, 7, 9 }
+                { 0, 2, 3, 5, 7, 8, 10 }, // Natural Minor
+                { 0, 2, 4, 5, 7, 9, 11 }, // Major
+                { 0, 2, 3, 5, 7, 8, 11 }, // Harmonic Minor
+                { 0, 2, 3, 5, 7, 9, 11 }, // Melodic Minor
+                { 0, 2, 3, 5, 7, 9, 10 }, // Dorian
+                { 0, 1, 3, 5, 7, 8, 10 }, // Phrygian
+                { 0, 2, 4, 6, 7, 9, 11 }, // Lydian
+                { 0, 2, 4, 5, 7, 9, 10 }, // Mixolydian
+                { 0, 3, 5, 7, 10 },       // Minor Pentatonic
+                { 0, 2, 4, 7, 9 }         // Major Pentatonic
             };
 
             int sIdx = juce::jlimit(0, 9, (int)scaleType);
