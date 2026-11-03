@@ -226,7 +226,7 @@ void MelodicAtlasAudioProcessor::stepSimilarSampleInPad(int padIdx, int directio
         float scoreB = (float)rb.toneShadeBucket * 10.0f + rb.spectralCentroidNorm * 3.0f + rb.mapX;
         if (std::abs(scoreA - scoreB) < 0.0001f)
             return a < b;
-        return scoreA < b;
+        return scoreA < scoreB;
     });
 
     auto it = std::find(clusterCandidates.begin(), clusterCandidates.end(), curIdx);
