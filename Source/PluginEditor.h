@@ -44,7 +44,7 @@ namespace Atlas
             if (isBipolar)
             {
                 float midAngle = (rotaryStartAngle + rotaryEndAngle) * 0.5f;
-                if ( std::abs(toAngle - midAngle) > 0.02f )
+                if (std::abs(toAngle - midAngle) > 0.02f)
                 {
                     juce::Path valArc;
                     valArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
@@ -82,6 +82,7 @@ namespace Atlas
 }
 
 class MelodicAtlasAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                         public juce::SettableTooltipClient,
                                          public juce::DragAndDropContainer,
                                          public juce::FileDragAndDropTarget,
                                          private juce::Timer
