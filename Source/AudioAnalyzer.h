@@ -26,15 +26,26 @@ namespace Atlas
             juce::String lowerName = file.getFileNameWithoutExtension().toLowerCase();
             juce::String lowerPath = file.getFullPathName().toLowerCase();
 
-            if (lowerName.contains("kick") || lowerName.contains("snare") ||
+            // Отсекаем явные одиночные барабаны, но сохраняем FX, текстуры и мелодику
+            bool isExplicitDrum =
+                lowerName.contains("kick") || lowerName.contains("snare") ||
                 lowerName.contains("hihat") || lowerName.contains("hi-hat") ||
                 lowerName.contains("clap") || lowerName.contains("cymbal") ||
                 lowerName.contains("hat_") || lowerName.contains("_hat") ||
                 lowerName.contains("rimshot") || lowerName.contains("tambourine") ||
-                lowerName.contains("shaker"))
-            {
+                lowerName.contains("shaker");
+
+            bool isExplicitFx =
+                lowerPath.contains("fx") || lowerPath.contains("riser") ||
+                lowerPath.contains("sweep") || lowerPath.contains("uplift") ||
+                lowerPath.contains("downlift") || lowerPath.contains("faller") ||
+                lowerPath.contains("whoosh") || lowerPath.contains("impact") ||
+                lowerPath.contains("transition") || lowerPath.contains("noise") ||
+                lowerPath.contains("texture") || lowerPath.contains("atmos") ||
+                lowerPath.contains("foley") || lowerPath.contains("swell");
+
+            if (isExplicitDrum && !isExplicitFx)
                 return false;
-            }
 
             const int maxSamplesToRead = (int)std::min<juce::int64>(reader->lengthInSamples,
                                                                     (juce::int64)(reader->sampleRate * 12.0));
@@ -59,10 +70,12 @@ namespace Atlas
             if (maxPeak < 0.002f)
                 return false;
 
+            // 1. Сегментный анализ огибающей (16 сегментов)
             const int numSegs = 16;
             const int segLen = std::max(1, maxSamplesToRead / numSegs);
             std::array<float, numSegs> segRms { 0.0f };
             float maxSegRms = 0.0001f;
+            int peakSegmentIndex = 0;
 
             for (int s = 0; s < numSegs; ++s)
             {
@@ -73,11 +86,18 @@ namespace Atlas
                     sumSq += (double)mono[(size_t)i] * (double)mono[(size_t)i];
                 segRms[(size_t)s] = std::sqrt((float)(sumSq / (double)std::max(1, end - start)));
                 if (segRms[(size_t)s] > maxSegRms)
+                {
                     maxSegRms = segRms[(size_t)s];
+                    peakSegmentIndex = s;
+                }
             }
 
             float tailRms = (segRms[13] + segRms[14] + segRms[15]) / 3.0f;
             float tailDecayRatio = tailRms / maxSegRms;
+
+            // Нарастает ли громкость к середине/концу (признак Riser / Reverse / Swell)
+            float startRms = (segRms[0] + segRms[1]) * 0.5f;
+            bool isRisingEnvelope = (peakSegmentIndex >= 5 && startRms < maxSegRms * 0.45f);
 
             int rhythmicOnsets = 0;
             for (int s = 2; s < numSegs; ++s)
@@ -86,7 +106,7 @@ namespace Atlas
                     rhythmicOnsets++;
             }
 
-            const int earlySamples = std::min(maxSamplesToRead, (int)(reader->sampleRate * 0.090));
+            const int earlySamples = std::min(maxSamplesToRead, (int)(reader->sampleRate * 0.085));
             double earlyEnergy = 0.0;
             double totalEnergy = 0.0;
             int clippedSamples = 0;
@@ -105,6 +125,7 @@ namespace Atlas
             float crestFactor = maxPeak / (globalRms + 1e-6f);
             float clipDensity = (float)clippedSamples / (float)maxSamplesToRead;
 
+            // 2. Спектральный анализ
             juce::dsp::FFT fft(kFftOrder);
             juce::dsp::WindowingFunction<float> window(kFftSize, juce::dsp::WindowingFunction<float>::hann);
 
@@ -113,8 +134,11 @@ namespace Atlas
 
             float sumFlatness = 0.0f;
             float sumCentroidHz = 0.0f;
+            float firstHalfCentroid = 0.0f;
+            float secondHalfCentroid = 0.0f;
+            int firstHalfCount = 0, secondHalfCount = 0;
+
             float sumLowBand = 0.0f;
-            float sumWarmBand = 0.0f;
             float sumHighBand = 0.0f;
             float sumRoughness = 0.0f;
 
@@ -132,7 +156,7 @@ namespace Atlas
                 for (int i = 0; i < kFftSize; ++i)
                     frameRms += mono[(size_t)(startSample + i)] * mono[(size_t)(startSample + i)];
                 frameRms = std::sqrt(frameRms / (float)kFftSize);
-                if (frameRms < maxPeak * 0.05f)
+                if (frameRms < maxPeak * 0.04f)
                     continue;
 
                 std::fill(fftData.begin(), fftData.end(), 0.0f);
@@ -142,7 +166,7 @@ namespace Atlas
 
                 const int numBins = kFftSize / 2;
                 double logSum = 0.0, arithSum = 0.0, weightedFreqSum = 0.0, magSum = 0.0;
-                double lowE = 0.0, warmE = 0.0, highE = 0.0, hfJaggedness = 0.0;
+                double lowE = 0.0, highE = 0.0, hfJaggedness = 0.0;
 
                 for (int b = 1; b < numBins; ++b)
                 {
@@ -155,8 +179,7 @@ namespace Atlas
                     weightedFreqSum += freqHz * mag;
                     magSum += mag;
 
-                    if (freqHz <= 240.0) lowE += power;
-                    else if (freqHz <= 950.0) warmE += power;
+                    if (freqHz <= 250.0) lowE += power;
                     else if (freqHz >= 2400.0)
                     {
                         highE += power;
@@ -172,14 +195,16 @@ namespace Atlas
 
                 sumFlatness += flatness;
                 sumCentroidHz += centroidHz;
+                if (f < numFrames / 2) { firstHalfCentroid += centroidHz; firstHalfCount++; }
+                else                   { secondHalfCentroid += centroidHz; secondHalfCount++; }
+
                 sumLowBand += (float)(lowE / (arithSum + 1e-12));
-                sumWarmBand += (float)(warmE / (arithSum + 1e-12));
                 sumHighBand += (float)(highE / (arithSum + 1e-12));
                 sumRoughness += (float)(hfJaggedness / (magSum + 1e-12));
 
                 float conf = 0.0f;
                 float f0 = detectPitchYIN(mono.data() + startSample, kFftSize, (float)reader->sampleRate, conf);
-                if (f0 > 32.0f && conf > 0.45f)
+                if (f0 > 32.0f && conf > 0.38f)
                 {
                     int midiNote = (int)std::round(69.0f + 12.0f * std::log2(f0 / 440.0f));
                     framePitches.push_back(midiNote);
@@ -195,41 +220,56 @@ namespace Atlas
             float avgFlatness   = sumFlatness / (float)validFrames;
             float avgCentroidHz = sumCentroidHz / (float)validFrames;
             float avgLowBand    = sumLowBand / (float)validFrames;
-            float avgWarmBand   = sumWarmBand / (float)validFrames;
             float avgHighBand   = sumHighBand / (float)validFrames;
             float avgRoughness  = sumRoughness / (float)validFrames;
-            float avgConfidence = framePitches.empty() ? 0.0f : (sumPitchConfidence / (float)framePitches.size());
+            float avgConfidence = framePitches.empty() ? 0.25f : (sumPitchConfidence / (float)framePitches.size());
 
-            if (avgFlatness > 0.40f && avgConfidence < 0.62f)
-                return false;
-            if (duration < 0.75 && earlyEnergyRatio > 0.80f && avgConfidence < 0.74f)
-                return false;
-            if (framePitches.empty() || avgConfidence < 0.52f)
-                return false;
+            // Проверяем, есть ли сильный спектральный сдвиг (Sweep / Riser)
+            float c1 = (firstHalfCount > 0) ? (firstHalfCentroid / (float)firstHalfCount) : avgCentroidHz;
+            float c2 = (secondHalfCount > 0) ? (secondHalfCentroid / (float)secondHalfCount) : avgCentroidHz;
+            float centroidSweepRatio = std::abs(c2 - c1) / std::max(200.0f, avgCentroidHz);
+            bool hasSweepSignature = (duration >= 0.9 && (centroidSweepRatio > 0.42f || isRisingEnvelope));
 
-            std::array<int, 12> pitchClassHist { 0 };
-            for (int n : framePitches)
-                pitchClassHist[(size_t)(((n % 12) + 12) % 12)]++;
-
-            int dominantPitchClass = 0, maxCount = -1;
-            for (int pc = 0; pc < 12; ++pc)
+            // Отсекаем только короткие немелодические щелчки/перкуссию, если это не FX
+            if (!isExplicitFx && !hasSweepSignature)
             {
-                if (pitchClassHist[(size_t)pc] > maxCount)
-                {
-                    maxCount = pitchClassHist[(size_t)pc];
-                    dominantPitchClass = pc;
-                }
+                if (duration < 0.65 && earlyEnergyRatio > 0.82f && avgConfidence < 0.68f)
+                    return false;
+                if (duration < 0.45 && avgFlatness > 0.38f)
+                    return false;
             }
 
-            std::sort(framePitches.begin(), framePitches.end());
-            int medianMidi = framePitches[framePitches.size() / 2];
+            int dominantPitchClass = 0;
+            int medianMidi = 60;
+            int uniquePitchClasses = 1;
 
-            int uniquePitchClasses = 0;
-            for (int pc = 0; pc < 12; ++pc)
-                if (pitchClassHist[(size_t)pc] > 0) uniquePitchClasses++;
+            if (!framePitches.empty())
+            {
+                std::array<int, 12> pitchClassHist { 0 };
+                for (int n : framePitches)
+                    pitchClassHist[(size_t)(((n % 12) + 12) % 12)]++;
+
+                int maxCount = -1;
+                for (int pc = 0; pc < 12; ++pc)
+                {
+                    if (pitchClassHist[(size_t)pc] > maxCount)
+                    {
+                        maxCount = pitchClassHist[(size_t)pc];
+                        dominantPitchClass = pc;
+                    }
+                }
+
+                std::sort(framePitches.begin(), framePitches.end());
+                medianMidi = framePitches[framePitches.size() / 2];
+
+                uniquePitchClasses = 0;
+                for (int pc = 0; pc < 12; ++pc)
+                    if (pitchClassHist[(size_t)pc] > 0) uniquePitchClasses++;
+            }
 
             float pitchMobility = juce::jlimit(0.0f, 1.0f, (float)(uniquePitchClasses - 1) / 5.0f);
 
+            // Определение One-Shot vs Loop
             bool explicitOneShot = lowerPath.contains("oneshot") || lowerPath.contains("one-shot") ||
                                    lowerPath.contains("one_shot") || lowerPath.contains("1shot") ||
                                    lowerName.contains("shot") || lowerName.contains("stab") ||
@@ -243,21 +283,13 @@ namespace Atlas
 
             bool isDetectedLoop = false;
             if (duration < 1.40 || (explicitOneShot && !explicitLoop))
-            {
                 isDetectedLoop = false;
-            }
             else if (explicitLoop && duration >= 1.45)
-            {
                 isDetectedLoop = true;
-            }
             else if (tailDecayRatio < 0.34f && rhythmicOnsets <= 1)
-            {
                 isDetectedLoop = false;
-            }
             else if (duration >= 1.85 && tailDecayRatio >= 0.42f && (rhythmicOnsets >= 2 || uniquePitchClasses >= 3))
-            {
                 isDetectedLoop = true;
-            }
 
             outRecord.file = file;
             outRecord.name = file.getFileNameWithoutExtension();
@@ -283,50 +315,56 @@ namespace Atlas
             float compressionScore = juce::jlimit(0.0f, 1.0f, (4.5f - crestFactor) / 3.5f);
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, avgRoughness * 1.4f + clipDensity * 4.5f + compressionScore * 0.25f);
 
-            assignAccurateTagsAndCluster(lowerPath, lowerName, outRecord);
+            classifyInstrumentFxOrOther(lowerPath, lowerName, isExplicitFx, hasSweepSignature, outRecord);
             return true;
         }
 
+        // Плотная укладка кластеров в единое полотно в стиле XLN XO + расчёт 3 оттенков высоты тона
         static void relaxMapCoordinates(std::vector<SampleRecord>& samples)
         {
             if (samples.empty()) return;
 
-            std::vector<float> roughnessVals;
-            roughnessVals.reserve(samples.size());
+            // 1. Калибруем фильтр Noisy / Clean относительно реального распределения папки
+            std::vector<float> noiseScores;
+            noiseScores.reserve(samples.size());
             for (const auto& s : samples)
-                roughnessVals.push_back(s.harmonicRoughness);
-            std::sort(roughnessVals.begin(), roughnessVals.end());
-            float dirtyPercentileThreshold = roughnessVals[roughnessVals.size() * 76 / 100];
+                noiseScores.push_back(s.harmonicRoughness * 0.65f + s.spectralFlatness * 0.85f);
+            std::sort(noiseScores.begin(), noiseScores.end());
+            float noisyThreshold = noiseScores[noiseScores.size() * 72 / 100];
 
             for (auto& s : samples)
             {
                 juce::String ln = s.name.toLowerCase();
-                bool hasDirtyWord = ln.contains("dirty") || ln.contains("dist") || ln.contains("sat") ||
-                                    ln.contains("fuzz") || ln.contains("grit") || ln.contains("lofi") ||
-                                    ln.contains("lo-fi") || ln.contains("bit") || ln.contains("crush") ||
-                                    ln.contains("drive") || ln.contains("overdrive") || ln.contains("acid");
+                bool explicitNoisy = ln.contains("dirty") || ln.contains("dist") || ln.contains("noise") ||
+                                     ln.contains("lofi") || ln.contains("lo-fi") || ln.contains("grit") ||
+                                     ln.contains("fuzz") || ln.contains("crush") || ln.contains("sat");
 
-                s.characterMask &= ~(Char_Dirty | Char_Clean);
-                if (hasDirtyWord || (s.harmonicRoughness >= std::max(0.32f, dirtyPercentileThreshold) && s.pitchConfidence < 0.88f))
-                    s.characterMask |= Char_Dirty;
-                else if (s.pitchConfidence >= 0.72f && s.harmonicRoughness < dirtyPercentileThreshold * 0.92f)
-                    s.characterMask |= Char_Clean;
+                float score = s.harmonicRoughness * 0.65f + s.spectralFlatness * 0.85f;
+                s.subMask &= ~(Sub_Clean | Sub_Noisy);
+                if (explicitNoisy || score >= std::max(0.24f, noisyThreshold))
+                    s.subMask |= Sub_Noisy;
+                else
+                    s.subMask |= Sub_Clean;
             }
 
-            struct ClusterCenter { float cx; float cy; float rx; float ry; };
-            static const ClusterCenter centers[6] = {
-                { 0.18f, 0.25f, 0.12f, 0.15f },
-                { 0.50f, 0.26f, 0.13f, 0.15f },
-                { 0.82f, 0.26f, 0.12f, 0.15f },
-                { 0.20f, 0.73f, 0.13f, 0.16f },
-                { 0.52f, 0.74f, 0.13f, 0.15f },
-                { 0.82f, 0.73f, 0.12f, 0.16f }
+            // 2. Координаты центров 8 кластеров в едином плотном континенте (как в XLN XO)
+            // Кластеры смыкаются друг с другом в центральной области без огромных дыр
+            struct ClusterSector { float cx; float cy; float rx; float ry; };
+            static const ClusterSector sectors[8] = {
+                { 0.34f, 0.35f, 0.14f, 0.16f }, // 0: KEYS (Янтарь)
+                { 0.52f, 0.33f, 0.15f, 0.16f }, // 1: SYNTH (Циан)
+                { 0.25f, 0.56f, 0.14f, 0.16f }, // 2: BASS (Индиго)
+                { 0.69f, 0.37f, 0.14f, 0.16f }, // 3: VOX (Коралл)
+                { 0.66f, 0.63f, 0.14f, 0.16f }, // 4: STRINGS (Лаванда)
+                { 0.45f, 0.64f, 0.14f, 0.16f }, // 5: GUITAR (Шалфей)
+                { 0.77f, 0.58f, 0.13f, 0.15f }, // 6: FX (Пурпурный)
+                { 0.32f, 0.72f, 0.15f, 0.15f }  // 7: OTHER (Сланец)
             };
 
             for (int loopPass = 0; loopPass < 2; ++loopPass)
             {
                 bool targetLoop = (loopPass == 1);
-                for (int c = 0; c < 6; ++c)
+                for (int c = 0; c < 8; ++c)
                 {
                     std::vector<size_t> indices;
                     for (size_t i = 0; i < samples.size(); ++i)
@@ -337,28 +375,40 @@ namespace Atlas
 
                     if (indices.empty()) continue;
 
+                    // Сортируем по высоте тона и спектральной яркости
                     std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b)
                     {
-                        return (samples[a].spectralCentroidNorm * 2.0f + (float)samples[a].pitchClass * 0.05f)
-                             < (samples[b].spectralCentroidNorm * 2.0f + (float)samples[b].pitchClass * 0.05f);
+                        float toneA = (float)samples[a].rootMidiNote + samples[a].spectralCentroidNorm * 24.0f;
+                        float toneB = (float)samples[b].rootMidiNote + samples[b].spectralCentroidNorm * 24.0f;
+                        return toneA < toneB;
                     });
 
-                    const auto& cc = centers[c];
+                    const auto& sec = sectors[c];
                     const size_t count = indices.size();
                     const float goldenAngle = 2.39996323f;
+
+                    // Радиус сектора плавно адаптируется под количество звуков для высокой плотности
+                    float densityScale = juce::jlimit(0.55f, 1.18f, std::sqrt((float)count / 45.0f));
 
                     for (size_t k = 0; k < count; ++k)
                     {
                         auto& rec = samples[indices[k]];
-                        float normIdx = ((float)k + 0.5f) / (float)count;
-                        float r = std::sqrt(normIdx);
-                        float theta = (float)k * goldenAngle + (rec.pitchMobilityNorm - 0.5f) * 0.8f;
+                        float rankNorm = ((float)k + 0.5f) / (float)count;
 
-                        float localX = 0.72f * (r * std::cos(theta)) + 0.28f * (rec.pitchMobilityNorm * 2.0f - 1.0f);
-                        float localY = 0.72f * (r * std::sin(theta)) + 0.28f * (rec.spectralCentroidNorm * 2.0f - 1.0f);
+                        // Назначаем ровно 3 оттенка тона (0 = низкий/тёмный, 1 = средний, 2 = высокий/светлый)
+                        if (rankNorm < 0.33f)      rec.toneShadeBucket = 0;
+                        else if (rankNorm < 0.67f) rec.toneShadeBucket = 1;
+                        else                       rec.toneShadeBucket = 2;
 
-                        rec.mapX = juce::jlimit(0.05f, 0.95f, cc.cx + localX * cc.rx);
-                        rec.mapY = juce::jlimit(0.06f, 0.94f, cc.cy + localY * cc.ry);
+                        float r = std::sqrt(rankNorm) * densityScale;
+                        float theta = (float)k * goldenAngle;
+
+                        // Укладываем точки плотным органическим облаком с плавным градиентом высоты тона снизу-вверх
+                        float localX = 0.78f * (r * std::cos(theta)) + 0.22f * (rec.pitchMobilityNorm * 2.0f - 1.0f);
+                        float localY = 0.72f * (r * std::sin(theta)) + 0.28f * (rankNorm * 2.0f - 1.0f);
+
+                        rec.mapX = juce::jlimit(0.08f, 0.92f, sec.cx + localX * sec.rx);
+                        rec.mapY = juce::jlimit(0.08f, 0.92f, sec.cy + localY * sec.ry);
                     }
                 }
             }
@@ -448,61 +498,68 @@ namespace Atlas
             return 120.0;
         }
 
-        static void assignAccurateTagsAndCluster(const juce::String& lowerPath,
-                                                 const juce::String& lowerName,
-                                                 SampleRecord& rec)
+        static void classifyInstrumentFxOrOther(const juce::String& lowerPath,
+                                                const juce::String& lowerName,
+                                                bool isExplicitFx,
+                                                bool hasSweepSignature,
+                                                SampleRecord& rec)
         {
-            if (lowerPath.contains("key") || lowerPath.contains("piano") || lowerPath.contains("rhodes") ||
-                lowerPath.contains("wurli") || lowerPath.contains("organ") || lowerPath.contains("epiano"))
-                rec.timbreMask |= Timbre_Keys;
+            rec.subMask = Sub_None;
 
-            if (lowerPath.contains("guitar") || lowerPath.contains("gtr") || lowerPath.contains("acoustic") ||
-                lowerPath.contains("ukulele") || lowerPath.contains("harp") || lowerPath.contains("kalimba"))
-                rec.timbreMask |= Timbre_Guitar;
+            // 1. Определяем подгруппы характера (для фильтрации и для группы Other / FX)
+            if (rec.spectralCentroidNorm < 0.45f && rec.highBandRatio < 0.18f)
+                rec.subMask |= Sub_Warm;
 
-            if (lowerPath.contains("vox") || lowerPath.contains("vocal") || lowerPath.contains("voice") ||
-                lowerPath.contains("chant") || lowerPath.contains("choir"))
-                rec.timbreMask |= Timbre_Vox;
-
-            if (lowerPath.contains("string") || lowerPath.contains("violin") || lowerPath.contains("cello") ||
-                lowerPath.contains("viola") || lowerPath.contains("orchestra"))
-                rec.timbreMask |= Timbre_Strings;
-
-            if (lowerPath.contains("synth") || lowerPath.contains("lead") || lowerPath.contains("pad") ||
-                lowerPath.contains("arp") || lowerPath.contains("bass") || rec.timbreMask == Timbre_None)
-                rec.timbreMask |= Timbre_Synth;
-
-            bool isBassOrDeep = (rec.rootMidiNote <= 50) || (rec.lowBandRatio >= 0.42f) ||
-                                lowerName.contains("bass") || lowerName.contains("sub") || lowerName.contains("deep");
-            if (isBassOrDeep)
-                rec.characterMask |= Char_Deep;
-
-            if (rec.spectralCentroidNorm < 0.46f && rec.highBandRatio < 0.18f)
-                rec.characterMask |= Char_Warm;
-
-            if ((rec.highBandRatio >= 0.22f && rec.attackRatio < 0.35f) ||
-                lowerName.contains("air") || lowerName.contains("eth") || lowerName.contains("pad") || lowerName.contains("shimmer"))
-                rec.characterMask |= Char_Ethy;
-
-            bool isPlucky = (rec.attackRatio >= 0.38f && rec.tailDecayRatio < 0.40f) ||
+            bool isPlucky = (rec.attackRatio >= 0.36f && rec.tailDecayRatio < 0.42f) ||
                             lowerName.contains("pluck") || lowerName.contains("stab") || lowerName.contains("pizz");
             if (isPlucky)
-                rec.characterMask |= Char_Pluck;
+                rec.subMask |= Sub_Pluck;
             else
-                rec.characterMask |= Char_Sustain;
+                rec.subMask |= Sub_Sustain;
 
-            if (rec.timbreMask & Timbre_Vox)
+            if (isExplicitFx || hasSweepSignature || lowerName.contains("riser") || lowerName.contains("sweep") || lowerName.contains("swell"))
+                rec.subMask |= Sub_RiserSweep;
+
+            if (rec.spectralFlatness > 0.14f || lowerPath.contains("texture") || lowerPath.contains("atmos") || lowerPath.contains("ambien"))
+                rec.subMask |= Sub_Textural;
+
+            // 2. Явное определение группы инструмента, FX или отправка в Other
+            bool isKeys = lowerPath.contains("key") || lowerPath.contains("piano") || lowerPath.contains("rhodes") ||
+                          lowerPath.contains("wurli") || lowerPath.contains("organ") || lowerPath.contains("epiano") ||
+                          lowerPath.contains("clav");
+
+            bool isGuitar = lowerPath.contains("guitar") || lowerPath.contains("gtr") || lowerPath.contains("acoustic") ||
+                            lowerPath.contains("ukulele") || lowerPath.contains("harp") || lowerPath.contains("kalimba") ||
+                            lowerPath.contains("nylon");
+
+            bool isVox = lowerPath.contains("vox") || lowerPath.contains("vocal") || lowerPath.contains("voice") ||
+                         lowerPath.contains("chant") || lowerPath.contains("choir") || lowerPath.contains("sing");
+
+            bool isStrings = lowerPath.contains("string") || lowerPath.contains("violin") || lowerPath.contains("cello") ||
+                             lowerPath.contains("viola") || lowerPath.contains("orchestra");
+
+            bool isBass = lowerPath.contains("bass") || lowerPath.contains("sub") || lowerPath.contains("808") ||
+                          lowerPath.contains("reese") || (rec.rootMidiNote <= 45 && rec.lowBandRatio >= 0.50f && rec.pitchConfidence >= 0.72f);
+
+            bool isSynth = lowerPath.contains("synth") || lowerPath.contains("lead") || lowerPath.contains("pad") ||
+                           lowerPath.contains("arp") || lowerPath.contains("saw") || lowerPath.contains("analog");
+
+            if (isExplicitFx || (hasSweepSignature && !isKeys && !isGuitar && !isVox && !isStrings && !isBass))
+                rec.cluster = ClusterGroup::FX;
+            else if (isVox)
                 rec.cluster = ClusterGroup::Vocal;
-            else if (rec.timbreMask & Timbre_Keys)
+            else if (isKeys)
                 rec.cluster = ClusterGroup::Keys;
-            else if ((rec.timbreMask & Timbre_Guitar) || (rec.characterMask & Char_Pluck))
-                rec.cluster = ClusterGroup::GuitarPluck;
-            else if (isBassOrDeep)
-                rec.cluster = ClusterGroup::DeepBass;
-            else if ((rec.timbreMask & Timbre_Strings) || (rec.characterMask & Char_Ethy))
-                rec.cluster = ClusterGroup::StringsPad;
+            else if (isGuitar)
+                rec.cluster = ClusterGroup::Guitar;
+            else if (isStrings)
+                rec.cluster = ClusterGroup::Strings;
+            else if (isBass)
+                rec.cluster = ClusterGroup::Bass;
+            else if (isSynth)
+                rec.cluster = ClusterGroup::Synth;
             else
-                rec.cluster = ClusterGroup::SynthLead;
+                rec.cluster = ClusterGroup::Other; // Все неочевидные звуки попадают в Other с фильтрацией по характеру
         }
     };
 }
