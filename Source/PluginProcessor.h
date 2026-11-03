@@ -1,15 +1,5 @@
 #pragma once
 
-#include <set>
-#include <map>
-#include <deque>
-#include <vector>
-#include <array>
-#include <memory>
-#include <cmath>
-#include <algorithm>
-#include <atomic>
-
 #include <JuceHeader.h>
 #include "AtlasTypes.h"
 #include "AudioAnalyzer.h"
@@ -24,13 +14,15 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
+
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return JucePlugin_Name; }
+    const juce::String getName() const override { return "Melodic-Atlas"; }
+
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -45,58 +37,79 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // --- Управление базой сэмплов и сканированием ---
     void scanFolderAsync(const juce::File& folder);
-    void generateDemoAtlas();
-
-    // Назначение сэмпла в пэд с учётом замка настроек (Lock) и переносом октавы/тона предпрослушивания
-    void assignSampleToPadWithPreviewSettings(int padIdx, int sampleIdx);
-
-    // Переключение звука в пэде на ближайший похожий из того же кластера (стрелочки ◄ / ►)
-    void stepSimilarSampleInPad(int padIdx, int direction);
-
     bool isCurrentlyScanning() const { return scanning.load(); }
-    float getScanProgress() const { return scanProgress.load(); }
-    int getScannedCount() const { return scannedCount.load(); }
+    float getScanProgress() const    { return scanProgress.load(); }
+    int getScannedCount() const      { return scannedCount.load(); }
 
     const std::vector<Atlas::SampleRecord>& getSampleDatabase() const { return sampleDatabase; }
     Atlas::SamplerEngine& getSamplerEngine() { return samplerEngine; }
 
-    // Настройки предпрослушивания на карте (не ломают уже добавленные в банк пэды)
+    // --- Работа с пэдами и назначением звуков ---
+    void assignSampleToPadWithPreviewSettings(int padIdx, int sampleIdx, bool recordGlobalUndo = true);
+    void stepSimilarSampleInPad(int padIdx, int direction);
+    void clearAllPadsWithUndo();
+    void setGlobalExportMode(bool processed);
+
+    // --- Глобальная история проекта (Undo / Redo в левом верхнем углу) ---
+    void pushGlobalUndoState();
+    bool canGlobalUndo() const { return !undoStack.empty(); }
+    bool canGlobalRedo() const { return !redoStack.empty(); }
+    void performGlobalUndo();
+    void performGlobalRedo();
+
+    // --- Постоянный дисковый кэш отсканированной базы сэмплов ---
+    void saveDatabaseCacheToDisk();
+    bool loadDatabaseCacheFromDisk();
+
+    // --- Атомарные параметры движка и интерфейса ---
     std::atomic<bool> showLoopsTab { false };
-    std::atomic<int>  projectKeyRoot { 9 }; // A
-    std::atomic<int>  projectScaleType { (int)Atlas::ScaleType::NaturalMinor };
-    std::atomic<int>  pitchModeIndex { (int)Atlas::PitchMode::ScaleSnap };
-    std::atomic<int>  octaveShift { 0 };
-    std::atomic<int>  transposeQualityIndex { (int)Atlas::TransposeQuality::CleanRepitch };
+    std::atomic<int> projectKeyRoot { 9 }; // A
+    std::atomic<int> projectScaleType { (int)Atlas::ScaleType::NaturalMinor };
+    std::atomic<int> pitchModeIndex { (int)Atlas::PitchMode::ScaleSnap };
+    std::atomic<int> transposeQualityIndex { (int)Atlas::TransposeQuality::CleanRepitch };
+    std::atomic<int> octaveShift { 0 };
 
-    // Кнопка BPM: true = кнопка горит (синхронизация с DAW активна), false = не горит (ручной BPM)
+    std::atomic<bool> bpmLockedToHost { true };
     std::atomic<double> currentBpm { 120.0 };
-    std::atomic<bool>   bpmLockedToHost { true };
 
-    // Настройки банка пэдов и мастер-секции
-    std::atomic<int>   bankModeIndex { (int)Atlas::BankMode::Chromatic };
-    std::atomic<bool>  padSettingsLocked { false }; // Замок настроек пэдов при замене звука
-    std::atomic<float> reverbAmount { 0.25f };      // Реверб предпрослушивания
-    std::atomic<float> bankReverbAmount { 0.30f };  // Отдельная ручка реверба для банка пэдов
-    std::atomic<float> bankPitchSemitones { 0.0f }; // Общая крутилка высоты тона
-    std::atomic<float> masterVolumeDb { 0.0f };
+    std::atomic<int> bankModeIndex { (int)Atlas::BankMode::Chromatic };
+    std::atomic<bool> padSettingsLocked { false };
+    std::atomic<bool> globalExportProcessed { true }; // true = [P], false = [D]
+
     std::atomic<float> glideTime { 0.0f };
+    std::atomic<float> reverbAmount { 0.25f };       // MAP REV (сверху)
+    std::atomic<float> bankReverbAmount { 0.30f };   // BANK REV (справа в блоке банка)
+    std::atomic<float> bankPitchSemitones { 0.0f };  // TUNE предпрослушивания (сверху)
+    std::atomic<float> masterVolumeDb { 0.0f };      // MAIN громкость (справа в блоке банка)
 
     std::atomic<uint64_t> databaseVersion { 1 };
 
+    // Состояние UI, сохраняемое при закрытии/открытии окна плагина
+    int savedEditorWidth = 1080;
+    int savedEditorHeight = 640;
+    int savedClusterFilter = -1;
+    uint32_t savedSubFilterMask = 0;
+    int primarySelectedPad = 0;
+
 private:
     void run() override;
-
-    Atlas::SamplerEngine samplerEngine;
-    juce::AudioFormatManager formatManager;
+    void generateDemoAtlas();
+    juce::File getDatabaseCacheFile() const;
 
     juce::CriticalSection dbLock;
+    juce::AudioFormatManager formatManager;
     std::vector<Atlas::SampleRecord> sampleDatabase;
-    juce::File folderToScan;
+    Atlas::SamplerEngine samplerEngine;
 
-    std::atomic<bool>  scanning { false };
+    std::vector<Atlas::ProjectSnapshot> undoStack;
+    std::vector<Atlas::ProjectSnapshot> redoStack;
+
+    juce::File folderToScan;
+    std::atomic<bool> scanning { false };
     std::atomic<float> scanProgress { 0.0f };
-    std::atomic<int>   scannedCount { 0 };
+    std::atomic<int> scannedCount { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MelodicAtlasAudioProcessor)
 };
