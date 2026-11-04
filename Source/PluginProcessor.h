@@ -37,7 +37,6 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // --- Управление базой сэмплов и сканированием ---
     void scanFolderAsync(const juce::File& folder);
     bool isCurrentlyScanning() const { return scanning.load(); }
     float getScanProgress() const    { return scanProgress.load(); }
@@ -46,26 +45,22 @@ public:
     const std::vector<Atlas::SampleRecord>& getSampleDatabase() const { return sampleDatabase; }
     Atlas::SamplerEngine& getSamplerEngine() { return samplerEngine; }
 
-    // --- Работа с пэдами и назначением звуков ---
     void assignSampleToPadWithPreviewSettings(int padIdx, int sampleIdx, bool recordGlobalUndo = true);
     void stepSimilarSampleInPad(int padIdx, int direction);
     void clearAllPadsWithUndo();
     void setGlobalExportMode(bool processed);
 
-    // --- Глобальная история проекта (Undo / Redo) ---
     void pushGlobalUndoState();
     bool canGlobalUndo() const { return !undoStack.empty(); }
     bool canGlobalRedo() const { return !redoStack.empty(); }
     void performGlobalUndo();
     void performGlobalRedo();
 
-    // --- Постоянный дисковый кэш ---
     void saveDatabaseCacheToDisk();
     bool loadDatabaseCacheFromDisk();
 
-    // --- Атомарные параметры движка и интерфейса ---
     std::atomic<bool> showLoopsTab { false };
-    std::atomic<int> projectKeyRoot { 9 }; // A
+    std::atomic<int> projectKeyRoot { 9 }; 
     std::atomic<int> projectScaleType { (int)Atlas::ScaleType::NaturalMinor };
     std::atomic<int> pitchModeIndex { (int)Atlas::PitchMode::ScaleSnap };
     std::atomic<int> transposeQualityIndex { (int)Atlas::TransposeQuality::CleanRepitch };
@@ -76,21 +71,21 @@ public:
 
     std::atomic<int> bankModeIndex { (int)Atlas::BankMode::Chromatic };
     std::atomic<bool> padSettingsLocked { false };
-    std::atomic<bool> globalExportProcessed { true }; // true = [P], false = [D]
+    std::atomic<bool> globalExportProcessed { true };
 
     std::atomic<float> glideTime { 0.0f };
-    std::atomic<float> reverbAmount { 0.25f };       // MAP REV
-    std::atomic<float> bankReverbAmount { 0.30f };   // BANK REV
-    std::atomic<float> bankPitchSemitones { 0.0f };  // TUNE предпрослушивания
-    std::atomic<float> masterVolumeDb { 0.0f };      // MAIN громкость
+    std::atomic<float> reverbAmount { 0.25f };       
+    std::atomic<float> bankReverbAmount { 0.30f };   
+    std::atomic<float> bankPitchSemitones { 0.0f };  
+    std::atomic<float> masterVolumeDb { 0.0f };      
 
     std::atomic<uint64_t> databaseVersion { 1 };
 
-    // Состояние UI, сохраняемое при закрытии/открытии окна плагина
     int savedEditorWidth = 1080;
     int savedEditorHeight = 640;
-    int savedClusterFilter = -1;
-    uint32_t savedSubFilterMask = 0;
+    uint32_t savedClustersMask = 0; // Битовая маска мультивыбора инструментов
+    std::array<uint32_t, 7> savedClusterSubs = { 0,0,0,0,0,0,0 };
+    uint32_t savedMoodMask = 0;     // Маска настроений MOODS
     int primarySelectedPad = 0;
 
 private:
