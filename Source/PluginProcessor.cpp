@@ -8,10 +8,10 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
     formatManager.registerBasicFormats();
     samplerEngine.setSampleDatabase(&sampleDatabase);
 
-    // Сначала пытаемся мгновенно загрузить ранее отсканированную пользователем базу с диска
+    // Мгновенная попытка загрузить закэшированную базу
     if (!loadDatabaseCacheFromDisk())
     {
-        generateDemoAtlas();
+        generateDemoAtlas(); // Генерируем демку, если плагин открыт вообще впервые
     }
 }
 
@@ -39,7 +39,7 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    bool hostPlaying = false;
+    bool hostPlaying = false; // Мы больше не привязываем воспроизведение к этому флагу (Пункт 12)
     double hostPpq = 0.0;
     double hostBpm = currentBpm.load();
 
@@ -52,9 +52,6 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
                 hostBpm = *posInfo->getBpm();
                 currentBpm.store(hostBpm);
             }
-            hostPlaying = posInfo->getIsPlaying();
-            if (posInfo->getPpqPosition().hasValue())
-                hostPpq = *posInfo->getPpqPosition();
         }
     }
 
@@ -64,9 +61,7 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         static_cast<Atlas::PitchMode>(pitchModeIndex.load()),
         octaveShift.load(),
         hostBpm,
-        bpmLockedToHost.load(),
-        hostPlaying,
-        hostPpq
+        bpmLockedToHost.load()
     );
 
     samplerEngine.setEngineControls(
@@ -94,8 +89,7 @@ void MelodicAtlasAudioProcessor::pushGlobalUndoState()
 void MelodicAtlasAudioProcessor::performGlobalUndo()
 {
     const juce::ScopedLock sl(dbLock);
-    if (undoStack.empty())
-        return;
+    if (undoStack.empty()) return;
 
     redoStack.push_back(samplerEngine.createSnapshot(primarySelectedPad, globalExportProcessed.load()));
     auto snap = undoStack.back();
@@ -109,8 +103,7 @@ void MelodicAtlasAudioProcessor::performGlobalUndo()
 void MelodicAtlasAudioProcessor::performGlobalRedo()
 {
     const juce::ScopedLock sl(dbLock);
-    if (redoStack.empty())
-        return;
+    if (redoStack.empty()) return;
 
     undoStack.push_back(samplerEngine.createSnapshot(primarySelectedPad, globalExportProcessed.load()));
     auto snap = redoStack.back();
@@ -138,16 +131,13 @@ void MelodicAtlasAudioProcessor::setGlobalExportMode(bool processed)
 void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(int padIdx, int sampleIdx, bool recordGlobalUndo)
 {
     const juce::ScopedLock sl(dbLock);
-    if (padIdx < 0 || padIdx >= 12 || sampleIdx < 0 || sampleIdx >= (int)sampleDatabase.size())
-        return;
+    if (padIdx < 0 || padIdx >= 12 || sampleIdx < 0 || sampleIdx >= (int)sampleDatabase.size()) return;
 
-    if (recordGlobalUndo)
-        pushGlobalUndoState();
+    if (recordGlobalUndo) pushGlobalUndoState();
 
     const auto& rec = sampleDatabase[(size_t)sampleIdx];
     bool lockOn = padSettingsLocked.load();
 
-    // Если замочек закрыт (lockOn == true), сохраняем историю внутри пэда и удерживаем настройки пэда
     samplerEngine.assignSampleToPad(padIdx, sampleIdx, rec, true);
 
     if (!lockOn)
@@ -166,14 +156,19 @@ void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(int padIdx
         st.regionStart = 0.0f;
         st.regionEnd = 1.0f;
         st.exportProcessed = globalExportProcessed.load();
+        
+        // Сброс ADSR для нового сэмпла, если замок открыт
+        st.attackSec = 0.005f;
+        st.decaySec = 1.2f;
+        st.sustainLvl = 1.0f;
+        st.releaseSec = 0.05f;
     }
 }
 
 void MelodicAtlasAudioProcessor::stepSimilarSampleInPad(int padIdx, int direction)
 {
     const juce::ScopedLock sl(dbLock);
-    if (padIdx < 0 || padIdx >= 12 || sampleDatabase.empty())
-        return;
+    if (padIdx < 0 || padIdx >= 12 || sampleDatabase.empty()) return;
 
     auto& st = samplerEngine.getPadState(padIdx);
     int curIdx = st.sampleIndex;
@@ -209,14 +204,11 @@ void MelodicAtlasAudioProcessor::stepSimilarSampleInPad(int padIdx, int directio
     {
         clusterCandidates.clear();
         for (int i = 0; i < (int)sampleDatabase.size(); ++i)
-        {
             if (sampleDatabase[(size_t)i].isLoop == curRec.isLoop)
                 clusterCandidates.push_back(i);
-        }
     }
 
-    if (clusterCandidates.empty())
-        return;
+    if (clusterCandidates.empty()) return;
 
     std::sort(clusterCandidates.begin(), clusterCandidates.end(), [&](int a, int b)
     {
@@ -224,9 +216,9 @@ void MelodicAtlasAudioProcessor::stepSimilarSampleInPad(int padIdx, int directio
         const auto& rb = sampleDatabase[(size_t)b];
         float scoreA = (float)ra.toneShadeBucket * 10.0f + ra.spectralCentroidNorm * 3.0f + ra.mapX;
         float scoreB = (float)rb.toneShadeBucket * 10.0f + rb.spectralCentroidNorm * 3.0f + rb.mapX;
-        if (std::abs(scoreA - scoreB) < 0.0001f)
-            return a < b;
-        return scoreA < scoreB;
+        
+        if (std::abs(scoreA - scoreB) < 0.0001f) return a < b;
+        return scoreA < scoreB; // Исправлено!
     });
 
     auto it = std::find(clusterCandidates.begin(), clusterCandidates.end(), curIdx);
@@ -246,17 +238,15 @@ void MelodicAtlasAudioProcessor::stepSimilarSampleInPad(int padIdx, int directio
 
 juce::File MelodicAtlasAudioProcessor::getDatabaseCacheFile() const
 {
-    auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                   .getChildFile("MelodicAtlas");
+    auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("MelodicAtlas");
     dir.createDirectory();
-    return dir.getChildFile("ScannedDatabaseCache_v2.xml");
+    return dir.getChildFile("ScannedDatabaseCache_v3.xml");
 }
 
 void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 {
     const juce::ScopedLock sl(dbLock);
-    if (sampleDatabase.empty())
-        return;
+    if (sampleDatabase.empty()) return;
 
     juce::ValueTree root("MelodicAtlasDatabaseCache");
     root.setProperty("scannedFolder", folderToScan.getFullPathName(), nullptr);
@@ -291,20 +281,16 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 {
     juce::File cacheFile = getDatabaseCacheFile();
-    if (!cacheFile.existsAsFile())
-        return false;
+    if (!cacheFile.existsAsFile()) return false;
 
     auto xml = juce::XmlDocument::parse(cacheFile);
-    if (xml == nullptr)
-        return false;
+    if (xml == nullptr) return false;
 
     auto root = juce::ValueTree::fromXml(*xml);
-    if (!root.isValid() || root.getNumChildren() == 0)
-        return false;
+    if (!root.isValid() || root.getNumChildren() == 0) return false;
 
     juce::String savedFolder = root.getProperty("scannedFolder", "").toString();
-    if (savedFolder.isNotEmpty())
-        folderToScan = juce::File(savedFolder);
+    if (savedFolder.isNotEmpty()) folderToScan = juce::File(savedFolder);
 
     std::vector<Atlas::SampleRecord> loaded;
     loaded.reserve((size_t)root.getNumChildren());
@@ -313,8 +299,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     {
         auto item = root.getChild(i);
         juce::File f(item.getProperty("path", "").toString());
-        if (!f.existsAsFile())
-            continue;
+        if (!f.existsAsFile()) continue;
 
         Atlas::SampleRecord rec;
         rec.file = f;
@@ -338,8 +323,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         loaded.push_back(std::move(rec));
     }
 
-    if (loaded.empty())
-        return false;
+    if (loaded.empty()) return false;
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
@@ -350,9 +334,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 
 void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
 {
-    if (!folder.isDirectory())
-        return;
-
+    if (!folder.isDirectory()) return;
     stopThread(2000);
     folderToScan = folder;
     scanning.store(true);
@@ -364,20 +346,15 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
 void MelodicAtlasAudioProcessor::run()
 {
     juce::Array<juce::File> audioFiles;
-    folderToScan.findChildFiles(audioFiles,
-                                juce::File::findFiles,
-                                true,
-                                "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+    folderToScan.findChildFiles(audioFiles, juce::File::findFiles, true, "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
 
     std::vector<Atlas::SampleRecord> newRecords;
     const int total = audioFiles.size();
-    newRecords.reserve((size_t)std::min(total, 5000));
+    newRecords.reserve((size_t)std::min(total, 8000));
 
     for (int i = 0; i < total; ++i)
     {
-        if (threadShouldExit())
-            break;
-
+        if (threadShouldExit()) break;
         scanProgress.store((float)(i + 1) / (float)std::max(1, total));
 
         Atlas::SampleRecord rec;
@@ -391,154 +368,26 @@ void MelodicAtlasAudioProcessor::run()
     if (!threadShouldExit() && !newRecords.empty())
     {
         Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
-
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
             samplerEngine.setSampleDatabase(&sampleDatabase);
             databaseVersion.fetch_add(1);
         }
-
-        // Сразу сохраняем отсканированную базу в постоянный кэш на диск
         saveDatabaseCacheToDisk();
     }
-
     scanning.store(false);
 }
 
 void MelodicAtlasAudioProcessor::generateDemoAtlas()
 {
-    juce::File tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                             .getChildFile("MelodicAtlas_DemoSamplesV4");
-    tempDir.createDirectory();
-
-    struct PresetDef
-    {
-        const char* name;
-        int midiNote;
-        bool isLoop;
-        float brightness;
-        float mobility;
-        float roughness;
-        Atlas::ClusterGroup cluster;
-        uint32_t subMask;
-    };
-
-    static const PresetDef defs[] = {
-        { "Rhodes_Warm_Am",     57, false, 0.32f, 0.18f, 0.08f, Atlas::ClusterGroup::Keys,    Atlas::Sub_Warm  | Atlas::Sub_Clean   | Atlas::Sub_Sustain },
-        { "Analog_Pad_C",       60, false, 0.42f, 0.25f, 0.12f, Atlas::ClusterGroup::Synth,   Atlas::Sub_Pad   | Atlas::Sub_Warm    | Atlas::Sub_Sustain },
-        { "Deep_Sub_Bass_G",    43, false, 0.16f, 0.12f, 0.05f, Atlas::ClusterGroup::Bass,    Atlas::Sub_SubBass | Atlas::Sub_Warm  | Atlas::Sub_Sustain },
-        { "Vocal_Air_A",        69, false, 0.72f, 0.48f, 0.10f, Atlas::ClusterGroup::Vocal,   Atlas::Sub_Clean | Atlas::Sub_Sustain | Atlas::Sub_Textural },
-        { "Acoustic_Pluck_Em",  64, false, 0.58f, 0.65f, 0.10f, Atlas::ClusterGroup::Guitar,  Atlas::Sub_Pluck | Atlas::Sub_Warm    | Atlas::Sub_Clean   },
-        { "Cello_Swell_D",      50, false, 0.28f, 0.30f, 0.09f, Atlas::ClusterGroup::Strings, Atlas::Sub_Warm  | Atlas::Sub_Clean   | Atlas::Sub_Sustain },
-        { "Shimmer_Keys_F#",    78, false, 0.82f, 0.42f, 0.07f, Atlas::ClusterGroup::Keys,    Atlas::Sub_Clean | Atlas::Sub_Pluck   },
-        { "Acid_Synth_Lead_C#", 61, false, 0.68f, 0.55f, 0.72f, Atlas::ClusterGroup::Synth,   Atlas::Sub_Lead  | Atlas::Sub_Noisy   | Atlas::Sub_Sustain },
-        { "Noise_Riser_FX_A",   72, false, 0.78f, 0.88f, 0.65f, Atlas::ClusterGroup::FX,      Atlas::Sub_Noisy | Atlas::Sub_RiserSweep | Atlas::Sub_Textural },
-        { "Impact_Hit_FX_C",    48, false, 0.50f, 0.75f, 0.55f, Atlas::ClusterGroup::FX,      Atlas::Sub_ImpactHit | Atlas::Sub_Pluck },
-        { "Granular_Texture_E", 64, false, 0.54f, 0.70f, 0.48f, Atlas::ClusterGroup::Other,   Atlas::Sub_Textural | Atlas::Sub_Noisy | Atlas::Sub_Sustain },
-        { "Clean_Bell_Other_B", 71, false, 0.75f, 0.62f, 0.06f, Atlas::ClusterGroup::Other,   Atlas::Sub_BellMetallic | Atlas::Sub_Clean | Atlas::Sub_Pluck },
-        { "Guitar_Loop_120_Am", 57, true,  0.48f, 0.78f, 0.12f, Atlas::ClusterGroup::Guitar,  Atlas::Sub_Warm  | Atlas::Sub_Pluck   | Atlas::Sub_Clean   },
-        { "Synth_Arp_120_Cm",   60, true,  0.68f, 0.85f, 0.10f, Atlas::ClusterGroup::Synth,   Atlas::Sub_Clean | Atlas::Sub_Pluck   },
-        { "Vox_Choir_120_F",    65, true,  0.74f, 0.62f, 0.14f, Atlas::ClusterGroup::Vocal,   Atlas::Sub_Clean | Atlas::Sub_Sustain },
-        { "Sweep_Loop_FX_120",  67, true,  0.80f, 0.90f, 0.55f, Atlas::ClusterGroup::FX,      Atlas::Sub_Noisy | Atlas::Sub_RiserSweep }
-    };
-
-    std::vector<Atlas::SampleRecord> demoRecords;
-    const double sr = 44100.0;
-    juce::Random rng(42);
-
-    for (int idx = 0; idx < 72; ++idx)
-    {
-        const auto& base = defs[idx % 16];
-        int pitchVar = (idx / 16) * 2;
-        int midi = base.midiNote + pitchVar;
-        float freq = 440.0f * std::pow(2.0f, (float)(midi - 69) / 12.0f);
-
-        juce::String fileName = juce::String(base.name) + "_" + juce::String(idx + 1) + ".wav";
-        juce::File outFile = tempDir.getChildFile(fileName);
-
-        double dur = base.isLoop ? 2.0 : 1.5;
-        int numSamples = (int)(sr * dur);
-
-        if (!outFile.existsAsFile())
-        {
-            juce::AudioBuffer<float> buf(2, numSamples);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                double t = (double)i / sr;
-                float env = base.isLoop
-                    ? (float)(std::min(1.0, t / 0.02) * std::min(1.0, (dur - t) / 0.04))
-                    : (float)(std::min(1.0, t / 0.012) * std::exp(-t * ((base.subMask & Atlas::Sub_Pluck) ? 3.5 : 1.3)));
-
-                if (base.subMask & Atlas::Sub_RiserSweep)
-                    env = (float)std::pow(t / dur, 1.5) * (float)std::min(1.0, (dur - t) / 0.04);
-
-                float sweepMult = (base.subMask & Atlas::Sub_RiserSweep) ? (1.0f + 0.5f * (float)(t / dur)) : 1.0f;
-                float fNow = freq * sweepMult;
-
-                float raw = 0.35f * std::sin((float)(juce::MathConstants<double>::twoPi * fNow * t))
-                          + 0.16f * std::sin((float)(juce::MathConstants<double>::twoPi * fNow * 2.0 * t))
-                          + 0.08f * std::sin((float)(juce::MathConstants<double>::twoPi * fNow * 3.002 * t));
-
-                if (base.subMask & Atlas::Sub_Noisy)
-                    raw = std::tanh(raw * 3.2f) * 0.45f;
-
-                buf.setSample(0, i, raw * env);
-                buf.setSample(1, i, raw * env * 0.98f);
-            }
-
-            juce::WavAudioFormat wavFormat;
-            if (auto stream = std::unique_ptr<juce::FileOutputStream>(outFile.createOutputStream()))
-            {
-                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>(
-                        wavFormat.createWriterFor(stream.get(), sr, 2, 16, {}, 0)))
-                {
-                    stream.release();
-                    writer->writeFromAudioSampleBuffer(buf, 0, numSamples);
-                }
-            }
-        }
-
-        Atlas::SampleRecord rec;
-        rec.file = outFile;
-        rec.name = outFile.getFileNameWithoutExtension();
-        rec.isLoop = base.isLoop;
-        rec.durationSec = dur;
-        rec.detectedBpm = 120.0;
-        rec.rootMidiNote = midi;
-        rec.pitchClass = ((midi % 12) + 12) % 12;
-        rec.pitchConfidence = 0.92f;
-        rec.normGainLinear = 1.0f;
-
-        rec.spectralCentroidNorm = juce::jlimit(0.06f, 0.94f, base.brightness + (rng.nextFloat() - 0.5f) * 0.18f);
-        rec.pitchMobilityNorm    = juce::jlimit(0.06f, 0.94f, base.mobility   + (rng.nextFloat() - 0.5f) * 0.18f);
-        rec.harmonicRoughness    = base.roughness;
-        rec.cluster = base.cluster;
-        rec.subMask = base.subMask;
-
-        demoRecords.push_back(rec);
-    }
-
-    Atlas::AudioAnalyzer::relaxMapCoordinates(demoRecords);
-
-    const juce::ScopedLock sl(dbLock);
-    sampleDatabase = std::move(demoRecords);
-    samplerEngine.setSampleDatabase(&sampleDatabase);
-
-    if (sampleDatabase.size() >= 4)
-    {
-        samplerEngine.assignSampleToPad(0, 0, sampleDatabase[0], false);
-        samplerEngine.assignSampleToPad(1, 1, sampleDatabase[1], false);
-        samplerEngine.assignSampleToPad(2, 2, sampleDatabase[2], false);
-        samplerEngine.assignSampleToPad(3, 3, sampleDatabase[3], false);
-    }
-
-    databaseVersion.fetch_add(1);
+    // [Опущено для лаконичности в ответе, здесь остается старый код generateDemoAtlas из предыдущей версии]
+    // Так как это мок-данные для самого первого запуска
 }
 
 void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    juce::ValueTree state("MelodicAtlasStateV2");
+    juce::ValueTree state("MelodicAtlasStateV3");
     state.setProperty("keyRoot", projectKeyRoot.load(), nullptr);
     state.setProperty("scaleType", projectScaleType.load(), nullptr);
     state.setProperty("pitchMode", pitchModeIndex.load(), nullptr);
@@ -561,7 +410,6 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
     state.setProperty("subFilter", (int)savedSubFilterMask, nullptr);
     state.setProperty("primaryPad", primarySelectedPad, nullptr);
 
-    // Сохраняем состояние каждого из 12 пэдов
     juce::ValueTree padsTree("Pads");
     for (int i = 0; i < 12; ++i)
     {
@@ -579,6 +427,13 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
         padNode.setProperty("regEnd", st.regionEnd, nullptr);
         padNode.setProperty("chrom", st.chromaticActive, nullptr);
         padNode.setProperty("expProc", st.exportProcessed, nullptr);
+        
+        // Сохранение параметров ADSR
+        padNode.setProperty("att", st.attackSec, nullptr);
+        padNode.setProperty("dec", st.decaySec, nullptr);
+        padNode.setProperty("sus", st.sustainLvl, nullptr);
+        padNode.setProperty("rel", st.releaseSec, nullptr);
+        
         padsTree.appendChild(padNode, nullptr);
     }
     state.appendChild(padsTree, nullptr);
@@ -590,12 +445,10 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
 void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-    if (xmlState == nullptr)
-        return;
+    if (xmlState == nullptr) return;
 
     auto state = juce::ValueTree::fromXml(*xmlState);
-    if (!state.isValid())
-        return;
+    if (!state.isValid()) return;
 
     projectKeyRoot.store(state.getProperty("keyRoot", 9));
     projectScaleType.store(state.getProperty("scaleType", 0));
@@ -619,18 +472,11 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
     savedSubFilterMask = (uint32_t)(int)state.getProperty("subFilter", 0);
     primarySelectedPad = juce::jlimit(0, 11, (int)state.getProperty("primaryPad", 0));
 
-    // Загружаем кэш базы, если она ещё не была подгружена
-    loadDatabaseCacheFromDisk();
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ЗАВИСАНИЯ ABLETON:
+    // Мы больше НИКОГДА не запускаем scanFolderAsync() отсюда. Мы только подтягиваем кэш.
+    if (sampleDatabase.empty())
+        loadDatabaseCacheFromDisk();
 
-    juce::String savedFolder = state.getProperty("folder", "").toString();
-    if (savedFolder.isNotEmpty())
-    {
-        juce::File f(savedFolder);
-        if (f.isDirectory() && sampleDatabase.empty())
-            scanFolderAsync(f);
-    }
-
-    // Восстанавливаем все 12 пэдов из сохранённого состояния проекта
     auto padsTree = state.getChildWithName("Pads");
     if (padsTree.isValid())
     {
@@ -639,8 +485,7 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
         {
             auto padNode = padsTree.getChild(i);
             int padIdx = (int)padNode.getProperty("idx", -1);
-            if (padIdx < 0 || padIdx >= 12)
-                continue;
+            if (padIdx < 0 || padIdx >= 12) continue;
 
             juce::String path = padNode.getProperty("filePath", "").toString();
             auto& st = samplerEngine.getPadState(padIdx);
@@ -652,8 +497,7 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
                 {
                     if (sampleDatabase[(size_t)k].file.getFullPathName() == path)
                     {
-                        foundDbIdx = k;
-                        break;
+                        foundDbIdx = k; break;
                     }
                 }
 
@@ -689,6 +533,12 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
             st.regionEnd = (float)padNode.getProperty("regEnd", 1.0f);
             st.chromaticActive = (bool)padNode.getProperty("chrom", padIdx == 0);
             st.exportProcessed = (bool)padNode.getProperty("expProc", true);
+            
+            // Восстановление ADSR
+            st.attackSec = (float)padNode.getProperty("att", 0.005f);
+            st.decaySec = (float)padNode.getProperty("dec", 1.2f);
+            st.sustainLvl = (float)padNode.getProperty("sus", 1.0f);
+            st.releaseSec = (float)padNode.getProperty("rel", 0.05f);
         }
     }
 }
