@@ -94,16 +94,19 @@ namespace Atlas
             const size_t n = records.size();
             if (n == 0) return;
 
+            // Центры созвездий (галактик) на карте
             static const float clusterAnchors[8][2] = {
-                { 0.18f, 0.45f }, // Keys
-                { 0.36f, 0.52f }, // Synth
-                { 0.26f, 0.24f }, // Bass
-                { 0.52f, 0.62f }, // Vocal
-                { 0.64f, 0.40f }, // Strings
-                { 0.74f, 0.58f }, // Guitar
-                { 0.84f, 0.72f }, // FX
-                { 0.88f, 0.32f }  // Other / Moods
+                { 0.20f, 0.35f }, // Keys
+                { 0.35f, 0.65f }, // Synth
+                { 0.25f, 0.85f }, // Bass
+                { 0.50f, 0.50f }, // Vocal (В центре)
+                { 0.70f, 0.25f }, // Strings
+                { 0.85f, 0.45f }, // Guitar
+                { 0.80f, 0.80f }, // FX
+                { 0.55f, 0.85f }  // Moods/Other
             };
+
+            juce::Random rng(42); // Фиксированный сид для повторяемости хаоса
 
             for (size_t i = 0; i < n; ++i)
             {
@@ -112,16 +115,30 @@ namespace Atlas
                 float ax = clusterAnchors[cIdx][0];
                 float ay = clusterAnchors[cIdx][1];
 
-                r.mapX = juce::jlimit(0.06f, 0.94f, ax * 0.68f + r.spectralCentroidNorm * 0.32f);
-                r.mapY = juce::jlimit(0.08f, 0.92f, ay * 0.62f + r.pitchMobilityNorm * 0.38f);
+                // Гауссово (нормальное) распределение для создания органичного хаоса (созвездия)
+                float u1 = std::max(0.0001f, rng.nextFloat());
+                float u2 = rng.nextFloat();
+                float radius = 0.16f * std::sqrt(-2.0f * std::log(u1)); // Радиус туманности
+                float theta = 2.0f * juce::MathConstants<float>::pi * u2;
+                
+                float scatterX = radius * std::cos(theta);
+                float scatterY = radius * std::sin(theta) * 0.8f; // Чуть приплюснуто по вертикали
+
+                // Добавляем влияние тембра, чтобы внутри созвездия была акустическая логика
+                float featX = (r.spectralCentroidNorm - 0.5f) * 0.12f;
+                float featY = (r.pitchMobilityNorm - 0.5f) * 0.12f;
+
+                r.mapX = juce::jlimit(0.04f, 0.96f, ax + scatterX + featX);
+                r.mapY = juce::jlimit(0.06f, 0.94f, ay + scatterY + featY);
 
                 if (r.spectralCentroidNorm < 0.38f)      r.toneShadeBucket = 0;
                 else if (r.spectralCentroidNorm > 0.64f) r.toneShadeBucket = 2;
                 else                                     r.toneShadeBucket = 1;
             }
 
-            const float minDist = 0.032f;
-            for (int iter = 0; iter < 18; ++iter)
+            // Мягкое расталкивание (чтобы не было точек прямо друг на друге, но без кристаллических "волн")
+            const float minDist = 0.012f; 
+            for (int iter = 0; iter < 6; ++iter) // Всего 6 итераций для мягкости
             {
                 for (size_t i = 0; i < n; ++i)
                 {
@@ -133,11 +150,11 @@ namespace Atlas
                         if (distSq < minDist * minDist && distSq > 1e-7f)
                         {
                             float dist = std::sqrt(distSq);
-                            float push = 0.5f * (minDist - dist) / dist;
-                            records[i].mapX = juce::jlimit(0.04f, 0.96f, records[i].mapX - dx * push);
-                            records[i].mapY = juce::jlimit(0.06f, 0.94f, records[i].mapY - dy * push);
-                            records[j].mapX = juce::jlimit(0.04f, 0.96f, records[j].mapX + dx * push);
-                            records[j].mapY = juce::jlimit(0.06f, 0.94f, records[j].mapY + dy * push);
+                            float push = 0.15f * (minDist - dist) / dist; // Очень мягкая сила отталкивания
+                            records[i].mapX = juce::jlimit(0.02f, 0.98f, records[i].mapX - dx * push);
+                            records[i].mapY = juce::jlimit(0.02f, 0.98f, records[i].mapY - dy * push);
+                            records[j].mapX = juce::jlimit(0.02f, 0.98f, records[j].mapX + dx * push);
+                            records[j].mapY = juce::jlimit(0.02f, 0.98f, records[j].mapY + dy * push);
                         }
                     }
                 }
@@ -186,8 +203,7 @@ namespace Atlas
             outBpm = 120.0;
             for (int bpm = 70; bpm <= 180; ++bpm)
             {
-                if (lowerName.contains(juce::String(bpm) + "bpm") ||
-                    lowerName.contains("_" + juce::String(bpm) + "_"))
+                if (lowerName.contains(juce::String(bpm) + "bpm") || lowerName.contains("_" + juce::String(bpm) + "_"))
                 {
                     outBpm = (double)bpm;
                     break;
@@ -226,7 +242,6 @@ namespace Atlas
                 r.cluster = ClusterGroup::Guitar;
             else if (lowerName.contains("synth") || lowerName.contains("pad") || lowerName.contains("lead") || lowerName.contains("arp") || lowerName.contains("acid"))
                 r.cluster = ClusterGroup::Synth;
-            // Все остальное неклассифицируемое отправляем в FX, так как Other (7) зарезервировано под Moods
             else
                 r.cluster = ClusterGroup::FX; 
 
