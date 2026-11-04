@@ -21,7 +21,6 @@ namespace Atlas
             {
                 padStates[(size_t)i].sampleIndex = -1;
                 padStates[(size_t)i].chromaticActive = (i == 0);
-                padStates[(size_t)i].exportProcessed = true;
             }
         }
 
@@ -54,7 +53,8 @@ namespace Atlas
         }
 
         void setMusicalContext(int keyRoot, ScaleType scale, PitchMode pMode,
-                               int octShift, double bpm, bool bpmLocked)
+                               int octShift, double bpm, bool bpmLocked,
+                               float bpmMult = 1.0f)
         {
             projectKeyRoot = keyRoot;
             projectScale = scale;
@@ -62,6 +62,7 @@ namespace Atlas
             octaveShift = octShift;
             currentBpm = juce::jlimit(40.0, 300.0, bpm);
             syncBpm = bpmLocked;
+            globalBpmMultiplier = juce::jlimit(0.25f, 4.0f, bpmMult);
         }
 
         void setEngineControls(BankMode bMode, float glideSec, float mapRev,
@@ -87,7 +88,6 @@ namespace Atlas
 
             const juce::ScopedLock sl(engineLock);
 
-            // Уводим все предыдущие голоса предпрослушки в мягкий фейд-аут (12 мс)
             float fadeOutSamples = (float)std::max(32.0, currentSampleRate * 0.012);
             for (int s = 0; s < 4; ++s)
             {
@@ -129,40 +129,54 @@ namespace Atlas
             }
         }
 
+        void saveCurrentPadToHistory(int padIdx)
+        {
+            const juce::ScopedLock sl(engineLock);
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
+            auto& st = padStates[(size_t)padIdx];
+            if (st.sampleIndex < 0 && padRecords[(size_t)padIdx].name.isEmpty())
+                return;
+
+            PadHistoryEntry entry;
+            entry.sampleIndex    = st.sampleIndex;
+            entry.record         = padRecords[(size_t)padIdx];
+            entry.semitoneOffset = st.semitoneOffset;
+            entry.centOffset     = st.centOffset;
+            entry.volumeDb       = st.volumeDb;
+            entry.pan            = st.pan;
+            entry.regionStart    = st.regionStart;
+            entry.regionEnd      = st.regionEnd;
+            entry.chromaticActive = st.chromaticActive;
+            entry.playbackMode   = st.playbackMode;
+            entry.padSyncBpm     = st.padSyncBpm;
+            entry.padSpeedMult   = st.padSpeedMult;
+            entry.padPitchMode   = st.padPitchMode;
+            entry.attackSec      = st.attackSec;
+            entry.decaySec       = st.decaySec;
+            entry.sustainLvl     = st.sustainLvl;
+            entry.releaseSec     = st.releaseSec;
+
+            st.history.push_back(entry);
+            if (st.history.size() > 32)
+                st.history.erase(st.history.begin());
+        }
+
         void assignSampleToPad(int padIdx, int sampleIdx,
                                const SampleRecord& rec, bool savePadHistory = true)
         {
             if (padIdx < 0 || padIdx >= 12)
                 return;
 
-            auto audio = loadOrGetAudio(rec.file);
+            bool exists = rec.file.existsAsFile();
+            auto audio = exists ? loadOrGetAudio(rec.file) : nullptr;
 
             const juce::ScopedLock sl(engineLock);
+            if (savePadHistory)
+                saveCurrentPadToHistory(padIdx);
+
             auto& st = padStates[(size_t)padIdx];
-
-            if (savePadHistory && st.sampleIndex >= 0 &&
-                padRecords[(size_t)padIdx].file.existsAsFile())
-            {
-                PadHistoryEntry entry;
-                entry.sampleIndex = st.sampleIndex;
-                entry.record = padRecords[(size_t)padIdx];
-                entry.semitoneOffset = st.semitoneOffset;
-                entry.centOffset = st.centOffset;
-                entry.volumeDb = st.volumeDb;
-                entry.pan = st.pan;
-                entry.regionStart = st.regionStart;
-                entry.regionEnd = st.regionEnd;
-                entry.chromaticActive = st.chromaticActive;
-                entry.exportProcessed = st.exportProcessed;
-                entry.attackSec = st.attackSec;
-                entry.decaySec = st.decaySec;
-                entry.sustainLvl = st.sustainLvl;
-                entry.releaseSec = st.releaseSec;
-
-                st.history.push_back(entry);
-                if (st.history.size() > 24)
-                    st.history.erase(st.history.begin());
-            }
 
             bool anyChromatic = false;
             for (int i = 0; i < 12; ++i)
@@ -175,11 +189,55 @@ namespace Atlas
             }
 
             st.sampleIndex = sampleIdx;
+            st.fileMissing = (audio == nullptr);
             if (!anyChromatic)
                 st.chromaticActive = true;
 
             padRecords[(size_t)padIdx] = rec;
             padAudio[(size_t)padIdx] = audio;
+        }
+
+        void setPadMissingSample(int padIdx, const SampleRecord& rec)
+        {
+            const juce::ScopedLock sl(engineLock);
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
+            auto& st = padStates[(size_t)padIdx];
+            st.sampleIndex = 0;
+            st.fileMissing = true;
+            padRecords[(size_t)padIdx] = rec;
+            padAudio[(size_t)padIdx].reset();
+        }
+
+        bool relinkMissingFiles()
+        {
+            bool anyRelinked = false;
+            for (int i = 0; i < 12; ++i)
+            {
+                juce::File f;
+                bool isMissing = false;
+                {
+                    const juce::ScopedLock sl(engineLock);
+                    isMissing = padStates[(size_t)i].fileMissing &&
+                                padStates[(size_t)i].sampleIndex >= 0;
+                    if (isMissing)
+                        f = padRecords[(size_t)i].file;
+                }
+
+                if (isMissing && f.existsAsFile())
+                {
+                    auto audio = loadOrGetAudio(f);
+                    if (audio != nullptr)
+                    {
+                        const juce::ScopedLock sl(engineLock);
+                        padAudio[(size_t)i] = audio;
+                        padStates[(size_t)i].fileMissing = false;
+                        anyRelinked = true;
+                    }
+                }
+            }
+            return anyRelinked;
         }
 
         void undoPadSample(int padIdx)
@@ -195,22 +253,26 @@ namespace Atlas
             auto last = st.history.back();
             st.history.pop_back();
 
-            st.sampleIndex = last.sampleIndex;
-            st.semitoneOffset = last.semitoneOffset;
-            st.centOffset = last.centOffset;
-            st.volumeDb = last.volumeDb;
-            st.pan = last.pan;
-            st.regionStart = last.regionStart;
-            st.regionEnd = last.regionEnd;
+            st.sampleIndex     = last.sampleIndex;
+            st.semitoneOffset  = last.semitoneOffset;
+            st.centOffset      = last.centOffset;
+            st.volumeDb        = last.volumeDb;
+            st.pan             = last.pan;
+            st.regionStart     = last.regionStart;
+            st.regionEnd       = last.regionEnd;
             st.chromaticActive = last.chromaticActive;
-            st.exportProcessed = last.exportProcessed;
-            st.attackSec = last.attackSec;
-            st.decaySec = last.decaySec;
-            st.sustainLvl = last.sustainLvl;
-            st.releaseSec = last.releaseSec;
+            st.playbackMode    = last.playbackMode;
+            st.padSyncBpm      = last.padSyncBpm;
+            st.padSpeedMult    = last.padSpeedMult;
+            st.padPitchMode    = last.padPitchMode;
+            st.attackSec       = last.attackSec;
+            st.decaySec        = last.decaySec;
+            st.sustainLvl      = last.sustainLvl;
+            st.releaseSec      = last.releaseSec;
 
             padRecords[(size_t)padIdx] = last.record;
             padAudio[(size_t)padIdx] = loadOrGetAudio(last.record.file);
+            st.fileMissing = (padAudio[(size_t)padIdx] == nullptr);
         }
 
         void clearAllPads()
@@ -219,7 +281,9 @@ namespace Atlas
             for (int i = 0; i < 12; ++i)
             {
                 padStates[(size_t)i].sampleIndex = -1;
+                padStates[(size_t)i].fileMissing = false;
                 padStates[(size_t)i].settingsViewOpen = false;
+                padStates[(size_t)i].syncViewOpen = false;
                 padAudio[(size_t)i].reset();
             }
             for (auto& v : voices)
@@ -232,7 +296,9 @@ namespace Atlas
             if (padIdx >= 0 && padIdx < 12)
             {
                 padStates[(size_t)padIdx].sampleIndex = -1;
+                padStates[(size_t)padIdx].fileMissing = false;
                 padStates[(size_t)padIdx].settingsViewOpen = false;
+                padStates[(size_t)padIdx].syncViewOpen = false;
                 padAudio[(size_t)padIdx].reset();
                 for (auto& v : voices)
                 {
@@ -242,13 +308,13 @@ namespace Atlas
             }
         }
 
-        ProjectSnapshot createSnapshot(int primaryPad, bool globalExpProc) const
+        ProjectSnapshot createSnapshot(int primaryPad) const
         {
             const juce::ScopedLock sl(engineLock);
             ProjectSnapshot snap;
             snap.pads = padStates;
+            snap.records = padRecords;
             snap.primarySelectedPad = primaryPad;
-            snap.globalExportProcessed = globalExpProc;
             return snap;
         }
 
@@ -256,18 +322,27 @@ namespace Atlas
         {
             const juce::ScopedLock sl(engineLock);
             padStates = snap.pads;
+            padRecords = snap.records;
+
             for (int i = 0; i < 12; ++i)
             {
                 int sIdx = padStates[(size_t)i].sampleIndex;
-                if (database != nullptr && sIdx >= 0 && sIdx < (int)database->size())
+                if (sIdx >= 0)
                 {
-                    padRecords[(size_t)i] = (*database)[(size_t)sIdx];
+                    if (database != nullptr && sIdx < (int)database->size() &&
+                        padRecords[(size_t)i].file.getFullPathName().isEmpty())
+                    {
+                        padRecords[(size_t)i] = (*database)[(size_t)sIdx];
+                    }
                     padAudio[(size_t)i] = loadOrGetAudio(padRecords[(size_t)i].file);
+                    padStates[(size_t)i].fileMissing = (padAudio[(size_t)i] == nullptr);
                 }
                 else
                 {
                     padStates[(size_t)i].sampleIndex = -1;
+                    padStates[(size_t)i].fileMissing = false;
                     padStates[(size_t)i].settingsViewOpen = false;
+                    padStates[(size_t)i].syncViewOpen = false;
                     padAudio[(size_t)i].reset();
                 }
             }
@@ -326,113 +401,17 @@ namespace Atlas
             return activePadsBitmask.load();
         }
 
-        juce::File renderPadForExport(int padIdx)
+        juce::File getPadFileForExport(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
             if (padIdx < 0 || padIdx >= 12)
                 return {};
 
             const auto& st = padStates[(size_t)padIdx];
-            if (st.sampleIndex < 0)
+            if (st.sampleIndex < 0 || st.fileMissing)
                 return {};
 
-            const auto& rec = padRecords[(size_t)padIdx];
-            auto audio = padAudio[(size_t)padIdx];
-            if (audio == nullptr || audio->buffer.getNumSamples() <= 8)
-                return rec.file;
-
-            if (!st.exportProcessed)
-                return rec.file;
-
-            const int srcTotalSamples = audio->buffer.getNumSamples();
-            const double sr = (audio->sampleRate > 0.0) ? audio->sampleRate : currentSampleRate;
-
-            int startSample = juce::jlimit(
-                0, srcTotalSamples - 2,
-                (int)std::floor(st.regionStart * (float)srcTotalSamples));
-            int endSample = juce::jlimit(
-                startSample + 2, srcTotalSamples,
-                (int)std::ceil(st.regionEnd * (float)srcTotalSamples));
-            int regionLen = endSample - startSample;
-
-            double totalSemis = (double)st.semitoneOffset + (double)st.centOffset * 0.01;
-            if (rec.isLoop && syncBpm && rec.detectedBpm > 40.0)
-            {
-                double bpmRatio = currentBpm / rec.detectedBpm;
-                totalSemis += 12.0 * std::log2(juce::jlimit(0.25, 4.0, bpmRatio));
-            }
-
-            double speedRatio = juce::jlimit(0.125, 8.0, std::pow(2.0, totalSemis / 12.0));
-            int outSamples = std::max(64, (int)std::ceil((double)regionLen / speedRatio));
-
-            juce::AudioBuffer<float> outBuf(2, outSamples);
-            outBuf.clear();
-
-            float gainLin = juce::jlimit(
-                0.0f, 8.0f,
-                juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear);
-            float panAngle = (st.pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
-            float gainL = std::cos(panAngle) * gainLin;
-            float gainR = std::sin(panAngle) * gainLin;
-
-            const int numSrcCh = audio->buffer.getNumChannels();
-            const float* srcL = audio->buffer.getReadPointer(0);
-            const float* srcR = (numSrcCh > 1) ? audio->buffer.getReadPointer(1) : srcL;
-
-            float* dstL = outBuf.getWritePointer(0);
-            float* dstR = outBuf.getWritePointer(1);
-
-            int fadeInLen  = std::min(outSamples / 4, std::max(32, (int)(st.attackSec * sr)));
-            int fadeOutLen = std::min(outSamples / 3, std::max(64, (int)(0.015 * sr)));
-
-            double readPos = (double)startSample;
-            for (int i = 0; i < outSamples; ++i)
-            {
-                int idx0 = juce::jlimit(startSample, endSample - 1, (int)readPos);
-                int idx1 = juce::jlimit(startSample, endSample - 1, idx0 + 1);
-                float frac = juce::jlimit(0.0f, 1.0f, (float)(readPos - (double)idx0));
-
-                float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
-                float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
-
-                float env = 1.0f;
-                if (i < fadeInLen)
-                    env = (float)i / (float)std::max(1, fadeInLen);
-                else if (i >= outSamples - fadeOutLen)
-                    env = (float)(outSamples - 1 - i) / (float)std::max(1, fadeOutLen);
-
-                dstL[i] = sL * gainL * env;
-                dstR[i] = sR * gainR * env;
-
-                readPos += speedRatio;
-                if (readPos >= (double)(endSample - 1))
-                    break;
-            }
-
-            juce::File exportDir = juce::File::getSpecialLocation(
-                juce::File::tempDirectory).getChildFile("MelodicAtlas_Export");
-            exportDir.createDirectory();
-
-            juce::String noteTag = MusicMath::formatPadNoteAndCents(
-                rec.pitchClass, st.semitoneOffset, st.centOffset)
-                .replaceCharacter(' ', '_').replaceCharacter('#', 's');
-            juce::String outName = rec.name + "_" + noteTag + "_Proc.wav";
-            juce::File outFile = exportDir.getChildFile(juce::File::createLegalFileName(outName));
-            if (outFile.existsAsFile())
-                outFile.deleteFile();
-
-            juce::WavAudioFormat wavFormat;
-            if (auto stream = std::unique_ptr<juce::FileOutputStream>(outFile.createOutputStream()))
-            {
-                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>(
-                    wavFormat.createWriterFor(stream.get(), sr, 2, 24, {}, 0)))
-                {
-                    stream.release();
-                    writer->writeFromAudioSampleBuffer(outBuf, 0, outSamples);
-                    return outFile;
-                }
-            }
-            return rec.file;
+            return padRecords[(size_t)padIdx].file;
         }
 
         void renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
@@ -478,7 +457,7 @@ namespace Atlas
             if (!std::isfinite(safeMasterGain))
                 safeMasterGain = 1.0f;
 
-            // 1. ПРЕДПРОСЛУШКА НА КАРТЕ (4-голосный пул без выхода за пределы буфера)
+            // 1. ПРЕДПРОСЛУШКА НА КАРТЕ (с учетом глобального множителя /2 и x2)
             for (int slot = 0; slot < 4; ++slot)
             {
                 auto& pv = previewVoices[slot];
@@ -501,8 +480,18 @@ namespace Atlas
                 double srRatio = pv.audio->sampleRate / std::max(8000.0, currentSampleRate);
                 double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * srRatio;
 
-                if (pv.record.isLoop && syncBpm && pv.record.detectedBpm > 40.0)
-                    step *= juce::jlimit(0.5, 2.0, currentBpm / pv.record.detectedBpm);
+                if (pv.record.isLoop)
+                {
+                    if (syncBpm && pv.record.detectedBpm > 40.0)
+                    {
+                        double effBpm = currentBpm * (double)globalBpmMultiplier;
+                        step *= juce::jlimit(0.25, 4.0, effBpm / pv.record.detectedBpm);
+                    }
+                    else
+                    {
+                        step *= (double)globalBpmMultiplier;
+                    }
+                }
 
                 step = juce::jlimit(0.05, 8.0, step);
                 const int tailStartFrame = std::max(0, totalFrames - 256);
@@ -535,14 +524,12 @@ namespace Atlas
                         }
                         else
                         {
-                            // Конец файла: немедленно выключаем голос, не читая за границей!
                             pv.envGain = 0.0f;
                             pv.active = false;
                             break;
                         }
                     }
 
-                    // Плавное затухание в самом конце ван-шота против щелчка
                     float endWindow = 1.0f;
                     if (!pv.record.isLoop && idx0 > tailStartFrame)
                     {
@@ -574,7 +561,7 @@ namespace Atlas
                 }
             }
 
-            // 2. ГОЛОСА ПЭДОВ (Строгая защита границ региона и ADSR)
+            // 2. ГОЛОСА ПЭДОВ (с поддержкой OneShot, Loop, Reverse и настроек меню S)
             uint32_t playingMask = 0;
             for (auto& v : voices)
             {
@@ -621,17 +608,35 @@ namespace Atlas
                     ? (1.0 - std::exp(-1.0 / (currentSampleRate * glideTimeSec))) : 1.0;
                 double srRatio = v.audio->sampleRate / std::max(8000.0, currentSampleRate);
 
-                int tailGuardStart = std::max(startFrame, endFrame - 256);
+                bool isRev  = (st.playbackMode == PadPlaybackMode::Reverse);
+                bool isLoop = (st.playbackMode == PadPlaybackMode::Loop);
+
+                int tailGuardLen = std::min(256, (endFrame - startFrame) / 3);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
                     v.currentNoteShift += (v.targetNoteShift - v.currentNoteShift) * glideCoeff;
+
+                    // TUNE и CENT работают всегда (и в Pad Trigger, и в Chromatic)
                     double totalSemis = (double)st.semitoneOffset +
-                                        (double)st.centOffset * 0.01 + v.currentNoteShift;
+                                        (double)st.centOffset * 0.01 +
+                                        v.currentNoteShift;
 
                     double step = std::pow(2.0, juce::jlimit(-48.0, 48.0, totalSemis) / 12.0) * srRatio;
-                    if (rec.isLoop && syncBpm && rec.detectedBpm > 40.0)
-                        step *= juce::jlimit(0.5, 2.0, currentBpm / rec.detectedBpm);
+
+                    // Применение синхронизации BPM и множителя (/2, x2) из меню S пэда
+                    if (st.padSyncBpm && syncBpm && rec.detectedBpm > 40.0 &&
+                        (rec.isLoop || isLoop))
+                    {
+                        double targetBpm = currentBpm *
+                                           (double)globalBpmMultiplier *
+                                           (double)st.padSpeedMult;
+                        step *= juce::jlimit(0.25, 4.0, targetBpm / rec.detectedBpm);
+                    }
+                    else
+                    {
+                        step *= (double)juce::jlimit(0.25f, 4.0f, st.padSpeedMult);
+                    }
 
                     step = juce::jlimit(0.05, 8.0, step);
 
@@ -660,28 +665,47 @@ namespace Atlas
                     }
 
                     int idx0 = (int)v.position;
-                    if (idx0 >= endFrame - 2)
+                    float endWindow = 1.0f;
+
+                    if (!isRev)
                     {
-                        if (rec.isLoop && !v.releasing)
+                        if (idx0 >= endFrame - 2)
                         {
-                            v.position = (double)startFrame;
-                            idx0 = startFrame;
+                            if (isLoop && !v.releasing)
+                            {
+                                v.position = (double)startFrame;
+                                idx0 = startFrame;
+                            }
+                            else
+                            {
+                                v.envLevel = 0.0f;
+                                v.active = false;
+                                break;
+                            }
                         }
-                        else
+
+                        if ((!isLoop || v.releasing) &&
+                            tailGuardLen > 4 &&
+                            idx0 > endFrame - 2 - tailGuardLen)
                         {
-                            // Дошли до конца региона: выключаем голос без чтения за границей!
+                            endWindow = (float)(endFrame - 2 - idx0) / (float)tailGuardLen;
+                            endWindow = juce::jlimit(0.0f, 1.0f, endWindow);
+                        }
+                    }
+                    else
+                    {
+                        if (idx0 <= startFrame + 1)
+                        {
                             v.envLevel = 0.0f;
                             v.active = false;
                             break;
                         }
-                    }
 
-                    float endWindow = 1.0f;
-                    if ((!rec.isLoop || v.releasing) && idx0 > tailGuardStart)
-                    {
-                        endWindow = (float)(endFrame - 2 - idx0) /
-                                    (float)std::max(1, endFrame - 2 - tailGuardStart);
-                        endWindow = juce::jlimit(0.0f, 1.0f, endWindow);
+                        if (tailGuardLen > 4 && idx0 < startFrame + 1 + tailGuardLen)
+                        {
+                            endWindow = (float)(idx0 - startFrame - 1) / (float)tailGuardLen;
+                            endWindow = juce::jlimit(0.0f, 1.0f, endWindow);
+                        }
                     }
 
                     idx0 = juce::jlimit(startFrame, endFrame - 2, idx0);
@@ -705,7 +729,10 @@ namespace Atlas
                     bankRevL[i] += l;
                     bankRevR[i] += r;
 
-                    v.position += step;
+                    if (!isRev)
+                        v.position += step;
+                    else
+                        v.position -= step;
                 }
 
                 if (v.active && !v.releasing)
@@ -849,6 +876,7 @@ namespace Atlas
                 for (int i = 0; i < 12; ++i)
                 {
                     if (padStates[(size_t)i].sampleIndex >= 0 &&
+                        !padStates[(size_t)i].fileMissing &&
                         padStates[(size_t)i].chromaticActive)
                     {
                         triggerPadVoice(i, midiNote, velocity, chromShift);
@@ -860,7 +888,8 @@ namespace Atlas
                 {
                     for (int i = 0; i < 12; ++i)
                     {
-                        if (padStates[(size_t)i].sampleIndex >= 0)
+                        if (padStates[(size_t)i].sampleIndex >= 0 &&
+                            !padStates[(size_t)i].fileMissing)
                         {
                             triggerPadVoice(i, midiNote, velocity, chromShift);
                             break;
@@ -889,7 +918,7 @@ namespace Atlas
                 return;
 
             const auto& st = padStates[(size_t)padIdx];
-            if (st.sampleIndex < 0)
+            if (st.sampleIndex < 0 || st.fileMissing)
                 return;
 
             auto audio = padAudio[(size_t)padIdx];
@@ -930,6 +959,10 @@ namespace Atlas
             int totalFrames = audio->buffer.getNumSamples();
             int startFrame = juce::jlimit(
                 0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
+            int endFrame = juce::jlimit(
+                startFrame + 2, totalFrames, (int)(st.regionEnd * (float)totalFrames));
+
+            bool isRev = (st.playbackMode == PadPlaybackMode::Reverse);
 
             chosen->active = true;
             chosen->inAttack = true;
@@ -938,7 +971,7 @@ namespace Atlas
             chosen->midiNote = midiNote;
             chosen->velocity = juce::jlimit(0.1f, 1.0f, velocity);
             chosen->envLevel = 0.0f;
-            chosen->position = (double)startFrame;
+            chosen->position = isRev ? (double)(endFrame - 2) : (double)startFrame;
             chosen->targetNoteShift = (double)chromaticSemitoneShift;
             chosen->currentNoteShift = (hasLastChromaticNote && glideTimeSec > 0.005f)
                 ? (double)lastPlayedChromaticShift : (double)chromaticSemitoneShift;
@@ -1011,6 +1044,7 @@ namespace Atlas
         int octaveShift = 0;
         double currentBpm = 120.0;
         bool syncBpm = true;
+        float globalBpmMultiplier = 1.0f;
 
         BankMode bankMode = BankMode::Chromatic;
         float glideTimeSec = 0.0f;
