@@ -52,14 +52,14 @@ public:
     void clearAllPadsWithUndo();
     void setGlobalExportMode(bool processed);
 
-    // --- Глобальная история проекта (Undo / Redo в левом верхнем углу) ---
+    // --- Глобальная история проекта (Undo / Redo) ---
     void pushGlobalUndoState();
     bool canGlobalUndo() const { return !undoStack.empty(); }
     bool canGlobalRedo() const { return !redoStack.empty(); }
     void performGlobalUndo();
     void performGlobalRedo();
 
-    // --- Постоянный дисковый кэш отсканированной базы сэмплов ---
+    // --- Постоянный дисковый кэш ---
     void saveDatabaseCacheToDisk();
     bool loadDatabaseCacheFromDisk();
 
@@ -79,10 +79,10 @@ public:
     std::atomic<bool> globalExportProcessed { true }; // true = [P], false = [D]
 
     std::atomic<float> glideTime { 0.0f };
-    std::atomic<float> reverbAmount { 0.25f };       // MAP REV (сверху)
-    std::atomic<float> bankReverbAmount { 0.30f };   // BANK REV (справа в блоке банка)
-    std::atomic<float> bankPitchSemitones { 0.0f };  // TUNE предпрослушивания (сверху)
-    std::atomic<float> masterVolumeDb { 0.0f };      // MAIN громкость (справа в блоке банка)
+    std::atomic<float> reverbAmount { 0.25f };       // MAP REV
+    std::atomic<float> bankReverbAmount { 0.30f };   // BANK REV
+    std::atomic<float> bankPitchSemitones { 0.0f };  // TUNE предпрослушивания
+    std::atomic<float> masterVolumeDb { 0.0f };      // MAIN громкость
 
     std::atomic<uint64_t> databaseVersion { 1 };
 
