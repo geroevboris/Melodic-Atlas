@@ -46,7 +46,7 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         if (auto posInfo = playHead->getPosition())
         {
-            if (posInfo->getBpm().hasValue() && bpmLockedToHost.load())
+            if (posInfo->getBpm().hasValue())
             {
                 double detectedHostBpm = *posInfo->getBpm();
                 if (detectedHostBpm > 20.0 && detectedHostBpm < 400.0)
@@ -64,7 +64,8 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         static_cast<Atlas::PitchMode>(pitchModeIndex.load()),
         octaveShift.load(),
         hostBpm,
-        bpmLockedToHost.load()
+        bpmLockedToHost.load(),
+        globalBpmMultiplier.load()
     );
 
     samplerEngine.setEngineControls(
@@ -83,8 +84,7 @@ void MelodicAtlasAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 void MelodicAtlasAudioProcessor::pushGlobalUndoState()
 {
     const juce::ScopedLock sl(dbLock);
-    undoStack.push_back(
-        samplerEngine.createSnapshot(primarySelectedPad, globalExportProcessed.load()));
+    undoStack.push_back(samplerEngine.createSnapshot(primarySelectedPad));
     if (undoStack.size() > 32)
         undoStack.erase(undoStack.begin());
     redoStack.clear();
@@ -96,14 +96,12 @@ void MelodicAtlasAudioProcessor::performGlobalUndo()
     if (undoStack.empty())
         return;
 
-    redoStack.push_back(
-        samplerEngine.createSnapshot(primarySelectedPad, globalExportProcessed.load()));
+    redoStack.push_back(samplerEngine.createSnapshot(primarySelectedPad));
     auto snap = undoStack.back();
     undoStack.pop_back();
 
     samplerEngine.restoreSnapshot(snap);
     primarySelectedPad = snap.primarySelectedPad;
-    globalExportProcessed.store(snap.globalExportProcessed);
 }
 
 void MelodicAtlasAudioProcessor::performGlobalRedo()
@@ -112,14 +110,12 @@ void MelodicAtlasAudioProcessor::performGlobalRedo()
     if (redoStack.empty())
         return;
 
-    undoStack.push_back(
-        samplerEngine.createSnapshot(primarySelectedPad, globalExportProcessed.load()));
+    undoStack.push_back(samplerEngine.createSnapshot(primarySelectedPad));
     auto snap = redoStack.back();
     redoStack.pop_back();
 
     samplerEngine.restoreSnapshot(snap);
     primarySelectedPad = snap.primarySelectedPad;
-    globalExportProcessed.store(snap.globalExportProcessed);
 }
 
 void MelodicAtlasAudioProcessor::clearAllPadsWithUndo()
@@ -128,17 +124,30 @@ void MelodicAtlasAudioProcessor::clearAllPadsWithUndo()
     samplerEngine.clearAllPads();
 }
 
-void MelodicAtlasAudioProcessor::setGlobalExportMode(bool processed)
+void MelodicAtlasAudioProcessor::recalculatePadPitch(int padIdx)
 {
-    pushGlobalUndoState();
-    globalExportProcessed.store(processed);
-    for (int i = 0; i < 12; ++i)
-        samplerEngine.getPadState(i).exportProcessed = processed;
+    const juce::ScopedLock sl(dbLock);
+    if (padIdx < 0 || padIdx >= 12)
+        return;
+
+    const auto* rec = samplerEngine.getPadRecord(padIdx);
+    if (rec == nullptr)
+        return;
+
+    auto& st = samplerEngine.getPadState(padIdx);
+    int newPitch = Atlas::MusicMath::calculatePitchShift(
+        rec->pitchClass,
+        projectKeyRoot.load(),
+        static_cast<Atlas::ScaleType>(projectScaleType.load()),
+        st.padPitchMode,
+        octaveShift.load()
+    ) + (int)std::round(bankPitchSemitones.load());
+
+    st.semitoneOffset = juce::jlimit(-24, 24, newPitch);
 }
 
-void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(int padIdx,
-                                                                      int sampleIdx,
-                                                                      bool recordGlobalUndo)
+void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(
+    int padIdx, int sampleIdx, bool recordGlobalUndo)
 {
     const juce::ScopedLock sl(dbLock);
     if (padIdx < 0 || padIdx >= 12 ||
@@ -153,24 +162,34 @@ void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(int padIdx
     const auto& rec = sampleDatabase[(size_t)sampleIdx];
     bool lockOn = padSettingsLocked.load();
 
+    // Сохраняет предыдущий сэмпл вместе с его старым регионом и настройками в историю Undo пэда
     samplerEngine.assignSampleToPad(padIdx, sampleIdx, rec, true);
+
+    auto& st = samplerEngine.getPadState(padIdx);
+
+    // Регион воспроизведения всегда сбрасывается на полный сэмпл (даже при включенном Lock)
+    st.regionStart = 0.0f;
+    st.regionEnd = 1.0f;
 
     if (!lockOn)
     {
-        auto& st = samplerEngine.getPadState(padIdx);
+        st.padPitchMode = static_cast<Atlas::PitchMode>(pitchModeIndex.load());
+        st.padSyncBpm = bpmLockedToHost.load();
+        st.padSpeedMult = 1.0f;
+        st.playbackMode = rec.isLoop
+            ? Atlas::PadPlaybackMode::Loop
+            : Atlas::PadPlaybackMode::OneShot;
+
         int previewPitch = Atlas::MusicMath::calculatePitchShift(
             rec.pitchClass,
             projectKeyRoot.load(),
             static_cast<Atlas::ScaleType>(projectScaleType.load()),
-            static_cast<Atlas::PitchMode>(pitchModeIndex.load()),
+            st.padPitchMode,
             octaveShift.load()
         ) + (int)std::round(bankPitchSemitones.load());
 
         st.semitoneOffset = juce::jlimit(-24, 24, previewPitch);
         st.centOffset = 0;
-        st.regionStart = 0.0f;
-        st.regionEnd = 1.0f;
-        st.exportProcessed = globalExportProcessed.load();
 
         st.attackSec = 0.005f;
         st.decaySec = 1.2f;
@@ -356,7 +375,6 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     if (loaded.empty())
         return false;
 
-    // Пересчитываем координаты в форму органичной туманности без квадратных границ
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
 
     const juce::ScopedLock sl(dbLock);
@@ -425,7 +443,7 @@ void MelodicAtlasAudioProcessor::generateDemoAtlas()
 
 void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    juce::ValueTree state("MelodicAtlasStateV4");
+    juce::ValueTree state("MelodicAtlasStateV5");
     state.setProperty("keyRoot", projectKeyRoot.load(), nullptr);
     state.setProperty("scaleType", projectScaleType.load(), nullptr);
     state.setProperty("pitchMode", pitchModeIndex.load(), nullptr);
@@ -433,11 +451,11 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
     state.setProperty("octShift", octaveShift.load(), nullptr);
     state.setProperty("bpmLocked", bpmLockedToHost.load(), nullptr);
     state.setProperty("manualBpm", currentBpm.load(), nullptr);
+    state.setProperty("bpmMult", globalBpmMultiplier.load(), nullptr);
     state.setProperty("reverb", reverbAmount.load(), nullptr);
     state.setProperty("bankReverb", bankReverbAmount.load(), nullptr);
     state.setProperty("bankPitch", bankPitchSemitones.load(), nullptr);
     state.setProperty("padLocked", padSettingsLocked.load(), nullptr);
-    state.setProperty("globalExpProc", globalExportProcessed.load(), nullptr);
     state.setProperty("masterDb", masterVolumeDb.load(), nullptr);
     state.setProperty("bankMode", bankModeIndex.load(), nullptr);
     state.setProperty("showLoops", showLoopsTab.load(), nullptr);
@@ -464,6 +482,14 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
         padNode.setProperty("idx", i, nullptr);
         padNode.setProperty("filePath",
                             (rec != nullptr) ? rec->file.getFullPathName() : "", nullptr);
+        padNode.setProperty("sampleName",
+                            (rec != nullptr) ? rec->name : "", nullptr);
+        padNode.setProperty("pc", (rec != nullptr) ? rec->pitchClass : 0, nullptr);
+        padNode.setProperty("bpm", (rec != nullptr) ? rec->detectedBpm : 120.0, nullptr);
+        padNode.setProperty("isLoop", (rec != nullptr) ? rec->isLoop : false, nullptr);
+        padNode.setProperty("cluster", (rec != nullptr) ? (int)rec->cluster : 1, nullptr);
+        padNode.setProperty("normGain", (rec != nullptr) ? rec->normGainLinear : 1.0f, nullptr);
+
         padNode.setProperty("vol", st.volumeDb, nullptr);
         padNode.setProperty("pan", st.pan, nullptr);
         padNode.setProperty("semi", st.semitoneOffset, nullptr);
@@ -471,7 +497,10 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
         padNode.setProperty("regStart", st.regionStart, nullptr);
         padNode.setProperty("regEnd", st.regionEnd, nullptr);
         padNode.setProperty("chrom", st.chromaticActive, nullptr);
-        padNode.setProperty("expProc", st.exportProcessed, nullptr);
+        padNode.setProperty("playMode", (int)st.playbackMode, nullptr);
+        padNode.setProperty("padSync", st.padSyncBpm, nullptr);
+        padNode.setProperty("padMult", st.padSpeedMult, nullptr);
+        padNode.setProperty("padPitchMode", (int)st.padPitchMode, nullptr);
         padNode.setProperty("att", st.attackSec, nullptr);
         padNode.setProperty("dec", st.decaySec, nullptr);
         padNode.setProperty("sus", st.sustainLvl, nullptr);
@@ -502,11 +531,11 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
     octaveShift.store(state.getProperty("octShift", 0));
     bpmLockedToHost.store(state.getProperty("bpmLocked", true));
     currentBpm.store(state.getProperty("manualBpm", 120.0));
+    globalBpmMultiplier.store((float)state.getProperty("bpmMult", 1.0f));
     reverbAmount.store(state.getProperty("reverb", 0.25f));
     bankReverbAmount.store(state.getProperty("bankReverb", 0.30f));
     bankPitchSemitones.store(state.getProperty("bankPitch", 0.0f));
     padSettingsLocked.store(state.getProperty("padLocked", false));
-    globalExportProcessed.store(state.getProperty("globalExpProc", true));
     masterVolumeDb.store(state.getProperty("masterDb", 0.0f));
     bankModeIndex.store(state.getProperty("bankMode", 1));
     showLoopsTab.store(state.getProperty("showLoops", false));
@@ -542,6 +571,7 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
 
             if (path.isNotEmpty())
             {
+                juce::File f(path);
                 int foundDbIdx = -1;
                 for (int k = 0; k < (int)sampleDatabase.size(); ++k)
                 {
@@ -552,31 +582,45 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
                     }
                 }
 
-                if (foundDbIdx >= 0)
+                if (foundDbIdx >= 0 && f.existsAsFile())
                 {
                     samplerEngine.assignSampleToPad(
                         padIdx, foundDbIdx, sampleDatabase[(size_t)foundDbIdx], false);
                 }
+                else if (f.existsAsFile())
+                {
+                    Atlas::SampleRecord rec;
+                    if (Atlas::AudioAnalyzer::analyzeFile(f, formatManager, rec))
+                    {
+                        sampleDatabase.push_back(rec);
+                        int newIdx = (int)sampleDatabase.size() - 1;
+                        samplerEngine.assignSampleToPad(
+                            padIdx, newIdx, sampleDatabase[(size_t)newIdx], false);
+                    }
+                }
                 else
                 {
-                    juce::File f(path);
-                    if (f.existsAsFile())
-                    {
-                        Atlas::SampleRecord rec;
-                        if (Atlas::AudioAnalyzer::analyzeFile(f, formatManager, rec))
-                        {
-                            sampleDatabase.push_back(rec);
-                            int newIdx = (int)sampleDatabase.size() - 1;
-                            samplerEngine.assignSampleToPad(
-                                padIdx, newIdx, sampleDatabase[(size_t)newIdx], false);
-                        }
-                    }
+                    // Внешний SSD отключен: сохраняем слот и помечаем как Missing (!)
+                    Atlas::SampleRecord missingRec;
+                    missingRec.file = f;
+                    missingRec.name = padNode.getProperty(
+                        "sampleName", f.getFileNameWithoutExtension()).toString();
+                    missingRec.pitchClass = (int)padNode.getProperty("pc", 0);
+                    missingRec.detectedBpm = (double)padNode.getProperty("bpm", 120.0);
+                    missingRec.isLoop = (bool)padNode.getProperty("isLoop", false);
+                    missingRec.cluster = static_cast<Atlas::ClusterGroup>(
+                        juce::jlimit(0, 6, (int)padNode.getProperty("cluster", 1)));
+                    missingRec.normGainLinear = (float)padNode.getProperty("normGain", 1.0f);
+
+                    samplerEngine.setPadMissingSample(padIdx, missingRec);
                 }
             }
             else
             {
                 st.sampleIndex = -1;
+                st.fileMissing = false;
                 st.settingsViewOpen = false;
+                st.syncViewOpen = false;
             }
 
             st.volumeDb = (float)padNode.getProperty("vol", -3.0f);
@@ -586,7 +630,12 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
             st.regionStart = (float)padNode.getProperty("regStart", 0.0f);
             st.regionEnd = (float)padNode.getProperty("regEnd", 1.0f);
             st.chromaticActive = (bool)padNode.getProperty("chrom", padIdx == 0);
-            st.exportProcessed = (bool)padNode.getProperty("expProc", true);
+            st.playbackMode = static_cast<Atlas::PadPlaybackMode>(
+                juce::jlimit(0, 2, (int)padNode.getProperty("playMode", 0)));
+            st.padSyncBpm = (bool)padNode.getProperty("padSync", true);
+            st.padSpeedMult = (float)padNode.getProperty("padMult", 1.0f);
+            st.padPitchMode = static_cast<Atlas::PitchMode>(
+                juce::jlimit(0, 2, (int)padNode.getProperty("padPitchMode", 0)));
             st.attackSec = (float)padNode.getProperty("att", 0.005f);
             st.decaySec = (float)padNode.getProperty("dec", 1.2f);
             st.sustainLvl = (float)padNode.getProperty("sus", 1.0f);
