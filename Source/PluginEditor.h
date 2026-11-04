@@ -30,14 +30,12 @@ namespace Atlas
             const float centreY = (float)y + (float)height * 0.5f;
             const float toAngle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
-            // 1. Фоновая дуга шкалы
             juce::Path bgArc;
             bgArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
                                 0.0f, rotaryStartAngle, rotaryEndAngle, true);
             g.setColour(juce::Colour(0xff252d38));
             g.strokePath(bgArc, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-            // 2. Активная зелёная шкала вокруг энкодера (без белой отсечки)
             bool isBipolar = (slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0 &&
                               std::abs(slider.getMinimum() + slider.getMaximum()) < 0.01);
 
@@ -62,13 +60,11 @@ namespace Atlas
                 g.strokePath(valArc, juce::PathStrokeType(2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
 
-            // 3. Тело энкодера
             g.setColour(juce::Colour(0xff171c23));
             g.fillEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f);
             g.setColour(slider.isMouseOverOrDragging() ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff343f4e));
             g.drawEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f, 1.2f);
 
-            // 4. Надпись прямо внутри центра крутилки (TUNE, REV, MAIN)
             g.setColour(juce::Colour(0xffdce6f2));
             g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(),
                                  std::max(8.5f, radius * 0.52f),
@@ -122,7 +118,7 @@ private:
     void drawMiniEncoder(juce::Graphics& g, juce::Rectangle<float> dialRect, float normVal,
                          const juce::String& insideLabel, const juce::String& subValStr, bool bipolar = false);
 
-    // Векторные иконки (гарантируют отсутствие битых символов на любой ОС)
+    // Векторные иконки
     void drawUndoVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col, bool isRedo = false);
     void drawGearVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col);
     void drawArrowVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, bool pointRight, juce::Colour col);
@@ -130,6 +126,7 @@ private:
     void drawLockVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, bool isLocked, juce::Colour col);
     void drawTrashVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col);
     void drawExportVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col);
+    void drawPlusVectorIcon(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour col);
 
     void handleTopHeaderClick(const juce::MouseEvent& e);
     void handleFilterBarClick(const juce::MouseEvent& e);
@@ -148,21 +145,16 @@ private:
     Atlas::MapCanvasComponent mapCanvas;
     juce::TooltipWindow tooltipWindow { this, 300 };
 
-    // Энкодеры с надписями внутри крутилки:
-    // Сверху (для предпрослушивания): TUNE и REV
     juce::Slider previewTuneSlider;
     juce::Slider mapReverbSlider;
-
-    // Справа в жёлтом блоке (для банка и мастера): REV и MAIN
     juce::Slider bankReverbSlider;
     juce::Slider masterVolSlider;
 
-    // Фильтры карты
-    int selectedClusterFilter = -1; // -1 = ALL, 0..7 = ClusterGroup
+    int selectedClusterFilter = -1;
     uint32_t activeSubFilterMask = 0;
     std::array<uint32_t, 8> selectedClusterSubgroupBit { 0, 0, 0, 0, 0, 0, 0, 0 };
 
-    std::set<int> selectedPads { 0 };
+    std::set<int> selectedPads { 0 }; 
     int primarySelectedPad = 0;
     int hoveredDropPadIndex = -1;
     uint32_t lastPlayingMask = 0;
@@ -176,7 +168,11 @@ private:
         DialSemitones,
         DialCents,
         DialVol,
-        DialPan
+        DialPan,
+        DialAttack,
+        DialDecay,
+        DialSustain,
+        DialRelease
     };
 
     PadDragAction currentPadDragAction = PadDragAction::None;
@@ -187,21 +183,19 @@ private:
     bool draggingBpmValue = false;
     double bpmDragStartVal = 120.0;
 
-    // Геометрия интерфейса (динамически пересчитывается при ресайзе окна)
     juce::Rectangle<float> btnGlobalUndo, btnGlobalRedo;
     juce::Rectangle<float> btnOneShots, btnLoops;
     juce::Rectangle<float> btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
     juce::Rectangle<float> btnBpmSync, btnScanFolder;
 
-    std::array<juce::Rectangle<float>, 9> groupFilterRects;      // [ALL] + 8 групп (ширина строго по тексту)
-    std::array<juce::Rectangle<float>, 8> groupDropdownRects;    // Зона стрелочки ▼ на каждой из 8 групп
-    std::array<juce::Rectangle<float>, 7> subFilterRects;        // Быстрые теги второго ряда (ширина по тексту)
-    juce::Rectangle<float> octLabelRect, btnOctDown, btnOctUp;   // Блок OCTAVE с надписью строго НАД кнопками [-] [+]
+    std::array<juce::Rectangle<float>, 9> groupFilterRects;
+    std::array<juce::Rectangle<float>, 8> groupDropdownRects;
+    std::array<juce::Rectangle<float>, 7> subFilterRects;
+    juce::Rectangle<float> octLabelRect, btnOctDown, btnOctUp;
 
     juce::Rectangle<float> btnPadTriggerMode, btnChromaticMode;
     std::array<juce::Rectangle<float>, 12> padRects;
 
-    // Правая панель управления банком (область, выделенная жёлтым)
     juce::Rectangle<float> rightBankPanelRect;
     juce::Rectangle<float> btnLockPadsIcon;
     juce::Rectangle<float> btnGlobalExportModeIcon;
