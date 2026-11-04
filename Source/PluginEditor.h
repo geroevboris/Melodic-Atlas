@@ -10,26 +10,37 @@ namespace Atlas
     public:
         AtlasLookAndFeel()
         {
-            setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xff161b23));
-            setColour(juce::PopupMenu::textColourId, juce::Colour(0xffdce5f0));
-            setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xff294236));
-            setColour(juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
-            setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(0xff141920));
-            setColour(juce::TooltipWindow::textColourId, juce::Colour(0xffe2eaf4));
-            setColour(juce::TooltipWindow::outlineColourId, juce::Colour(0xff7ec8a3));
+            setColour(juce::Slider::textBoxOutlineColourId,
+                      juce::Colours::transparentBlack);
+            setColour(juce::PopupMenu::backgroundColourId,
+                      juce::Colour(0xff161b23));
+            setColour(juce::PopupMenu::textColourId,
+                      juce::Colour(0xffdce5f0));
+            setColour(juce::PopupMenu::highlightedBackgroundColourId,
+                      juce::Colour(0xff294236));
+            setColour(juce::PopupMenu::highlightedTextColourId,
+                      juce::Colours::white);
+            setColour(juce::TooltipWindow::backgroundColourId,
+                      juce::Colour(0xff141920));
+            setColour(juce::TooltipWindow::textColourId,
+                      juce::Colour(0xffe2eaf4));
+            setColour(juce::TooltipWindow::outlineColourId,
+                      juce::Colour(0xff7ec8a3));
         }
 
-        void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                              float sliderPosProportional, float rotaryStartAngle,
-                              float rotaryEndAngle, juce::Slider& slider) override
+        void drawRotarySlider(juce::Graphics& g, int x, int y,
+                              int width, int height,
+                              float sliderPosProportional,
+                              float rotaryStartAngle,
+                              float rotaryEndAngle,
+                              juce::Slider& slider) override
         {
             const float size = (float)juce::jmin(width, height);
             const float radius = size * 0.42f;
             const float centreX = (float)x + (float)width * 0.5f;
             const float centreY = (float)y + (float)height * 0.5f;
             const float toAngle = rotaryStartAngle +
-                                  sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+                sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
             juce::Path bgArc;
             bgArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
@@ -38,7 +49,6 @@ namespace Atlas
             g.strokePath(bgArc, juce::PathStrokeType(
                 2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-            // Строгая проверка симметрии: биполярным будет только TUNE (-12..+12), но не MAIN (-24..+6)
             bool isBipolar = (slider.getMinimum() < 0.0 &&
                               slider.getMaximum() > 0.0 &&
                               std::abs(slider.getMinimum() + slider.getMaximum()) < 0.01);
@@ -67,17 +77,27 @@ namespace Atlas
                     2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
 
-            // Спокойный темный корпус без навязчивой обводки при наведении мыши
             g.setColour(juce::Colour(0xff171c23));
-            g.fillEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f);
+            g.fillEllipse(centreX - radius, centreY - radius,
+                          radius * 2.0f, radius * 2.0f);
             g.setColour(juce::Colour(0xff343f4e));
-            g.drawEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f, 1.2f);
+            g.drawEllipse(centreX - radius, centreY - radius,
+                          radius * 2.0f, radius * 2.0f, 1.2f);
+
+            // Если это ручка TUNE и она отклонена от 0 — показываем число (-5, +3 и т.д.)
+            juce::String centerText = slider.getName();
+            if (centerText == "TUNE")
+            {
+                int semiVal = (int)std::round(slider.getValue());
+                if (semiVal != 0)
+                    centerText = (semiVal > 0 ? "+" : "") + juce::String(semiVal);
+            }
 
             g.setColour(juce::Colour(0xffdce6f2));
             g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(),
                                  std::max(8.5f, radius * 0.52f),
                                  juce::Font::bold));
-            g.drawText(slider.getName(),
+            g.drawText(centerText,
                        juce::Rectangle<float>(centreX - radius, centreY - radius * 0.6f,
                                               radius * 2.0f, radius * 1.2f),
                        juce::Justification::centred,
@@ -130,6 +150,9 @@ private:
                                  const juce::Rectangle<float>& r,
                                  const Atlas::PadSlotState& padState,
                                  std::shared_ptr<Atlas::CachedAudioData> audio);
+    void drawPadSyncView(juce::Graphics& g, int padIdx,
+                         const juce::Rectangle<float>& r,
+                         const Atlas::PadSlotState& padState);
     void drawMiniEncoder(juce::Graphics& g, juce::Rectangle<float> dialRect,
                          float normVal, const juce::String& insideLabel,
                          const juce::String& subValStr, bool bipolar = false);
@@ -141,6 +164,12 @@ private:
                             juce::Colour col);
     void drawArrowVectorIcon(juce::Graphics& g, juce::Rectangle<float> area,
                              bool pointRight, juce::Colour col);
+    void drawVerticalArrowIcon(juce::Graphics& g, juce::Rectangle<float> area,
+                               bool pointUp, juce::Colour col);
+    void drawPlaybackModeIcon(juce::Graphics& g, juce::Rectangle<float> area,
+                              Atlas::PadPlaybackMode mode, juce::Colour col);
+    void drawWarningVectorIcon(juce::Graphics& g, juce::Rectangle<float> area,
+                               juce::Colour col);
     void drawDropdownTriangle(juce::Graphics& g, juce::Rectangle<float> area,
                               juce::Colour col);
     void drawLockVectorIcon(juce::Graphics& g, juce::Rectangle<float> area,
@@ -177,7 +206,6 @@ private:
     juce::Slider bankReverbSlider;
     juce::Slider masterVolSlider;
 
-    // Мультивыбор инструментов (биты 0..6) и независимый фильтр настроений MOODS
     uint32_t selectedClustersMask = 0;
     std::array<uint32_t, 7> selectedClusterSubgroupBit { 0, 0, 0, 0, 0, 0, 0 };
     uint32_t selectedMoodMask = 0;
@@ -187,6 +215,8 @@ private:
     int currentlyHeldPadIndex = -1;
     int hoveredDropPadIndex = -1;
     uint32_t lastPlayingMask = 0;
+    double lastDisplayedBpm = 0.0;
+    int relinkCheckCounter = 0;
 
     enum class PadDragAction
     {
@@ -211,19 +241,18 @@ private:
 
     juce::Rectangle<float> btnGlobalUndo, btnGlobalRedo;
     juce::Rectangle<float> btnOneShots, btnLoops;
-    juce::Rectangle<float> btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
-    juce::Rectangle<float> btnBpmHalf, btnBpmSync, btnBpmDouble, btnScanFolder;
+    juce::Rectangle<float> lblKeyRect, btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
+    juce::Rectangle<float> lblBpmRect, btnBpmHalf, btnBpmSync, btnBpmDouble, btnScanFolder;
 
     std::array<juce::Rectangle<float>, 9> groupFilterRects;
     std::array<juce::Rectangle<float>, 8> groupDropdownRects;
-    juce::Rectangle<float> octLabelRect, btnOctDown, btnOctUp;
+    juce::Rectangle<float> octLabelRect, octValueRect, btnOctUp, btnOctDown;
 
     juce::Rectangle<float> btnPadTriggerMode, btnChromaticMode;
     std::array<juce::Rectangle<float>, 12> padRects;
 
     juce::Rectangle<float> rightBankPanelRect;
     juce::Rectangle<float> btnLockPadsIcon;
-    juce::Rectangle<float> btnGlobalExportModeIcon;
     juce::Rectangle<float> btnClearAllIcon;
     juce::Rectangle<float> btnDragAllIcon;
 
