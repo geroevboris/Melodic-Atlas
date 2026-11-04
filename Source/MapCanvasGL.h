@@ -61,7 +61,6 @@ namespace Atlas
             const float h = (float)getHeight();
             const float mapBottomY = h - 26.0f;
 
-            // 1. Фон и координатная сетка
             g.setColour(juce::Colour(0xff0f1319));
             g.fillRect(0.0f, 0.0f, w, mapBottomY);
 
@@ -71,7 +70,6 @@ namespace Atlas
             for (int r = 1; r < 8; ++r)
                 g.drawHorizontalLine((int)((mapBottomY / 8.0f) * (float)r), 0.0f, w);
 
-            // 2. Радарный отклик при клике в пустое место
             if (crosshairAlpha > 0.01f)
             {
                 g.setColour(juce::Colour(0xff7ec8a3).withAlpha(crosshairAlpha * 0.35f));
@@ -85,7 +83,6 @@ namespace Atlas
                               1.4f);
             }
 
-            // 3. Отрисовка точек созвездий
             if (database != nullptr)
             {
                 for (int i = 0; i < (int)database->size(); ++i)
@@ -187,7 +184,6 @@ namespace Atlas
 
             const float mapBottomY = (float)getHeight() - 26.0f;
 
-            // Клик по History Track: проигрываем звук БЕЗ смещения списка истории
             if (pt.y >= mapBottomY)
             {
                 for (size_t i = 0; i < historyNodeRects.size(); ++i)
@@ -206,7 +202,7 @@ namespace Atlas
 
             int hit = findNearestSample(pt, 12.0f);
 
-            // Правый клик назначает звук в пэд; правый драг панорамирует карту
+            // Правый клик отправляет в пэд БЕЗ звука предпрослушки
             if (e.mods.isPopupMenu() || e.mods.isMiddleButtonDown())
             {
                 if (hit >= 0 && onSampleRightClicked && e.mods.isPopupMenu())
@@ -222,10 +218,10 @@ namespace Atlas
                 return;
             }
 
-            // Левый клик: режим прослушивания при удержании (Hold-to-Play)
-            isAuditionSweeping = true;
             if (hit >= 0)
             {
+                // Клик по точке: запуск прослушивания
+                isAuditionSweeping = true;
                 lastSweptSampleIndex = hit;
                 activeSampleIndex = hit;
                 isHoldingSample = true;
@@ -233,7 +229,8 @@ namespace Atlas
             }
             else
             {
-                lastSweptSampleIndex = -1;
+                // Клик в пустое место: включение панорамирования (Grab & Drag) + радарный отклик
+                isPanningMap = true;
                 lastClickPos = pt;
                 crosshairAlpha = 1.0f;
                 startTimerHz(30);
@@ -297,7 +294,6 @@ namespace Atlas
         void mouseWheelMove(const juce::MouseEvent& e,
                             const juce::MouseWheelDetails& wheel) override
         {
-            // Плавный зум точно в точку, где находится курсор мыши
             if (std::abs(wheel.deltaY) > 0.0001f)
             {
                 float zoomMultiplier = std::pow(1.25f, wheel.deltaY * 3.2f);
@@ -462,7 +458,6 @@ namespace Atlas
         {
             int cIdx = juce::jlimit(0, 6, (int)rec.cluster);
 
-            // 1. Проверка выбранных кластеров инструментов (поддержка Cmd-мультивыбора)
             if (activeClustersMask != 0)
             {
                 if ((activeClustersMask & (1u << cIdx)) == 0)
@@ -473,7 +468,6 @@ namespace Atlas
                     return false;
             }
 
-            // 2. Проверка фильтра настроений MOODS
             if (activeMoodMask != 0 && (rec.subMask & activeMoodMask) == 0)
                 return false;
 
