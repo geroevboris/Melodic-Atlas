@@ -102,7 +102,7 @@ namespace Atlas
                 { 0.64f, 0.40f }, // Strings
                 { 0.74f, 0.58f }, // Guitar
                 { 0.84f, 0.72f }, // FX
-                { 0.88f, 0.32f }  // Other
+                { 0.88f, 0.32f }  // Other / Moods
             };
 
             for (size_t i = 0; i < n; ++i)
@@ -224,12 +224,11 @@ namespace Atlas
                 r.cluster = ClusterGroup::Strings;
             else if (lowerName.contains("guitar") || lowerName.contains("gtr") || lowerName.contains("strum"))
                 r.cluster = ClusterGroup::Guitar;
-            else if (lowerName.contains("fx") || lowerName.contains("riser") || lowerName.contains("sweep") || lowerName.contains("impact") || lowerName.contains("noise"))
-                r.cluster = ClusterGroup::FX;
             else if (lowerName.contains("synth") || lowerName.contains("pad") || lowerName.contains("lead") || lowerName.contains("arp") || lowerName.contains("acid"))
                 r.cluster = ClusterGroup::Synth;
+            // Все остальное неклассифицируемое отправляем в FX, так как Other (7) зарезервировано под Moods
             else
-                r.cluster = ClusterGroup::Other;
+                r.cluster = ClusterGroup::FX; 
 
             uint32_t mask = Sub_None;
 
@@ -258,7 +257,7 @@ namespace Atlas
             if (lowerName.contains("sub") || (r.cluster == ClusterGroup::Bass && r.spectralCentroidNorm < 0.28f))
                 mask |= Sub_SubBass;
 
-            if (lowerName.contains("bell") || lowerName.contains("metal") || (r.cluster == ClusterGroup::Other && (mask & Sub_Pluck)))
+            if (lowerName.contains("bell") || lowerName.contains("metal") || (r.cluster == ClusterGroup::FX && (mask & Sub_Pluck)))
                 mask |= Sub_BellMetallic;
 
             if (lowerName.contains("texture") || lowerName.contains("gran") || lowerName.contains("air") || r.pitchMobilityNorm > 0.58f)
