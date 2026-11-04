@@ -48,7 +48,7 @@ namespace Atlas
         Strings = 4,
         Guitar  = 5,
         FX      = 6,
-        Other   = 7
+        Other   = 7  // В UI теперь будет называться MOODS
     };
 
     enum SubFilterFlags : uint32_t
@@ -118,14 +118,19 @@ namespace Atlas
         float regionEnd = 1.0f;
         bool chromaticActive = true;
         bool exportProcessed = true;
+        
+        float attackSec = 0.005f;
+        float decaySec = 1.2f;
+        float sustainLvl = 1.0f;
+        float releaseSec = 0.05f;
     };
 
     struct PadSlotState
     {
         int sampleIndex = -1;
-        bool chromaticActive = true;   // Жёлтая точка для Chromatic-режима
-        bool exportProcessed = true;   // true = [P] Processed, false = [D] Dry
-        bool settingsViewOpen = false; // Открыта ли панель шестерёнки внутри пэда
+        bool chromaticActive = true;
+        bool exportProcessed = true;
+        bool settingsViewOpen = false;
 
         float volumeDb = -3.0f;
         float pan = 0.0f;
@@ -136,15 +141,15 @@ namespace Atlas
         float regionEnd   = 1.0f;
         bool reverse = false;
 
+        // Полноценный ADSR с микро-релизом по дефолту (защита от клипов)
         float attackSec  = 0.005f;
         float decaySec   = 1.20f;
-        float sustainLvl = 0.85f;
-        float releaseSec = 0.35f;
+        float sustainLvl = 1.0f;
+        float releaseSec = 0.05f;
 
         std::vector<PadHistoryEntry> history;
     };
 
-    // Полный слепок состояния банка для глобального Undo / Redo
     struct ProjectSnapshot
     {
         std::array<PadSlotState, 12> pads;
@@ -160,30 +165,18 @@ namespace Atlas
             return names[((pitchClass % 12) + 12) % 12];
         }
 
-        // Форматирование ноты и центов для левого верхнего угла пэда (например: "C", "C -6", "F# +12")
         static juce::String formatPadNoteAndCents(int basePitchClass, int semitoneOffset, int centOffset)
         {
             int totalSemis = basePitchClass + semitoneOffset;
             int extraSemisFromCents = 0;
             int remCents = centOffset;
 
-            if (remCents > 50)
-            {
-                extraSemisFromCents = 1;
-                remCents -= 100;
-            }
-            else if (remCents < -50)
-            {
-                extraSemisFromCents = -1;
-                remCents += 100;
-            }
+            if (remCents > 50) { extraSemisFromCents = 1; remCents -= 100; }
+            else if (remCents < -50) { extraSemisFromCents = -1; remCents += 100; }
 
             juce::String noteStr = getNoteName(totalSemis + extraSemisFromCents);
-            if (remCents == 0)
-                return noteStr;
-
-            juce::String signStr = (remCents > 0) ? " +" : " ";
-            return noteStr + signStr + juce::String(remCents);
+            if (remCents == 0) return noteStr;
+            return noteStr + (remCents > 0 ? " +" : " ") + juce::String(remCents);
         }
 
         static juce::String getScaleShortName(ScaleType st)
@@ -233,8 +226,8 @@ namespace Atlas
                 case ClusterGroup::Strings: return "STRINGS";
                 case ClusterGroup::Guitar:  return "GUITAR";
                 case ClusterGroup::FX:      return "FX";
-                case ClusterGroup::Other:   return "OTHER";
-                default:                    return "OTHER";
+                case ClusterGroup::Other:   return "MOODS"; // Переименовано в UI по запросу
+                default:                    return "FX";
             }
         }
 
@@ -293,34 +286,38 @@ namespace Atlas
                         { "Textural / Amped",      "TEXT",   Sub_Textural }
                     };
                 case ClusterGroup::FX:
+                    // Все элементы из старого Others перенесены сюда
                     return {
                         { "All FX",                "",       Sub_None },
                         { "Risers & Sweeps",       "RISER",  Sub_RiserSweep },
                         { "Impacts & Hits",        "IMPACT", Sub_ImpactHit },
-                        { "Noisy / Transitions",   "NOISE",  Sub_Noisy },
-                        { "Textural / Atmos FX",   "ATMOS",  Sub_Textural }
-                    };
-                case ClusterGroup::Other:
-                default:
-                    return {
-                        { "All Other",             "",       Sub_None },
                         { "Bells & Metallic",      "BELL",   Sub_BellMetallic },
                         { "Granular & Textural",   "GRAN",   Sub_Textural },
-                        { "Percussive / Tonal",    "PLUCK",  Sub_Pluck },
                         { "Drones & Sustain",      "DRONE",  Sub_Sustain },
-                        { "Experimental / Noisy",  "EXP",    Sub_Noisy }
+                        { "Noisy / Transitions",   "NOISE",  Sub_Noisy }
                     };
+                case ClusterGroup::Other:
+                    // Настроения/характеры перенесены в подгруппу Others (теперь MOODS)
+                    return {
+                        { "All Moods",             "",       Sub_None },
+                        { "Clean / Pure",          "CLEAN",  Sub_Clean },
+                        { "Noisy / Lo-Fi",         "NOISY",  Sub_Noisy },
+                        { "Warm / Analog",         "WARM",   Sub_Warm },
+                        { "Plucky / Short",        "PLUCK",  Sub_Pluck },
+                        { "Sustained / Long",      "SUST",   Sub_Sustain },
+                        { "Textural / Atmos",      "TEXT",   Sub_Textural }
+                    };
+                default:
+                    return {};
             }
         }
 
         static juce::String getSubgroupShortLabel(ClusterGroup cluster, uint32_t flagBit)
         {
-            if (flagBit == Sub_None)
-                return {};
+            if (flagBit == Sub_None) return {};
             auto opts = getSubgroupsForCluster(cluster);
             for (const auto& o : opts)
-                if (o.flagBit == flagBit)
-                    return o.shortName;
+                if (o.flagBit == flagBit) return o.shortName;
             return "SUB";
         }
 
@@ -336,7 +333,7 @@ namespace Atlas
                 case ClusterGroup::Strings: base = juce::Colour(0xff967bb6); break;
                 case ClusterGroup::Guitar:  base = juce::Colour(0xff5da886); break;
                 case ClusterGroup::FX:      base = juce::Colour(0xffc47db8); break;
-                case ClusterGroup::Other:   base = juce::Colour(0xff8ca0b5); break;
+                case ClusterGroup::Other:   base = juce::Colour(0xff8ca0b5); break; // Moods color
                 default:                    base = juce::Colour(0xff8ca0b5); break;
             }
 
