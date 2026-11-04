@@ -74,6 +74,7 @@ namespace Atlas
             updateReverbParameters();
         }
 
+        // --- ВОСПРОИЗВЕДЕНИЕ С КАРТЫ (ТОЛЬКО ПОКА НАЖАТА ЛКМ) ---
         void startPreview(int sampleIdx, const SampleRecord& rec)
         {
             auto audio = loadOrGetAudio(rec.file);
@@ -83,12 +84,13 @@ namespace Atlas
             const juce::ScopedLock sl(engineLock);
 
             int prevSlot = activePreviewSlot;
-            if (previewVoices[prevSlot].active)
+            
+            // Если предыдущий звук играл, уводим его в мягкую тишину (анти-клик 5мс)
+            if (previewVoices[prevSlot].active && !previewVoices[prevSlot].fadingOut)
             {
                 previewVoices[prevSlot].fadingOut = true;
-                previewVoices[prevSlot].holding = false;
-                float fadeSamples = (float)(currentSampleRate * 0.005);
-                previewVoices[prevSlot].fadeOutStep = previewVoices[prevSlot].envGain / std::max(1.0f, fadeSamples);
+                float fadeSamples = (float)std::max(10.0, currentSampleRate * 0.005);
+                previewVoices[prevSlot].fadeOutStep = previewVoices[prevSlot].envGain / fadeSamples;
             }
 
             activePreviewSlot = 1 - prevSlot;
@@ -98,22 +100,26 @@ namespace Atlas
             v.record = rec;
             v.sampleIndex = sampleIdx;
             v.position = 0.0;
-            v.elapsedSamples = 0;
             v.active = true;
-            v.holding = true;
             v.fadingOut = false;
             v.envGain = 0.0f;
-
-            float fadeInSamples = (float)(currentSampleRate * 0.003);
-            v.fadeInStep = 1.0f / std::max(1.0f, fadeInSamples);
-            v.minHoldSamples = (int64_t)(currentSampleRate * (rec.isLoop ? 2.0 : std::min(3.0, rec.durationSec)));
+            
+            // Быстрая атака (3мс)
+            float fadeInSamples = (float)std::max(10.0, currentSampleRate * 0.003);
+            v.fadeInStep = 1.0f / fadeInSamples;
         }
 
+        // Остановка звука (запускается, когда пользователь отпускает ЛКМ)
         void stopPreview()
         {
             const juce::ScopedLock sl(engineLock);
-            if (previewVoices[activePreviewSlot].active)
-                previewVoices[activePreviewSlot].holding = false;
+            auto& v = previewVoices[activePreviewSlot];
+            if (v.active && !v.fadingOut)
+            {
+                v.fadingOut = true;
+                float fadeSamples = (float)std::max(10.0, currentSampleRate * 0.02); // Мягкий релиз 20мс
+                v.fadeOutStep = v.envGain / fadeSamples;
+            }
         }
 
         void assignSampleToPad(int padIdx, int sampleIdx, const SampleRecord& rec, bool savePadHistory = true)
@@ -149,11 +155,14 @@ namespace Atlas
 
             bool anyChromatic = false;
             for (int i = 0; i < 12; ++i)
+            {
                 if (padStates[(size_t)i].sampleIndex >= 0 && padStates[(size_t)i].chromaticActive)
                     anyChromatic = true;
+            }
 
             st.sampleIndex = sampleIdx;
-            if (!anyChromatic) st.chromaticActive = true;
+            if (!anyChromatic) 
+                st.chromaticActive = true;
 
             padRecords[(size_t)padIdx] = rec;
             padAudio[(size_t)padIdx] = audio;
@@ -193,9 +202,22 @@ namespace Atlas
             for (int i = 0; i < 12; ++i)
             {
                 padStates[(size_t)i].sampleIndex = -1;
+                padStates[(size_t)i].settingsViewOpen = false;
                 padAudio[(size_t)i].reset();
             }
-            for (auto& v : voices) v.active = false;
+            for (auto& v : voices) 
+                v.active = false;
+        }
+
+        void clearPad(int padIdx)
+        {
+            const juce::ScopedLock sl(engineLock);
+            if (padIdx >= 0 && padIdx < 12) 
+            {
+                padStates[(size_t)padIdx].sampleIndex = -1;
+                padStates[(size_t)padIdx].settingsViewOpen = false;
+                padAudio[(size_t)padIdx].reset();
+            }
         }
 
         ProjectSnapshot createSnapshot(int primaryPad, bool globalExpProc) const
@@ -223,6 +245,7 @@ namespace Atlas
                 else
                 {
                     padStates[(size_t)i].sampleIndex = -1;
+                    padStates[(size_t)i].settingsViewOpen = false;
                     padAudio[(size_t)i].reset();
                 }
             }
@@ -243,23 +266,34 @@ namespace Atlas
             return padAudio[(size_t)idx];
         }
 
+        // --- ВОСПРОИЗВЕДЕНИЕ С ПЭДОВ ---
         void triggerPadFromUI(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
             if (padIdx < 0 || padIdx >= 12) return;
-            for (auto& v : voices)
-                if (v.active && v.padIndex == padIdx)
-                    v.releasing = true;
             
+            // Жестко глушим предыдущий голос этого пэда (Anti-click)
+            for (auto& v : voices)
+            {
+                if (v.active && v.padIndex == padIdx && !v.releasing)
+                {
+                    v.releasing = true;
+                }
+            }
             triggerPadVoice(padIdx, 60, 0.9f, 0.0f);
         }
 
+        // Запускает релиз, когда пользователь отжимает мышь от пэда
         void releasePadFromUI(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
             for (auto& v : voices)
+            {
                 if (v.active && !v.releasing && v.padIndex == padIdx)
+                {
                     v.releasing = true;
+                }
+            }
         }
 
         uint32_t getActivePlayingPadsMask() const { return activePadsBitmask.load(); }
@@ -301,7 +335,7 @@ namespace Atlas
             juce::AudioBuffer<float> outBuf(2, outSamples);
             outBuf.clear();
 
-            float gainLin = juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear;
+            float gainLin = juce::jlimit(0.0f, 10.0f, juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear);
             float panAngle = (st.pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
             float gainL = std::cos(panAngle) * gainLin;
             float gainR = std::sin(panAngle) * gainLin;
@@ -369,11 +403,17 @@ namespace Atlas
             {
                 const auto msg = metadata.getMessage();
                 if (msg.isNoteOn())
+                {
                     handleMidiNoteOn(msg.getNoteNumber(), msg.getFloatVelocity());
+                }
                 else if (msg.isNoteOff())
+                {
                     handleMidiNoteOff(msg.getNoteNumber());
+                }
                 else if (msg.isAllNotesOff() || msg.isAllSoundOff())
+                {
                     for (auto& v : voices) v.releasing = true;
+                }
             }
 
             const int numSamples = outputBuffer.getNumSamples();
@@ -389,6 +429,9 @@ namespace Atlas
             float* bankRevL = bankRevBuffer.getWritePointer(0);
             float* bankRevR = bankRevBuffer.getWritePointer(1);
 
+            float safeMasterGain = juce::jlimit(0.0f, 4.0f, masterGainLinear);
+
+            // 1. ПРЕДПРОСЛУШКА НА КАРТЕ
             for (int slot = 0; slot < 2; ++slot)
             {
                 auto& pv = previewVoices[slot];
@@ -400,55 +443,66 @@ namespace Atlas
                 const float* srcR = buf.getNumChannels() > 1 ? buf.getReadPointer(1) : srcL;
 
                 int semiShift = MusicMath::calculatePitchShift(pv.record.pitchClass, projectKeyRoot, projectScale, pitchMode, octaveShift);
-                double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * (pv.audio->sampleRate / currentSampleRate);
+                double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * (pv.audio->sampleRate / std::max(1.0, currentSampleRate));
+                
+                // ЗАЩИТА: Ограничение питча
+                step = juce::jlimit(0.05, 20.0, step); 
 
                 if (pv.record.isLoop && syncBpm && pv.record.detectedBpm > 40.0)
-                    step *= juce::jlimit(0.5, 2.0, currentBpm / pv.record.detectedBpm);
-
-                float releaseFadeStep = (float)(1.0 / std::max(1.0, currentSampleRate * 0.02)); 
+                    step *= juce::jlimit(0.25, 4.0, currentBpm / pv.record.detectedBpm);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
                     if (!pv.fadingOut && pv.envGain < 1.0f)
-                        pv.envGain = std::min(1.0f, pv.envGain + pv.fadeInStep);
-
-                    if (!pv.holding && pv.elapsedSamples >= pv.minHoldSamples && !pv.fadingOut)
                     {
-                        pv.fadingOut = true;
-                        pv.fadeOutStep = releaseFadeStep;
+                        pv.envGain = std::min(1.0f, pv.envGain + pv.fadeInStep);
                     }
 
                     if (pv.fadingOut)
                     {
                         pv.envGain -= pv.fadeOutStep;
-                        if (pv.envGain <= 0.0001f) { pv.envGain = 0.0f; pv.active = false; break; }
+                        if (pv.envGain <= 0.0001f || std::isnan(pv.envGain)) 
+                        { 
+                            pv.envGain = 0.0f; 
+                            pv.active = false; 
+                            break; 
+                        }
                     }
 
                     int idx0 = (int)pv.position;
+                    // Если дошли до конца файла, а мышка еще зажата (fadingOut = false) -> крутим луп.
                     if (idx0 >= totalFrames - 1)
                     {
-                        if (pv.record.isLoop && pv.holding && !pv.fadingOut)
-                        {
-                            pv.position = std::fmod(pv.position, (double)(totalFrames - 1));
-                            idx0 = (int)pv.position;
+                        if (pv.record.isLoop && !pv.fadingOut) 
+                        { 
+                            pv.position = std::fmod(pv.position, (double)(totalFrames - 1)); 
+                            idx0 = (int)pv.position; 
                         }
-                        else { pv.active = false; break; }
+                        else 
+                        { 
+                            pv.fadingOut = true; 
+                            pv.fadeOutStep = pv.envGain / std::max(1.0f, (float)(currentSampleRate * 0.01)); 
+                        }
                     }
 
                     int idx1 = std::min(totalFrames - 1, idx0 + 1);
                     float frac = (float)(pv.position - (double)idx0);
+                    
                     float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
                     float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
+                    
+                    // ЗАЩИТА: Проверка на NaN
+                    if (std::isnan(sL) || std::isnan(sR)) { sL = 0.0f; sR = 0.0f; } 
 
                     float gain = pv.envGain * pv.record.normGainLinear * 0.75f;
                     outL[i] += sL * gain; outR[i] += sR * gain;
                     mapRevL[i] += sL * gain; mapRevR[i] += sR * gain;
 
                     pv.position += step;
-                    pv.elapsedSamples++;
                 }
             }
 
+            // 2. ГОЛОСА ПЭДОВ
             uint32_t playingMask = 0;
             for (auto& v : voices)
             {
@@ -466,32 +520,50 @@ namespace Atlas
                 const float* srcR = buf.getNumChannels() > 1 ? buf.getReadPointer(1) : srcL;
 
                 float padGain = juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear * v.velocity;
+                padGain = juce::jlimit(0.0f, 4.0f, padGain); 
+                
                 float panAngle = (st.pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
                 float gainL = std::cos(panAngle) * padGain;
                 float gainR = std::sin(panAngle) * padGain;
 
-                float attStep = (float)(1.0 / std::max(1.0, currentSampleRate * std::max(0.002f, st.attackSec)));
-                float decStep = (float)((1.0 - st.sustainLvl) / std::max(1.0, currentSampleRate * std::max(0.01f, st.decaySec)));
-                float relStep = (float)(1.0 / std::max(1.0, currentSampleRate * std::max(0.005f, st.releaseSec)));
+                // БЕЗОПАСНЫЙ РАСЧЕТ ШАГОВ ADSR (предотвращает деление на 0)
+                float safeAtt = std::max(0.001f, st.attackSec);
+                float safeDec = std::max(0.001f, st.decaySec);
+                float safeRel = std::max(0.005f, st.releaseSec); // Минимум 5мс релиз
+
+                float attStep = (float)(1.0 / (currentSampleRate * safeAtt));
+                float decStep = (float)((1.0 - st.sustainLvl) / (currentSampleRate * safeDec));
+                float relStep = (float)(1.0 / (currentSampleRate * safeRel));
 
                 double glideCoeff = (glideTimeSec > 0.002f) ? (1.0 - std::exp(-1.0 / (currentSampleRate * glideTimeSec))) : 1.0;
-                double srRatio = v.audio->sampleRate / currentSampleRate;
+                double srRatio = v.audio->sampleRate / std::max(1.0, currentSampleRate);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
                     v.currentNoteShift += (v.targetNoteShift - v.currentNoteShift) * glideCoeff;
                     double totalSemis = (double)st.semitoneOffset + (double)st.centOffset * 0.01 + v.currentNoteShift;
                     double step = std::pow(2.0, totalSemis / 12.0) * srRatio;
+                    
+                    step = juce::jlimit(0.01, 20.0, step); // ЗАЩИТА ПИТЧА
 
                     if (v.releasing)
                     {
                         v.envLevel -= relStep;
-                        if (v.envLevel <= 0.0001f) { v.envLevel = 0.0f; v.active = false; break; }
+                        if (v.envLevel <= 0.0001f || std::isnan(v.envLevel)) 
+                        { 
+                            v.envLevel = 0.0f; 
+                            v.active = false; 
+                            break; 
+                        }
                     }
                     else if (v.inAttack)
                     {
                         v.envLevel += attStep;
-                        if (v.envLevel >= 1.0f) { v.envLevel = 1.0f; v.inAttack = false; }
+                        if (v.envLevel >= 1.0f || std::isnan(v.envLevel)) 
+                        { 
+                            v.envLevel = 1.0f; 
+                            v.inAttack = false; 
+                        }
                     }
                     else
                     {
@@ -501,8 +573,16 @@ namespace Atlas
                     int idx0 = (int)v.position;
                     if (idx0 >= endFrame - 1)
                     {
-                        if (rec.isLoop && !v.releasing) { v.position = (double)startFrame; idx0 = startFrame; }
-                        else { v.releasing = true; } 
+                        // Луп крутится, пока клавиша зажата (!v.releasing)
+                        if (rec.isLoop && !v.releasing) 
+                        { 
+                            v.position = (double)startFrame; 
+                            idx0 = startFrame; 
+                        }
+                        else 
+                        { 
+                            v.releasing = true; 
+                        } 
                     }
 
                     int idx1 = std::min(endFrame - 1, idx0 + 1);
@@ -510,6 +590,7 @@ namespace Atlas
 
                     float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
                     float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
+                    if (std::isnan(sL) || std::isnan(sR)) { sL = 0.0f; sR = 0.0f; }
 
                     float l = sL * gainL * v.envLevel;
                     float r = sR * gainR * v.envLevel;
@@ -519,11 +600,11 @@ namespace Atlas
 
                     v.position += step;
                 }
-
                 if (v.active && !v.releasing) playingMask |= (1u << v.padIndex);
             }
             activePadsBitmask.store(playingMask);
 
+            // Реверберация
             if (mapReverbAmt > 0.005f)
             {
                 juce::dsp::AudioBlock<float> block(mapRevBuffer.getArrayOfWritePointers(), 2, (size_t)numSamples);
@@ -538,10 +619,17 @@ namespace Atlas
                 for (int i = 0; i < numSamples; ++i) { outL[i] += bankRevL[i]; outR[i] += bankRevR[i]; }
             }
 
+            // ФИНАЛЬНЫЙ ЛИМИТЕР: Мгновенное гашение NaN и софт-клип
             for (int i = 0; i < numSamples; ++i)
             {
-                outL[i] = std::tanh(outL[i] * masterGainLinear);
-                outR[i] = std::tanh(outR[i] * masterGainLinear);
+                float safeL = outL[i] * safeMasterGain;
+                float safeR = outR[i] * safeMasterGain;
+                
+                if (std::isnan(safeL) || std::isinf(safeL)) safeL = 0.0f;
+                if (std::isnan(safeR) || std::isinf(safeR)) safeR = 0.0f;
+                
+                outL[i] = std::tanh(safeL);
+                outR[i] = std::tanh(safeR);
             }
         }
 
@@ -552,13 +640,10 @@ namespace Atlas
             SampleRecord record;
             int sampleIndex = -1;
             double position = 0.0;
-            int64_t elapsedSamples = 0;
-            int64_t minHoldSamples = 44100;
             float envGain = 0.0f;
             float fadeInStep = 0.01f;
             float fadeOutStep = 0.001f;
             bool active = false;
-            bool holding = false;
             bool fadingOut = false;
         };
 
@@ -592,29 +677,28 @@ namespace Atlas
         {
             if (bankMode == BankMode::PadTrigger)
             {
-                int padIdx = ((midiNote % 12) + 12) % 12;
-                triggerPadVoice(padIdx, midiNote, velocity, 0.0f);
+                triggerPadVoice(((midiNote % 12) + 12) % 12, midiNote, velocity, 0.0f);
             }
             else
             {
                 int baseNote = (midiNote < 48) ? 36 : 60;
-                float chromaticShiftSemis = (float)(midiNote - baseNote);
-                bool anyTriggered = false;
+                float chromShift = (float)(midiNote - baseNote);
+                bool triggered = false;
                 for (int i = 0; i < 12; ++i)
                 {
                     if (padStates[(size_t)i].sampleIndex >= 0 && padStates[(size_t)i].chromaticActive)
                     {
-                        triggerPadVoice(i, midiNote, velocity, chromaticShiftSemis);
-                        anyTriggered = true;
+                        triggerPadVoice(i, midiNote, velocity, chromShift);
+                        triggered = true;
                     }
                 }
-                if (!anyTriggered)
+                if (!triggered)
                 {
                     for (int i = 0; i < 12; ++i)
                     {
                         if (padStates[(size_t)i].sampleIndex >= 0)
                         {
-                            triggerPadVoice(i, midiNote, velocity, chromaticShiftSemis);
+                            triggerPadVoice(i, midiNote, velocity, chromShift);
                             break;
                         }
                     }
@@ -627,8 +711,10 @@ namespace Atlas
         void handleMidiNoteOff(int midiNote)
         {
             for (auto& v : voices)
+            {
                 if (v.active && !v.releasing && v.midiNote == midiNote)
-                    v.releasing = true; 
+                    v.releasing = true;
+            }
         }
 
         void triggerPadVoice(int padIdx, int midiNote, float velocity, float chromaticSemitoneShift)
@@ -640,16 +726,25 @@ namespace Atlas
             auto audio = padAudio[(size_t)padIdx];
             if (audio == nullptr || audio->buffer.getNumSamples() <= 4) return;
 
+            // Жестко глушим предыдущие голоса этого же пэда, чтобы предотвратить наслоение громкости
+            for (auto& v : voices)
+            {
+                if (v.active && v.padIndex == padIdx && !v.releasing)
+                {
+                    v.releasing = true;
+                }
+            }
+
             SynthVoice* chosen = nullptr;
             for (auto& v : voices)
             {
-                if (!v.active || v.releasing)
+                if (!v.active)
                 {
                     chosen = &v;
                     break;
                 }
             }
-            if (chosen == nullptr) chosen = &voices[0];
+            if (chosen == nullptr) chosen = &voices[0]; 
 
             int totalFrames = audio->buffer.getNumSamples();
             int startFrame = juce::jlimit(0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
