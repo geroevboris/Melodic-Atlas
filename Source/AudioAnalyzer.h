@@ -10,7 +10,8 @@ namespace Atlas
                                 juce::AudioFormatManager& formatManager,
                                 SampleRecord& outRecord)
         {
-            std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                formatManager.createReaderFor(file));
             if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0)
                 return false;
 
@@ -48,8 +49,11 @@ namespace Atlas
                 if (a > peak)
                     peak = a;
 
-                if (i > 0 && ((data[i - 1] >= 0.0f && s < 0.0f) || (data[i - 1] < 0.0f && s >= 0.0f)))
+                if (i > 0 && ((data[i - 1] >= 0.0f && s < 0.0f) ||
+                              (data[i - 1] < 0.0f && s >= 0.0f)))
+                {
                     ++zeroCrossings;
+                }
 
                 if (i < quarterLen)
                     envFirstQuarter += a;
@@ -94,7 +98,8 @@ namespace Atlas
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
-            outRecord.normGainLinear = juce::jlimit(0.15f, 3.0f, 0.22f / std::max(0.02f, rms));
+            outRecord.normGainLinear = juce::jlimit(
+                0.15f, 3.0f, 0.22f / std::max(0.02f, rms));
 
             outRecord.spectralCentroidNorm = brightnessNorm;
             outRecord.attackRatio = attackRatio;
@@ -104,7 +109,7 @@ namespace Atlas
                 0.5f * (1.0f - confidence) + 0.5f * std::abs(attackRatio - 0.5f) * 1.6f);
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, 1.0f - confidence);
 
-            classifySample(lowerName, outRecord);
+            classifySample(file, outRecord);
             return true;
         }
 
@@ -114,16 +119,23 @@ namespace Atlas
             if (n == 0)
                 return;
 
-            // Центры созвездий, формирующие диагональную галактику (как в XO)
+            // Перепроверяем классификацию с учётом путей папок (исправляет духовые в кэше)
+            for (size_t i = 0; i < n; ++i)
+            {
+                if (records[i].file.getFullPathName().isNotEmpty())
+                    classifySample(records[i].file, records[i]);
+            }
+
+            // Центры созвездий, формирующие диагональную туманность
             static const float clusterAnchors[8][3] = {
-                { 0.22f, 0.36f, 0.45f }, // Keys (x, y, угол наклона рукава)
+                { 0.22f, 0.36f,  0.45f }, // Keys
                 { 0.38f, 0.62f, -0.35f }, // Synth
-                { 0.28f, 0.72f, 0.25f }, // Bass
+                { 0.28f, 0.72f,  0.25f }, // Bass
                 { 0.50f, 0.45f, -0.50f }, // Vocal
-                { 0.63f, 0.34f, 0.40f }, // Strings
+                { 0.63f, 0.34f,  0.40f }, // Strings & Winds
                 { 0.74f, 0.48f, -0.20f }, // Guitar
-                { 0.68f, 0.68f, 0.30f }, // FX
-                { 0.52f, 0.58f, 0.00f }  // Other
+                { 0.68f, 0.68f,  0.30f }, // FX
+                { 0.52f, 0.58f,  0.00f }  // Other
             };
 
             juce::Random rng(1337);
@@ -136,15 +148,12 @@ namespace Atlas
                 float ay = clusterAnchors[cIdx][1];
                 float armAngle = clusterAnchors[cIdx][2];
 
-                // Мягкое гауссово облако без вылетов в жесткую рамку
                 float u1 = juce::jlimit(0.002f, 0.998f, rng.nextFloat());
                 float u2 = rng.nextFloat();
                 float gaussR = std::sqrt(-2.0f * std::log(u1));
-                // Ограничиваем радиус плавным гиперболическим тангенсом вместо жесткого обрезания
                 float softR = 0.17f * std::tanh(gaussR * 0.55f);
                 float theta = 2.0f * juce::MathConstants<float>::pi * u2;
 
-                // Эллиптический разброс вдоль рукава созвездия
                 float localX = softR * std::cos(theta) * 1.25f;
                 float localY = softR * std::sin(theta) * 0.72f;
 
@@ -153,14 +162,12 @@ namespace Atlas
                 float rotX = localX * cosA - localY * sinA;
                 float rotY = localX * sinA + localY * cosA;
 
-                // Смещение внутри созвездия по акустическим признакам
                 float featX = (r.spectralCentroidNorm - 0.5f) * 0.14f;
                 float featY = (r.pitchMobilityNorm - 0.5f) * 0.14f;
 
                 float rawX = ax + rotX + featX;
                 float rawY = ay + rotY + featY;
 
-                // Радиальное мягкое сжатие к центру экрана (убирает квадратные края!)
                 float dx = rawX - 0.5f;
                 float dy = rawY - 0.5f;
                 float distFromCenter = std::sqrt(dx * dx + dy * dy);
@@ -185,12 +192,177 @@ namespace Atlas
             }
         }
 
+        static void classifySample(const juce::File& file, SampleRecord& r)
+        {
+            juce::String lowerName = file.getFileNameWithoutExtension().toLowerCase();
+            juce::File p1 = file.getParentDirectory();
+            juce::File p2 = p1.getParentDirectory();
+            juce::File p3 = p2.getParentDirectory();
+
+            // Объединяем имя файла и 3 папки выше для точного определения по директориям
+            juce::String searchCtx = lowerName + " " +
+                                     p1.getFileName().toLowerCase() + " " +
+                                     p2.getFileName().toLowerCase() + " " +
+                                     p3.getFileName().toLowerCase();
+
+            auto hasAny = [&](std::initializer_list<const char*> words) -> bool
+            {
+                for (const char* w : words)
+                {
+                    if (searchCtx.contains(w))
+                        return true;
+                }
+                return false;
+            };
+
+            // 1. Сначала проверяем явные эффекты в имени самого файла
+            bool explicitFxInName = lowerName.contains("riser") ||
+                                    lowerName.contains("downlifter") ||
+                                    lowerName.contains("uplifter") ||
+                                    lowerName.contains("sweep") ||
+                                    lowerName.contains("whoosh") ||
+                                    lowerName.contains("impact") ||
+                                    lowerName.contains("foley") ||
+                                    lowerName.contains("sfx") ||
+                                    lowerName.contains("laser") ||
+                                    lowerName.contains("zap");
+
+            if (explicitFxInName)
+            {
+                r.cluster = ClusterGroup::FX;
+            }
+            else if (hasAny({ "bass", "sub", "808", "reese", "donk" }))
+            {
+                r.cluster = ClusterGroup::Bass;
+            }
+            else if (hasAny({ "vox", "vocal", "choir", "voice", "chant",
+                              "adlib", "speech", "acappella", "singer" }))
+            {
+                r.cluster = ClusterGroup::Vocal;
+            }
+            else if (hasAny({ "string", "cello", "violin", "viola", "contrabass",
+                              "orchestra", "orch", "brass", "horn", "sax",
+                              "trumpet", "trombone", "tuba", "flute", "piccolo",
+                              "oboe", "clarinet", "bassoon", "woodwind", "winds",
+                              "wind", "harmonica", "accordion", "duduk", "erhu",
+                              "ensemble", "symphon" }))
+            {
+                // Все струнные, медные и деревянные духовые направляем в оркестровый кластер
+                r.cluster = ClusterGroup::Strings;
+            }
+            else if (hasAny({ "guitar", "gtr", "strum", "ukulele", "banjo",
+                              "mandolin", "harpe", "harp", "lute", "sitar", "koto" }))
+            {
+                r.cluster = ClusterGroup::Guitar;
+            }
+            else if (hasAny({ "key", "rhodes", "piano", "wurli", "organ", "clav",
+                              "harpsichord", "marimba", "kalimba", "xylophone",
+                              "vibraphone", "vibes", "celesta", "glock", "mallet",
+                              "epiano", "grand", "upright", "toy_piano" }))
+            {
+                r.cluster = ClusterGroup::Keys;
+            }
+            else if (hasAny({ "synth", "pad", "lead", "arp", "acid", "saw",
+                              "square", "pluck", "chord", "stab", "poly",
+                              "analog", "modular", "juno", "prophet", "serum",
+                              "diva", "sylenth", "massive", "oberheim", "moog" }))
+            {
+                r.cluster = ClusterGroup::Synth;
+            }
+            else if (hasAny({ "fx", "hit", "noise", "glitch", "siren",
+                              "alarm", "atmos", "ambience", "drone", "texture" }))
+            {
+                r.cluster = ClusterGroup::FX;
+            }
+            else
+            {
+                // Если в имени и папках нет подсказок, решаем по акустике (не сваливая всё в FX)
+                if (r.pitchConfidence < 0.30f && r.harmonicRoughness > 0.68f)
+                    r.cluster = ClusterGroup::FX;
+                else if (r.spectralCentroidNorm < 0.26f)
+                    r.cluster = ClusterGroup::Bass;
+                else if (r.attackRatio > 0.65f)
+                    r.cluster = ClusterGroup::Keys;
+                else
+                    r.cluster = ClusterGroup::Synth;
+            }
+
+            uint32_t mask = Sub_None;
+
+            if (r.harmonicRoughness < 0.25f)
+                mask |= Sub_Clean;
+            else
+                mask |= Sub_Noisy;
+
+            if (r.spectralCentroidNorm < 0.48f ||
+                hasAny({ "brass", "horn", "sax", "warm", "analog", "trombone" }))
+            {
+                mask |= Sub_Warm;
+            }
+
+            if (r.attackRatio > 0.62f ||
+                hasAny({ "pluck", "pizz", "chop", "stacc", "spicc", "short" }))
+            {
+                mask |= Sub_Pluck;
+            }
+            else
+            {
+                mask |= Sub_Sustain;
+            }
+
+            if (lowerName.contains("pad") ||
+                (r.cluster == ClusterGroup::Synth && (mask & Sub_Sustain) &&
+                 !lowerName.contains("lead")))
+            {
+                mask |= Sub_Pad;
+            }
+
+            if (lowerName.contains("lead") || lowerName.contains("acid") ||
+                (r.cluster == ClusterGroup::Synth && r.spectralCentroidNorm > 0.6f))
+            {
+                mask |= Sub_Lead;
+            }
+
+            if (lowerName.contains("riser") || lowerName.contains("sweep") ||
+                lowerName.contains("uplifter"))
+            {
+                mask |= Sub_RiserSweep;
+            }
+
+            if (lowerName.contains("impact") || lowerName.contains("hit") ||
+                (r.cluster == ClusterGroup::FX && (mask & Sub_Pluck)))
+            {
+                mask |= Sub_ImpactHit;
+            }
+
+            if (lowerName.contains("sub") ||
+                (r.cluster == ClusterGroup::Bass && r.spectralCentroidNorm < 0.28f))
+            {
+                mask |= Sub_SubBass;
+            }
+
+            if (lowerName.contains("bell") || lowerName.contains("metal") ||
+                (r.cluster == ClusterGroup::FX && (mask & Sub_Pluck)))
+            {
+                mask |= Sub_BellMetallic;
+            }
+
+            if (lowerName.contains("texture") || lowerName.contains("gran") ||
+                lowerName.contains("air") || r.pitchMobilityNorm > 0.58f)
+            {
+                mask |= Sub_Textural;
+            }
+
+            r.subMask = mask;
+        }
+
     private:
         static void detectPitchAutocorr(const float* data, int numSamples, double sr,
                                          int& outMidi, float& outConf)
         {
             const int window = std::min(numSamples, 2048);
-            const int startOffset = std::min(std::max(0, numSamples / 6), numSamples - window);
+            const int startOffset = std::min(
+                std::max(0, numSamples / 6), numSamples - window);
             const float* seg = data + startOffset;
 
             int minLag = std::max(8, (int)(sr / 1000.0));
@@ -218,7 +390,8 @@ namespace Atlas
             }
 
             float freq = (float)(sr / (double)std::max(1, bestLag));
-            int midi = (int)std::round(69.0f + 12.0f * std::log2(std::max(20.0f, freq) / 440.0f));
+            int midi = (int)std::round(
+                69.0f + 12.0f * std::log2(std::max(20.0f, freq) / 440.0f));
             outMidi = juce::jlimit(24, 96, midi);
             outConf = juce::jlimit(0.1f, 0.98f, bestCorr);
         }
@@ -253,76 +426,6 @@ namespace Atlas
                     break;
                 }
             }
-        }
-
-        static void classifySample(const juce::String& lowerName, SampleRecord& r)
-        {
-            if (lowerName.contains("key") || lowerName.contains("rhodes") ||
-                lowerName.contains("piano") || lowerName.contains("wurli"))
-                r.cluster = ClusterGroup::Keys;
-            else if (lowerName.contains("bass") || lowerName.contains("sub") ||
-                     lowerName.contains("808") || lowerName.contains("reese"))
-                r.cluster = ClusterGroup::Bass;
-            else if (lowerName.contains("vox") || lowerName.contains("vocal") ||
-                     lowerName.contains("choir") || lowerName.contains("voice"))
-                r.cluster = ClusterGroup::Vocal;
-            else if (lowerName.contains("string") || lowerName.contains("cello") ||
-                     lowerName.contains("violin") || lowerName.contains("viola"))
-                r.cluster = ClusterGroup::Strings;
-            else if (lowerName.contains("guitar") || lowerName.contains("gtr") ||
-                     lowerName.contains("strum"))
-                r.cluster = ClusterGroup::Guitar;
-            else if (lowerName.contains("synth") || lowerName.contains("pad") ||
-                     lowerName.contains("lead") || lowerName.contains("arp") ||
-                     lowerName.contains("acid"))
-                r.cluster = ClusterGroup::Synth;
-            else
-                r.cluster = ClusterGroup::FX;
-
-            uint32_t mask = Sub_None;
-
-            if (r.harmonicRoughness < 0.25f)
-                mask |= Sub_Clean;
-            else
-                mask |= Sub_Noisy;
-
-            if (r.spectralCentroidNorm < 0.48f)
-                mask |= Sub_Warm;
-
-            if (r.attackRatio > 0.62f || lowerName.contains("pluck") ||
-                lowerName.contains("pizz") || lowerName.contains("chop"))
-                mask |= Sub_Pluck;
-            else
-                mask |= Sub_Sustain;
-
-            if (lowerName.contains("pad") ||
-                (r.cluster == ClusterGroup::Synth && (mask & Sub_Sustain) && !lowerName.contains("lead")))
-                mask |= Sub_Pad;
-
-            if (lowerName.contains("lead") || lowerName.contains("acid") ||
-                (r.cluster == ClusterGroup::Synth && r.spectralCentroidNorm > 0.6f))
-                mask |= Sub_Lead;
-
-            if (lowerName.contains("riser") || lowerName.contains("sweep"))
-                mask |= Sub_RiserSweep;
-
-            if (lowerName.contains("impact") || lowerName.contains("hit") ||
-                (r.cluster == ClusterGroup::FX && (mask & Sub_Pluck)))
-                mask |= Sub_ImpactHit;
-
-            if (lowerName.contains("sub") ||
-                (r.cluster == ClusterGroup::Bass && r.spectralCentroidNorm < 0.28f))
-                mask |= Sub_SubBass;
-
-            if (lowerName.contains("bell") || lowerName.contains("metal") ||
-                (r.cluster == ClusterGroup::FX && (mask & Sub_Pluck)))
-                mask |= Sub_BellMetallic;
-
-            if (lowerName.contains("texture") || lowerName.contains("gran") ||
-                lowerName.contains("air") || r.pitchMobilityNorm > 0.58f)
-                mask |= Sub_Textural;
-
-            r.subMask = mask;
         }
     };
 }
