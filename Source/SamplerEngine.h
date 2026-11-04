@@ -7,7 +7,7 @@ namespace Atlas
     struct CachedAudioData
     {
         juce::AudioBuffer<float> buffer;
-        double sampleRate = 44100.0;
+        double sampleRate = 48000.0;
         std::vector<float> waveformPeaks;
     };
 
@@ -28,7 +28,7 @@ namespace Atlas
         void prepare(double sampleRate, int samplesPerBlock)
         {
             const juce::ScopedLock sl(engineLock);
-            currentSampleRate = (sampleRate > 0.0) ? sampleRate : 44100.0;
+            currentSampleRate = (sampleRate > 0.0) ? sampleRate : 48000.0;
 
             juce::dsp::ProcessSpec spec;
             spec.sampleRate = currentSampleRate;
@@ -36,11 +36,15 @@ namespace Atlas
             spec.numChannels = 2;
 
             mapReverb.prepare(spec);
+            mapReverb.reset();
             bankReverb.prepare(spec);
+            bankReverb.reset();
             updateReverbParameters();
 
             mapRevBuffer.setSize(2, std::max(512, samplesPerBlock * 2));
             bankRevBuffer.setSize(2, std::max(512, samplesPerBlock * 2));
+            mapRevBuffer.clear();
+            bankRevBuffer.clear();
         }
 
         void setSampleDatabase(const std::vector<SampleRecord>* dbPtr)
@@ -56,7 +60,7 @@ namespace Atlas
             projectScale = scale;
             pitchMode = pMode;
             octaveShift = octShift;
-            currentBpm = std::max(40.0, bpm);
+            currentBpm = juce::jlimit(40.0, 300.0, bpm);
             syncBpm = bpmLocked;
         }
 
@@ -68,32 +72,34 @@ namespace Atlas
             glideTimeSec = juce::jlimit(0.0f, 1.0f, glideSec);
             mapReverbAmt = juce::jlimit(0.0f, 1.0f, mapRev);
             bankReverbAmt = juce::jlimit(0.0f, 1.0f, bankRev);
-            previewPitchSemitones = previewTuneSemis;
+            previewPitchSemitones = juce::jlimit(-24.0f, 24.0f, previewTuneSemis);
             transposeQuality = tQuality;
-            masterGainLinear = juce::Decibels::decibelsToGain(masterDb, -60.0f);
+            masterGainLinear = juce::Decibels::decibelsToGain(
+                juce::jlimit(-48.0f, 12.0f, masterDb), -60.0f);
             updateReverbParameters();
         }
 
-        // --- ВОСПРОИЗВЕДЕНИЕ С КАРТЫ (ТОЛЬКО ПОКА НАЖАТА ЛКМ) ---
         void startPreview(int sampleIdx, const SampleRecord& rec)
         {
             auto audio = loadOrGetAudio(rec.file);
-            if (audio == nullptr || audio->buffer.getNumSamples() <= 4)
+            if (audio == nullptr || audio->buffer.getNumSamples() <= 8)
                 return;
 
             const juce::ScopedLock sl(engineLock);
 
-            int prevSlot = activePreviewSlot;
-            
-            // Если предыдущий звук играл, уводим его в мягкую тишину (анти-клик 5мс)
-            if (previewVoices[prevSlot].active && !previewVoices[prevSlot].fadingOut)
+            // Уводим все предыдущие голоса предпрослушки в мягкий фейд-аут (12 мс)
+            float fadeOutSamples = (float)std::max(32.0, currentSampleRate * 0.012);
+            for (int s = 0; s < 4; ++s)
             {
-                previewVoices[prevSlot].fadingOut = true;
-                float fadeSamples = (float)std::max(10.0, currentSampleRate * 0.005);
-                previewVoices[prevSlot].fadeOutStep = previewVoices[prevSlot].envGain / fadeSamples;
+                if (previewVoices[s].active && !previewVoices[s].fadingOut)
+                {
+                    previewVoices[s].fadingOut = true;
+                    previewVoices[s].fadeOutStep =
+                        std::max(0.0005f, previewVoices[s].envGain / fadeOutSamples);
+                }
             }
 
-            activePreviewSlot = 1 - prevSlot;
+            activePreviewSlot = (activePreviewSlot + 1) % 4;
             auto& v = previewVoices[activePreviewSlot];
 
             v.audio = audio;
@@ -103,34 +109,39 @@ namespace Atlas
             v.active = true;
             v.fadingOut = false;
             v.envGain = 0.0f;
-            
-            // Быстрая атака (3мс)
-            float fadeInSamples = (float)std::max(10.0, currentSampleRate * 0.003);
+
+            float fadeInSamples = (float)std::max(24.0, currentSampleRate * 0.004);
             v.fadeInStep = 1.0f / fadeInSamples;
         }
 
-        // Остановка звука (запускается, когда пользователь отпускает ЛКМ)
         void stopPreview()
         {
             const juce::ScopedLock sl(engineLock);
-            auto& v = previewVoices[activePreviewSlot];
-            if (v.active && !v.fadingOut)
+            float fadeSamples = (float)std::max(48.0, currentSampleRate * 0.018);
+            for (int s = 0; s < 4; ++s)
             {
-                v.fadingOut = true;
-                float fadeSamples = (float)std::max(10.0, currentSampleRate * 0.02); // Мягкий релиз 20мс
-                v.fadeOutStep = v.envGain / fadeSamples;
+                auto& v = previewVoices[s];
+                if (v.active && !v.fadingOut)
+                {
+                    v.fadingOut = true;
+                    v.fadeOutStep = std::max(0.0002f, v.envGain / fadeSamples);
+                }
             }
         }
 
-        void assignSampleToPad(int padIdx, int sampleIdx, const SampleRecord& rec, bool savePadHistory = true)
+        void assignSampleToPad(int padIdx, int sampleIdx,
+                               const SampleRecord& rec, bool savePadHistory = true)
         {
-            if (padIdx < 0 || padIdx >= 12) return;
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
             auto audio = loadOrGetAudio(rec.file);
 
             const juce::ScopedLock sl(engineLock);
             auto& st = padStates[(size_t)padIdx];
 
-            if (savePadHistory && st.sampleIndex >= 0 && padRecords[(size_t)padIdx].file.existsAsFile())
+            if (savePadHistory && st.sampleIndex >= 0 &&
+                padRecords[(size_t)padIdx].file.existsAsFile())
             {
                 PadHistoryEntry entry;
                 entry.sampleIndex = st.sampleIndex;
@@ -147,7 +158,7 @@ namespace Atlas
                 entry.decaySec = st.decaySec;
                 entry.sustainLvl = st.sustainLvl;
                 entry.releaseSec = st.releaseSec;
-                
+
                 st.history.push_back(entry);
                 if (st.history.size() > 24)
                     st.history.erase(st.history.begin());
@@ -156,12 +167,15 @@ namespace Atlas
             bool anyChromatic = false;
             for (int i = 0; i < 12; ++i)
             {
-                if (padStates[(size_t)i].sampleIndex >= 0 && padStates[(size_t)i].chromaticActive)
+                if (padStates[(size_t)i].sampleIndex >= 0 &&
+                    padStates[(size_t)i].chromaticActive)
+                {
                     anyChromatic = true;
+                }
             }
 
             st.sampleIndex = sampleIdx;
-            if (!anyChromatic) 
+            if (!anyChromatic)
                 st.chromaticActive = true;
 
             padRecords[(size_t)padIdx] = rec;
@@ -171,9 +185,12 @@ namespace Atlas
         void undoPadSample(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
-            if (padIdx < 0 || padIdx >= 12) return;
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
             auto& st = padStates[(size_t)padIdx];
-            if (st.history.empty()) return;
+            if (st.history.empty())
+                return;
 
             auto last = st.history.back();
             st.history.pop_back();
@@ -205,18 +222,23 @@ namespace Atlas
                 padStates[(size_t)i].settingsViewOpen = false;
                 padAudio[(size_t)i].reset();
             }
-            for (auto& v : voices) 
+            for (auto& v : voices)
                 v.active = false;
         }
 
         void clearPad(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
-            if (padIdx >= 0 && padIdx < 12) 
+            if (padIdx >= 0 && padIdx < 12)
             {
                 padStates[(size_t)padIdx].sampleIndex = -1;
                 padStates[(size_t)padIdx].settingsViewOpen = false;
                 padAudio[(size_t)padIdx].reset();
+                for (auto& v : voices)
+                {
+                    if (v.active && v.padIndex == padIdx)
+                        v.releasing = true;
+                }
             }
         }
 
@@ -251,64 +273,72 @@ namespace Atlas
             }
         }
 
-        PadSlotState& getPadState(int idx)             { return padStates[(size_t)juce::jlimit(0, 11, idx)]; }
-        const PadSlotState& getPadState(int idx) const { return padStates[(size_t)juce::jlimit(0, 11, idx)]; }
+        PadSlotState& getPadState(int idx)
+        {
+            return padStates[(size_t)juce::jlimit(0, 11, idx)];
+        }
+
+        const PadSlotState& getPadState(int idx) const
+        {
+            return padStates[(size_t)juce::jlimit(0, 11, idx)];
+        }
 
         const SampleRecord* getPadRecord(int idx) const
         {
-            if (idx < 0 || idx >= 12 || padStates[(size_t)idx].sampleIndex < 0) return nullptr;
+            if (idx < 0 || idx >= 12 || padStates[(size_t)idx].sampleIndex < 0)
+                return nullptr;
             return &padRecords[(size_t)idx];
         }
 
         std::shared_ptr<CachedAudioData> getPadAudio(int idx) const
         {
-            if (idx < 0 || idx >= 12 || padStates[(size_t)idx].sampleIndex < 0) return nullptr;
+            if (idx < 0 || idx >= 12 || padStates[(size_t)idx].sampleIndex < 0)
+                return nullptr;
             return padAudio[(size_t)idx];
         }
 
-        // --- ВОСПРОИЗВЕДЕНИЕ С ПЭДОВ ---
         void triggerPadFromUI(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
-            if (padIdx < 0 || padIdx >= 12) return;
-            
-            // Жестко глушим предыдущий голос этого пэда (Anti-click)
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
             for (auto& v : voices)
             {
                 if (v.active && v.padIndex == padIdx && !v.releasing)
-                {
                     v.releasing = true;
-                }
             }
             triggerPadVoice(padIdx, 60, 0.9f, 0.0f);
         }
 
-        // Запускает релиз, когда пользователь отжимает мышь от пэда
         void releasePadFromUI(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
             for (auto& v : voices)
             {
-                if (v.active && !v.releasing && v.padIndex == padIdx)
-                {
+                if (v.active && !v.releasing && (padIdx < 0 || v.padIndex == padIdx))
                     v.releasing = true;
-                }
             }
         }
 
-        uint32_t getActivePlayingPadsMask() const { return activePadsBitmask.load(); }
+        uint32_t getActivePlayingPadsMask() const
+        {
+            return activePadsBitmask.load();
+        }
 
         juce::File renderPadForExport(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
-            if (padIdx < 0 || padIdx >= 12) return {};
+            if (padIdx < 0 || padIdx >= 12)
+                return {};
 
             const auto& st = padStates[(size_t)padIdx];
-            if (st.sampleIndex < 0) return {};
+            if (st.sampleIndex < 0)
+                return {};
 
             const auto& rec = padRecords[(size_t)padIdx];
             auto audio = padAudio[(size_t)padIdx];
-            if (audio == nullptr || audio->buffer.getNumSamples() <= 4)
+            if (audio == nullptr || audio->buffer.getNumSamples() <= 8)
                 return rec.file;
 
             if (!st.exportProcessed)
@@ -317,25 +347,30 @@ namespace Atlas
             const int srcTotalSamples = audio->buffer.getNumSamples();
             const double sr = (audio->sampleRate > 0.0) ? audio->sampleRate : currentSampleRate;
 
-            int startSample = juce::jlimit(0, srcTotalSamples - 2, (int)std::floor(st.regionStart * (float)srcTotalSamples));
-            int endSample   = juce::jlimit(startSample + 2, srcTotalSamples, (int)std::ceil(st.regionEnd * (float)srcTotalSamples));
-            int regionLen   = endSample - startSample;
+            int startSample = juce::jlimit(
+                0, srcTotalSamples - 2,
+                (int)std::floor(st.regionStart * (float)srcTotalSamples));
+            int endSample = juce::jlimit(
+                startSample + 2, srcTotalSamples,
+                (int)std::ceil(st.regionEnd * (float)srcTotalSamples));
+            int regionLen = endSample - startSample;
 
             double totalSemis = (double)st.semitoneOffset + (double)st.centOffset * 0.01;
             if (rec.isLoop && syncBpm && rec.detectedBpm > 40.0)
             {
                 double bpmRatio = currentBpm / rec.detectedBpm;
-                totalSemis += 12.0 * std::log2(std::max(0.25, std::min(4.0, bpmRatio)));
+                totalSemis += 12.0 * std::log2(juce::jlimit(0.25, 4.0, bpmRatio));
             }
 
-            double speedRatio = std::pow(2.0, totalSemis / 12.0);
-            speedRatio = juce::jlimit(0.125, 8.0, speedRatio);
-
+            double speedRatio = juce::jlimit(0.125, 8.0, std::pow(2.0, totalSemis / 12.0));
             int outSamples = std::max(64, (int)std::ceil((double)regionLen / speedRatio));
+
             juce::AudioBuffer<float> outBuf(2, outSamples);
             outBuf.clear();
 
-            float gainLin = juce::jlimit(0.0f, 10.0f, juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear);
+            float gainLin = juce::jlimit(
+                0.0f, 8.0f,
+                juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear);
             float panAngle = (st.pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
             float gainL = std::cos(panAngle) * gainLin;
             float gainR = std::sin(panAngle) * gainLin;
@@ -348,16 +383,15 @@ namespace Atlas
             float* dstR = outBuf.getWritePointer(1);
 
             int fadeInLen  = std::min(outSamples / 4, std::max(32, (int)(st.attackSec * sr)));
-            int fadeOutLen = std::min(outSamples / 3, std::max(64, (int)(0.015 * sr))); 
+            int fadeOutLen = std::min(outSamples / 3, std::max(64, (int)(0.015 * sr)));
 
             double readPos = (double)startSample;
             for (int i = 0; i < outSamples; ++i)
             {
-                int idx0 = (int)readPos;
-                int idx1 = std::min(endSample - 1, idx0 + 1);
-                float frac = (float)(readPos - (double)idx0);
+                int idx0 = juce::jlimit(startSample, endSample - 1, (int)readPos);
+                int idx1 = juce::jlimit(startSample, endSample - 1, idx0 + 1);
+                float frac = juce::jlimit(0.0f, 1.0f, (float)(readPos - (double)idx0));
 
-                idx0 = juce::jlimit(startSample, endSample - 1, idx0);
                 float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
                 float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
 
@@ -371,21 +405,27 @@ namespace Atlas
                 dstR[i] = sR * gainR * env;
 
                 readPos += speedRatio;
-                if (readPos >= (double)endSample) break;
+                if (readPos >= (double)(endSample - 1))
+                    break;
             }
 
-            juce::File exportDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("MelodicAtlas_Export");
+            juce::File exportDir = juce::File::getSpecialLocation(
+                juce::File::tempDirectory).getChildFile("MelodicAtlas_Export");
             exportDir.createDirectory();
 
-            juce::String noteTag = MusicMath::formatPadNoteAndCents(rec.pitchClass, st.semitoneOffset, st.centOffset).replaceCharacter(' ', '_').replaceCharacter('#', 's');
+            juce::String noteTag = MusicMath::formatPadNoteAndCents(
+                rec.pitchClass, st.semitoneOffset, st.centOffset)
+                .replaceCharacter(' ', '_').replaceCharacter('#', 's');
             juce::String outName = rec.name + "_" + noteTag + "_Proc.wav";
             juce::File outFile = exportDir.getChildFile(juce::File::createLegalFileName(outName));
-            if (outFile.existsAsFile()) outFile.deleteFile();
+            if (outFile.existsAsFile())
+                outFile.deleteFile();
 
             juce::WavAudioFormat wavFormat;
             if (auto stream = std::unique_ptr<juce::FileOutputStream>(outFile.createOutputStream()))
             {
-                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>(wavFormat.createWriterFor(stream.get(), sr, 2, 24, {}, 0)))
+                if (auto writer = std::unique_ptr<juce::AudioFormatWriter>(
+                    wavFormat.createWriterFor(stream.get(), sr, 2, 24, {}, 0)))
                 {
                     stream.release();
                     writer->writeFromAudioSampleBuffer(outBuf, 0, outSamples);
@@ -395,7 +435,8 @@ namespace Atlas
             return rec.file;
         }
 
-        void renderNextBlock(juce::AudioBuffer<float>& outputBuffer, const juce::MidiBuffer& midiMessages)
+        void renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
+                             const juce::MidiBuffer& midiMessages)
         {
             const juce::ScopedLock sl(engineLock);
 
@@ -403,233 +444,331 @@ namespace Atlas
             {
                 const auto msg = metadata.getMessage();
                 if (msg.isNoteOn())
-                {
                     handleMidiNoteOn(msg.getNoteNumber(), msg.getFloatVelocity());
-                }
                 else if (msg.isNoteOff())
-                {
                     handleMidiNoteOff(msg.getNoteNumber());
-                }
                 else if (msg.isAllNotesOff() || msg.isAllSoundOff())
                 {
-                    for (auto& v : voices) v.releasing = true;
+                    for (auto& v : voices)
+                        v.releasing = true;
                 }
             }
 
             const int numSamples = outputBuffer.getNumSamples();
-            if (numSamples <= 0) return;
+            if (numSamples <= 0)
+                return;
 
-            mapRevBuffer.clear();
-            bankRevBuffer.clear();
+            if (mapRevBuffer.getNumSamples() < numSamples)
+                mapRevBuffer.setSize(2, numSamples, false, false, true);
+            if (bankRevBuffer.getNumSamples() < numSamples)
+                bankRevBuffer.setSize(2, numSamples, false, false, true);
+
+            mapRevBuffer.clear(0, numSamples);
+            bankRevBuffer.clear(0, numSamples);
 
             float* outL = outputBuffer.getWritePointer(0);
-            float* outR = outputBuffer.getNumChannels() > 1 ? outputBuffer.getWritePointer(1) : outL;
+            float* outR = outputBuffer.getNumChannels() > 1
+                        ? outputBuffer.getWritePointer(1) : outL;
             float* mapRevL = mapRevBuffer.getWritePointer(0);
             float* mapRevR = mapRevBuffer.getWritePointer(1);
             float* bankRevL = bankRevBuffer.getWritePointer(0);
             float* bankRevR = bankRevBuffer.getWritePointer(1);
 
             float safeMasterGain = juce::jlimit(0.0f, 4.0f, masterGainLinear);
+            if (!std::isfinite(safeMasterGain))
+                safeMasterGain = 1.0f;
 
-            // 1. ПРЕДПРОСЛУШКА НА КАРТЕ
-            for (int slot = 0; slot < 2; ++slot)
+            // 1. ПРЕДПРОСЛУШКА НА КАРТЕ (4-голосный пул без выхода за пределы буфера)
+            for (int slot = 0; slot < 4; ++slot)
             {
                 auto& pv = previewVoices[slot];
-                if (!pv.active || pv.audio == nullptr) continue;
+                if (!pv.active || pv.audio == nullptr)
+                    continue;
 
                 const auto& buf = pv.audio->buffer;
                 const int totalFrames = buf.getNumSamples();
+                if (totalFrames <= 4)
+                {
+                    pv.active = false;
+                    continue;
+                }
+
                 const float* srcL = buf.getReadPointer(0);
                 const float* srcR = buf.getNumChannels() > 1 ? buf.getReadPointer(1) : srcL;
 
-                int semiShift = MusicMath::calculatePitchShift(pv.record.pitchClass, projectKeyRoot, projectScale, pitchMode, octaveShift);
-                double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * (pv.audio->sampleRate / std::max(1.0, currentSampleRate));
-                
-                // ЗАЩИТА: Ограничение питча
-                step = juce::jlimit(0.05, 20.0, step); 
+                int semiShift = MusicMath::calculatePitchShift(
+                    pv.record.pitchClass, projectKeyRoot, projectScale, pitchMode, octaveShift);
+                double srRatio = pv.audio->sampleRate / std::max(8000.0, currentSampleRate);
+                double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * srRatio;
 
                 if (pv.record.isLoop && syncBpm && pv.record.detectedBpm > 40.0)
-                    step *= juce::jlimit(0.25, 4.0, currentBpm / pv.record.detectedBpm);
+                    step *= juce::jlimit(0.5, 2.0, currentBpm / pv.record.detectedBpm);
+
+                step = juce::jlimit(0.05, 8.0, step);
+                const int tailStartFrame = std::max(0, totalFrames - 256);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
                     if (!pv.fadingOut && pv.envGain < 1.0f)
-                    {
                         pv.envGain = std::min(1.0f, pv.envGain + pv.fadeInStep);
-                    }
 
                     if (pv.fadingOut)
                     {
                         pv.envGain -= pv.fadeOutStep;
-                        if (pv.envGain <= 0.0001f || std::isnan(pv.envGain)) 
-                        { 
-                            pv.envGain = 0.0f; 
-                            pv.active = false; 
-                            break; 
+                        if (pv.envGain <= 0.0001f || !std::isfinite(pv.envGain))
+                        {
+                            pv.envGain = 0.0f;
+                            pv.active = false;
+                            break;
                         }
                     }
 
                     int idx0 = (int)pv.position;
-                    // Если дошли до конца файла, а мышка еще зажата (fadingOut = false) -> крутим луп.
-                    if (idx0 >= totalFrames - 1)
+                    if (idx0 >= totalFrames - 2)
                     {
-                        if (pv.record.isLoop && !pv.fadingOut) 
-                        { 
-                            pv.position = std::fmod(pv.position, (double)(totalFrames - 1)); 
-                            idx0 = (int)pv.position; 
+                        if (pv.record.isLoop && !pv.fadingOut)
+                        {
+                            pv.position = std::fmod(pv.position, (double)(totalFrames - 2));
+                            if (pv.position < 0.0 || !std::isfinite(pv.position))
+                                pv.position = 0.0;
+                            idx0 = (int)pv.position;
                         }
-                        else 
-                        { 
-                            pv.fadingOut = true; 
-                            pv.fadeOutStep = pv.envGain / std::max(1.0f, (float)(currentSampleRate * 0.01)); 
+                        else
+                        {
+                            // Конец файла: немедленно выключаем голос, не читая за границей!
+                            pv.envGain = 0.0f;
+                            pv.active = false;
+                            break;
                         }
                     }
 
-                    int idx1 = std::min(totalFrames - 1, idx0 + 1);
-                    float frac = (float)(pv.position - (double)idx0);
-                    
+                    // Плавное затухание в самом конце ван-шота против щелчка
+                    float endWindow = 1.0f;
+                    if (!pv.record.isLoop && idx0 > tailStartFrame)
+                    {
+                        endWindow = (float)(totalFrames - 2 - idx0) /
+                                    (float)std::max(1, totalFrames - 2 - tailStartFrame);
+                        endWindow = juce::jlimit(0.0f, 1.0f, endWindow);
+                    }
+
+                    idx0 = juce::jlimit(0, totalFrames - 2, idx0);
+                    int idx1 = idx0 + 1;
+                    float frac = juce::jlimit(0.0f, 1.0f, (float)(pv.position - (double)idx0));
+
                     float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
                     float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
-                    
-                    // ЗАЩИТА: Проверка на NaN
-                    if (std::isnan(sL) || std::isnan(sR)) { sL = 0.0f; sR = 0.0f; } 
+                    if (!std::isfinite(sL) || !std::isfinite(sR))
+                    {
+                        sL = 0.0f;
+                        sR = 0.0f;
+                    }
 
-                    float gain = pv.envGain * pv.record.normGainLinear * 0.75f;
-                    outL[i] += sL * gain; outR[i] += sR * gain;
-                    mapRevL[i] += sL * gain; mapRevR[i] += sR * gain;
+                    float gain = pv.envGain * endWindow *
+                                 juce::jlimit(0.1f, 3.0f, pv.record.normGainLinear) * 0.70f;
+                    outL[i] += sL * gain;
+                    outR[i] += sR * gain;
+                    mapRevL[i] += sL * gain;
+                    mapRevR[i] += sR * gain;
 
                     pv.position += step;
                 }
             }
 
-            // 2. ГОЛОСА ПЭДОВ
+            // 2. ГОЛОСА ПЭДОВ (Строгая защита границ региона и ADSR)
             uint32_t playingMask = 0;
             for (auto& v : voices)
             {
-                if (!v.active || v.audio == nullptr || v.padIndex < 0 || v.padIndex >= 12) continue;
+                if (!v.active || v.audio == nullptr || v.padIndex < 0 || v.padIndex >= 12)
+                    continue;
 
                 const auto& st = padStates[(size_t)v.padIndex];
                 const auto& rec = padRecords[(size_t)v.padIndex];
                 const auto& buf = v.audio->buffer;
                 const int totalFrames = buf.getNumSamples();
+                if (totalFrames <= 4)
+                {
+                    v.active = false;
+                    continue;
+                }
 
-                int startFrame = juce::jlimit(0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
-                int endFrame   = juce::jlimit(startFrame + 2, totalFrames, (int)(st.regionEnd * (float)totalFrames));
+                int startFrame = juce::jlimit(
+                    0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
+                int endFrame = juce::jlimit(
+                    startFrame + 2, totalFrames, (int)(st.regionEnd * (float)totalFrames));
 
                 const float* srcL = buf.getReadPointer(0);
                 const float* srcR = buf.getNumChannels() > 1 ? buf.getReadPointer(1) : srcL;
 
-                float padGain = juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) * rec.normGainLinear * v.velocity;
-                padGain = juce::jlimit(0.0f, 4.0f, padGain); 
-                
-                float panAngle = (st.pan + 1.0f) * 0.5f * juce::MathConstants<float>::halfPi;
+                float padGain = juce::Decibels::decibelsToGain(st.volumeDb, -60.0f) *
+                                juce::jlimit(0.1f, 3.0f, rec.normGainLinear) * v.velocity;
+                padGain = juce::jlimit(0.0f, 3.5f, padGain);
+
+                float panAngle = (juce::jlimit(-1.0f, 1.0f, st.pan) + 1.0f) *
+                                 0.5f * juce::MathConstants<float>::halfPi;
                 float gainL = std::cos(panAngle) * padGain;
                 float gainR = std::sin(panAngle) * padGain;
 
-                // БЕЗОПАСНЫЙ РАСЧЕТ ШАГОВ ADSR (предотвращает деление на 0)
-                float safeAtt = std::max(0.001f, st.attackSec);
-                float safeDec = std::max(0.001f, st.decaySec);
-                float safeRel = std::max(0.005f, st.releaseSec); // Минимум 5мс релиз
+                float safeAtt = juce::jlimit(0.002f, 5.0f, st.attackSec);
+                float safeDec = juce::jlimit(0.005f, 10.0f, st.decaySec);
+                float safeSus = juce::jlimit(0.0f, 1.0f, st.sustainLvl);
+                float safeRel = juce::jlimit(0.008f, 10.0f, st.releaseSec);
 
                 float attStep = (float)(1.0 / (currentSampleRate * safeAtt));
-                float decStep = (float)((1.0 - st.sustainLvl) / (currentSampleRate * safeDec));
+                float decStep = (float)((1.0 - safeSus) / (currentSampleRate * safeDec));
                 float relStep = (float)(1.0 / (currentSampleRate * safeRel));
 
-                double glideCoeff = (glideTimeSec > 0.002f) ? (1.0 - std::exp(-1.0 / (currentSampleRate * glideTimeSec))) : 1.0;
-                double srRatio = v.audio->sampleRate / std::max(1.0, currentSampleRate);
+                double glideCoeff = (glideTimeSec > 0.002f)
+                    ? (1.0 - std::exp(-1.0 / (currentSampleRate * glideTimeSec))) : 1.0;
+                double srRatio = v.audio->sampleRate / std::max(8000.0, currentSampleRate);
+
+                int tailGuardStart = std::max(startFrame, endFrame - 256);
 
                 for (int i = 0; i < numSamples; ++i)
                 {
                     v.currentNoteShift += (v.targetNoteShift - v.currentNoteShift) * glideCoeff;
-                    double totalSemis = (double)st.semitoneOffset + (double)st.centOffset * 0.01 + v.currentNoteShift;
-                    double step = std::pow(2.0, totalSemis / 12.0) * srRatio;
-                    
-                    step = juce::jlimit(0.01, 20.0, step); // ЗАЩИТА ПИТЧА
+                    double totalSemis = (double)st.semitoneOffset +
+                                        (double)st.centOffset * 0.01 + v.currentNoteShift;
+
+                    double step = std::pow(2.0, juce::jlimit(-48.0, 48.0, totalSemis) / 12.0) * srRatio;
+                    if (rec.isLoop && syncBpm && rec.detectedBpm > 40.0)
+                        step *= juce::jlimit(0.5, 2.0, currentBpm / rec.detectedBpm);
+
+                    step = juce::jlimit(0.05, 8.0, step);
 
                     if (v.releasing)
                     {
                         v.envLevel -= relStep;
-                        if (v.envLevel <= 0.0001f || std::isnan(v.envLevel)) 
-                        { 
-                            v.envLevel = 0.0f; 
-                            v.active = false; 
-                            break; 
+                        if (v.envLevel <= 0.0001f || !std::isfinite(v.envLevel))
+                        {
+                            v.envLevel = 0.0f;
+                            v.active = false;
+                            break;
                         }
                     }
                     else if (v.inAttack)
                     {
                         v.envLevel += attStep;
-                        if (v.envLevel >= 1.0f || std::isnan(v.envLevel)) 
-                        { 
-                            v.envLevel = 1.0f; 
-                            v.inAttack = false; 
+                        if (v.envLevel >= 1.0f || !std::isfinite(v.envLevel))
+                        {
+                            v.envLevel = 1.0f;
+                            v.inAttack = false;
                         }
                     }
                     else
                     {
-                        v.envLevel = std::max(st.sustainLvl, v.envLevel - decStep);
+                        v.envLevel = std::max(safeSus, v.envLevel - decStep);
                     }
 
                     int idx0 = (int)v.position;
-                    if (idx0 >= endFrame - 1)
+                    if (idx0 >= endFrame - 2)
                     {
-                        // Луп крутится, пока клавиша зажата (!v.releasing)
-                        if (rec.isLoop && !v.releasing) 
-                        { 
-                            v.position = (double)startFrame; 
-                            idx0 = startFrame; 
+                        if (rec.isLoop && !v.releasing)
+                        {
+                            v.position = (double)startFrame;
+                            idx0 = startFrame;
                         }
-                        else 
-                        { 
-                            v.releasing = true; 
-                        } 
+                        else
+                        {
+                            // Дошли до конца региона: выключаем голос без чтения за границей!
+                            v.envLevel = 0.0f;
+                            v.active = false;
+                            break;
+                        }
                     }
 
-                    int idx1 = std::min(endFrame - 1, idx0 + 1);
-                    float frac = (float)(v.position - (double)idx0);
+                    float endWindow = 1.0f;
+                    if ((!rec.isLoop || v.releasing) && idx0 > tailGuardStart)
+                    {
+                        endWindow = (float)(endFrame - 2 - idx0) /
+                                    (float)std::max(1, endFrame - 2 - tailGuardStart);
+                        endWindow = juce::jlimit(0.0f, 1.0f, endWindow);
+                    }
+
+                    idx0 = juce::jlimit(startFrame, endFrame - 2, idx0);
+                    int idx1 = idx0 + 1;
+                    float frac = juce::jlimit(0.0f, 1.0f, (float)(v.position - (double)idx0));
 
                     float sL = srcL[idx0] + frac * (srcL[idx1] - srcL[idx0]);
                     float sR = srcR[idx0] + frac * (srcR[idx1] - srcR[idx0]);
-                    if (std::isnan(sL) || std::isnan(sR)) { sL = 0.0f; sR = 0.0f; }
+                    if (!std::isfinite(sL) || !std::isfinite(sR))
+                    {
+                        sL = 0.0f;
+                        sR = 0.0f;
+                    }
 
-                    float l = sL * gainL * v.envLevel;
-                    float r = sR * gainR * v.envLevel;
+                    float env = v.envLevel * endWindow;
+                    float l = sL * gainL * env;
+                    float r = sR * gainR * env;
 
-                    outL[i] += l; outR[i] += r;
-                    bankRevL[i] += l; bankRevR[i] += r;
+                    outL[i] += l;
+                    outR[i] += r;
+                    bankRevL[i] += l;
+                    bankRevR[i] += r;
 
                     v.position += step;
                 }
-                if (v.active && !v.releasing) playingMask |= (1u << v.padIndex);
+
+                if (v.active && !v.releasing)
+                    playingMask |= (1u << v.padIndex);
             }
             activePadsBitmask.store(playingMask);
 
-            // Реверберация
+            // 3. РЕВЕРБЕРАЦИЯ С ЗАЩИТОЙ ОТ NaN
             if (mapReverbAmt > 0.005f)
             {
-                juce::dsp::AudioBlock<float> block(mapRevBuffer.getArrayOfWritePointers(), 2, (size_t)numSamples);
+                sanitizeBuffer(mapRevBuffer, numSamples);
+                juce::dsp::AudioBlock<float> block(
+                    mapRevBuffer.getArrayOfWritePointers(), 2, (size_t)numSamples);
                 mapReverb.process(juce::dsp::ProcessContextReplacing<float>(block));
-                for (int i = 0; i < numSamples; ++i) { outL[i] += mapRevL[i]; outR[i] += mapRevR[i]; }
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (std::isfinite(mapRevL[i]) && std::isfinite(mapRevR[i]))
+                    {
+                        outL[i] += mapRevL[i];
+                        outR[i] += mapRevR[i];
+                    }
+                    else
+                    {
+                        mapReverb.reset();
+                        break;
+                    }
+                }
             }
 
             if (bankReverbAmt > 0.005f)
             {
-                juce::dsp::AudioBlock<float> block(bankRevBuffer.getArrayOfWritePointers(), 2, (size_t)numSamples);
+                sanitizeBuffer(bankRevBuffer, numSamples);
+                juce::dsp::AudioBlock<float> block(
+                    bankRevBuffer.getArrayOfWritePointers(), 2, (size_t)numSamples);
                 bankReverb.process(juce::dsp::ProcessContextReplacing<float>(block));
-                for (int i = 0; i < numSamples; ++i) { outL[i] += bankRevL[i]; outR[i] += bankRevR[i]; }
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (std::isfinite(bankRevL[i]) && std::isfinite(bankRevR[i]))
+                    {
+                        outL[i] += bankRevL[i];
+                        outR[i] += bankRevR[i];
+                    }
+                    else
+                    {
+                        bankReverb.reset();
+                        break;
+                    }
+                }
             }
 
-            // ФИНАЛЬНЫЙ ЛИМИТЕР: Мгновенное гашение NaN и софт-клип
+            // 4. ФИНАЛЬНЫЙ МАСТЕР-ВЫХОД
             for (int i = 0; i < numSamples; ++i)
             {
                 float safeL = outL[i] * safeMasterGain;
                 float safeR = outR[i] * safeMasterGain;
-                
-                if (std::isnan(safeL) || std::isinf(safeL)) safeL = 0.0f;
-                if (std::isnan(safeR) || std::isinf(safeR)) safeR = 0.0f;
-                
-                outL[i] = std::tanh(safeL);
-                outR[i] = std::tanh(safeR);
+
+                if (!std::isfinite(safeL))
+                    safeL = 0.0f;
+                if (!std::isfinite(safeR))
+                    safeR = 0.0f;
+
+                outL[i] = std::tanh(juce::jlimit(-8.0f, 8.0f, safeL));
+                outR[i] = std::tanh(juce::jlimit(-8.0f, 8.0f, safeR));
             }
         }
 
@@ -662,14 +801,35 @@ namespace Atlas
             std::shared_ptr<CachedAudioData> audio;
         };
 
+        static void sanitizeBuffer(juce::AudioBuffer<float>& buf, int numSamples)
+        {
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            {
+                float* d = buf.getWritePointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (!std::isfinite(d[i]) || std::abs(d[i]) > 16.0f)
+                        d[i] = 0.0f;
+                }
+            }
+        }
+
         void updateReverbParameters()
         {
             juce::dsp::Reverb::Parameters mp;
-            mp.roomSize = 0.68f; mp.damping = 0.42f; mp.wetLevel = mapReverbAmt * 0.55f; mp.dryLevel = 0.0f; mp.width = 0.95f;
+            mp.roomSize = 0.65f;
+            mp.damping = 0.45f;
+            mp.wetLevel = mapReverbAmt * 0.45f;
+            mp.dryLevel = 0.0f;
+            mp.width = 0.95f;
             mapReverb.setParameters(mp);
 
             juce::dsp::Reverb::Parameters bp;
-            bp.roomSize = 0.72f; bp.damping = 0.38f; bp.wetLevel = bankReverbAmt * 0.58f; bp.dryLevel = 0.0f; bp.width = 1.0f;
+            bp.roomSize = 0.68f;
+            bp.damping = 0.42f;
+            bp.wetLevel = bankReverbAmt * 0.48f;
+            bp.dryLevel = 0.0f;
+            bp.width = 1.0f;
             bankReverb.setParameters(bp);
         }
 
@@ -677,21 +837,25 @@ namespace Atlas
         {
             if (bankMode == BankMode::PadTrigger)
             {
-                triggerPadVoice(((midiNote % 12) + 12) % 12, midiNote, velocity, 0.0f);
+                int padIdx = ((midiNote % 12) + 12) % 12;
+                triggerPadVoice(padIdx, midiNote, velocity, 0.0f);
             }
             else
             {
                 int baseNote = (midiNote < 48) ? 36 : 60;
                 float chromShift = (float)(midiNote - baseNote);
                 bool triggered = false;
+
                 for (int i = 0; i < 12; ++i)
                 {
-                    if (padStates[(size_t)i].sampleIndex >= 0 && padStates[(size_t)i].chromaticActive)
+                    if (padStates[(size_t)i].sampleIndex >= 0 &&
+                        padStates[(size_t)i].chromaticActive)
                     {
                         triggerPadVoice(i, midiNote, velocity, chromShift);
                         triggered = true;
                     }
                 }
+
                 if (!triggered)
                 {
                     for (int i = 0; i < 12; ++i)
@@ -704,6 +868,7 @@ namespace Atlas
                     }
                 }
             }
+
             lastPlayedChromaticShift = (float)(midiNote - ((midiNote < 48) ? 36 : 60));
             hasLastChromaticNote = true;
         }
@@ -717,22 +882,24 @@ namespace Atlas
             }
         }
 
-        void triggerPadVoice(int padIdx, int midiNote, float velocity, float chromaticSemitoneShift)
+        void triggerPadVoice(int padIdx, int midiNote,
+                             float velocity, float chromaticSemitoneShift)
         {
-            if (padIdx < 0 || padIdx >= 12) return;
+            if (padIdx < 0 || padIdx >= 12)
+                return;
+
             const auto& st = padStates[(size_t)padIdx];
-            if (st.sampleIndex < 0) return;
+            if (st.sampleIndex < 0)
+                return;
 
             auto audio = padAudio[(size_t)padIdx];
-            if (audio == nullptr || audio->buffer.getNumSamples() <= 4) return;
+            if (audio == nullptr || audio->buffer.getNumSamples() <= 8)
+                return;
 
-            // Жестко глушим предыдущие голоса этого же пэда, чтобы предотвратить наслоение громкости
             for (auto& v : voices)
             {
-                if (v.active && v.padIndex == padIdx && !v.releasing)
-                {
+                if (v.active && v.padIndex == padIdx && v.midiNote == midiNote && !v.releasing)
                     v.releasing = true;
-                }
             }
 
             SynthVoice* chosen = nullptr;
@@ -744,10 +911,25 @@ namespace Atlas
                     break;
                 }
             }
-            if (chosen == nullptr) chosen = &voices[0]; 
+
+            if (chosen == nullptr)
+            {
+                for (auto& v : voices)
+                {
+                    if (v.releasing)
+                    {
+                        chosen = &v;
+                        break;
+                    }
+                }
+            }
+
+            if (chosen == nullptr)
+                chosen = &voices[0];
 
             int totalFrames = audio->buffer.getNumSamples();
-            int startFrame = juce::jlimit(0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
+            int startFrame = juce::jlimit(
+                0, totalFrames - 2, (int)(st.regionStart * (float)totalFrames));
 
             chosen->active = true;
             chosen->inAttack = true;
@@ -758,29 +940,38 @@ namespace Atlas
             chosen->envLevel = 0.0f;
             chosen->position = (double)startFrame;
             chosen->targetNoteShift = (double)chromaticSemitoneShift;
-            chosen->currentNoteShift = (hasLastChromaticNote && glideTimeSec > 0.005f) ? (double)lastPlayedChromaticShift : (double)chromaticSemitoneShift;
+            chosen->currentNoteShift = (hasLastChromaticNote && glideTimeSec > 0.005f)
+                ? (double)lastPlayedChromaticShift : (double)chromaticSemitoneShift;
             chosen->audio = audio;
         }
 
         std::shared_ptr<CachedAudioData> loadOrGetAudio(const juce::File& file)
         {
-            if (!file.existsAsFile()) return nullptr;
-            juce::String path = file.getFullPathName();
+            if (!file.existsAsFile())
+                return nullptr;
 
+            juce::String path = file.getFullPathName();
             {
                 const juce::ScopedLock sl(cacheLock);
                 auto it = audioCache.find(path);
-                if (it != audioCache.end()) return it->second;
+                if (it != audioCache.end())
+                    return it->second;
             }
 
-            std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-            if (reader == nullptr || reader->lengthInSamples <= 0) return nullptr;
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                formatManager.createReaderFor(file));
+            if (reader == nullptr || reader->lengthInSamples <= 8 || reader->sampleRate <= 0.0)
+                return nullptr;
 
             auto data = std::make_shared<CachedAudioData>();
             data->sampleRate = reader->sampleRate;
-            int numSamples = (int)std::min<juce::int64>(reader->lengthInSamples, (juce::int64)(reader->sampleRate * 30.0));
+            int numSamples = (int)std::min<juce::int64>(
+                reader->lengthInSamples, (juce::int64)(reader->sampleRate * 30.0));
+
             data->buffer.setSize(2, numSamples);
+            data->buffer.clear();
             reader->read(&data->buffer, 0, numSamples, 0, true, true);
+            sanitizeBuffer(data->buffer, numSamples);
 
             const int numPeaks = 64;
             data->waveformPeaks.resize((size_t)numPeaks, 0.0f);
@@ -792,13 +983,15 @@ namespace Atlas
                 float maxVal = 0.0f;
                 int start = p * samplesPerPeak;
                 int end = std::min(numSamples, start + samplesPerPeak);
-                for (int i = start; i < end; ++i) maxVal = std::max(maxVal, std::abs(ch0[i]));
+                for (int i = start; i < end; ++i)
+                    maxVal = std::max(maxVal, std::abs(ch0[i]));
                 data->waveformPeaks[(size_t)p] = juce::jlimit(0.05f, 1.0f, maxVal);
             }
 
             {
                 const juce::ScopedLock sl(cacheLock);
-                if (audioCache.size() > 256) audioCache.clear();
+                if (audioCache.size() > 256)
+                    audioCache.clear();
                 audioCache[path] = data;
             }
             return data;
@@ -810,7 +1003,7 @@ namespace Atlas
         std::unordered_map<juce::String, std::shared_ptr<CachedAudioData>> audioCache;
 
         const std::vector<SampleRecord>* database = nullptr;
-        double currentSampleRate = 44100.0;
+        double currentSampleRate = 48000.0;
 
         int projectKeyRoot = 9;
         ScaleType projectScale = ScaleType::NaturalMinor;
@@ -830,7 +1023,7 @@ namespace Atlas
         float lastPlayedChromaticShift = 0.0f;
         bool hasLastChromaticNote = false;
 
-        AuditionVoice previewVoices[2];
+        AuditionVoice previewVoices[4];
         int activePreviewSlot = 0;
 
         std::array<PadSlotState, 12> padStates;
