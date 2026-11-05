@@ -18,9 +18,11 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
 
 MelodicAtlasAudioProcessor::~MelodicAtlasAudioProcessor()
 {
-    // Never forcibly terminate the scanner while it may still access members.
-    // A slow or disconnected drive can delay shutdown until an I/O call returns.
-    stopThread();
+    // Request cooperative cancellation and wait for the worker to exit.
+    // Do not forcibly terminate a thread that may be accessing members.
+    // A blocked disk read may delay destruction until it returns.
+    signalThreadShouldExit();
+    waitForThreadToExit(-1);
 }
 
 void MelodicAtlasAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
