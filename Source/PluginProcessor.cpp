@@ -331,6 +331,12 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("acousticHigh", rec.acoustic.highBandRatio, nullptr);
         item.setProperty("acousticOnset", rec.acoustic.onsetActivity, nullptr);
         item.setProperty("acousticSustain", rec.acoustic.sustainRatio, nullptr);
+        item.setProperty("tonalValid", rec.tonal.valid, nullptr);
+        item.setProperty("tonalWindows", rec.tonal.validWindowCount, nullptr);
+        item.setProperty("tonalPeriodicity", rec.tonal.periodicity, nullptr);
+        item.setProperty("tonalStability", rec.tonal.pitchStability, nullptr);
+        item.setProperty("tonalDeviation", rec.tonal.pitchDeviationSemitones, nullptr);
+        item.setProperty("tonalMidi", rec.tonal.estimatedMidi, nullptr);
         item.setProperty("characterMask", (int)rec.characterMask, nullptr);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             item.setProperty("char" + juce::String((int)feature),
@@ -423,6 +429,17 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             (float)item.getProperty("acousticOnset", 0.0f);
         rec.acoustic.sustainRatio =
             (float)item.getProperty("acousticSustain", 0.0f);
+        rec.tonal.valid = (bool)item.getProperty("tonalValid", false);
+        rec.tonal.validWindowCount = juce::jlimit(
+            0, 3, (int)item.getProperty("tonalWindows", 0));
+        rec.tonal.periodicity = juce::jlimit(
+            0.0f, 1.0f, (float)item.getProperty("tonalPeriodicity", 0.0f));
+        rec.tonal.pitchStability = juce::jlimit(
+            0.0f, 1.0f, (float)item.getProperty("tonalStability", 0.0f));
+        rec.tonal.pitchDeviationSemitones =
+            (float)item.getProperty("tonalDeviation", 0.0f);
+        rec.tonal.estimatedMidi =
+            (float)item.getProperty("tonalMidi", 0.0f);
         rec.characterMask = (uint32_t)(int)item.getProperty("characterMask", 0);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             rec.characterScores[feature] = juce::jlimit(
