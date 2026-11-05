@@ -389,7 +389,12 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
     if (!folder.isDirectory())
         return;
 
-    stopThread(2000);
+    // Do not replace the scan folder while a previous worker may still be using it.
+    // stopThread() can time out; a timed-out worker must be allowed to finish
+    // before starting a new scan.
+    if (!stopThread(2000))
+        return;
+
     folderToScan = folder;
     scanning.store(true);
     scanProgress.store(0.0f);
