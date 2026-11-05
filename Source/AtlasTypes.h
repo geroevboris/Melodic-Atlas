@@ -168,6 +168,7 @@ namespace Atlas
         // classifier is validated; these fields do not change current UI.
         IdentityState identityState = IdentityState::NotEvaluated;
         PercussionState percussionState = PercussionState::NotEvaluated;
+        float percussionConfidence = 0.0f;
         float identityConfidence = 0.0f;
         AcousticFeatures acoustic;
         TonalFeatures tonal;
