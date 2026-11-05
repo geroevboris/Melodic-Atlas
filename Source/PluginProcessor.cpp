@@ -7,7 +7,8 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
       juce::Thread("MelodicAtlasScannerThread")
 {
     formatManager.registerBasicFormats();
-    samplerEngine.setSampleDatabase(&sampleDatabase);
+    publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>();
+    samplerEngine.setSampleDatabase(publishedDatabase);
 
     if (!loadDatabaseCacheFromDisk())
     {
@@ -379,7 +380,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
-    samplerEngine.setSampleDatabase(&sampleDatabase);
+    publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+    samplerEngine.setSampleDatabase(publishedDatabase);
     databaseVersion.fetch_add(1);
     return true;
 }
@@ -434,7 +436,8 @@ void MelodicAtlasAudioProcessor::run()
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
-            samplerEngine.setSampleDatabase(&sampleDatabase);
+            publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+            samplerEngine.setSampleDatabase(publishedDatabase);
             databaseVersion.fetch_add(1);
         }
         saveDatabaseCacheToDisk();
@@ -646,6 +649,12 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
             st.sustainLvl = (float)padNode.getProperty("sus", 1.0f);
             st.releaseSec = (float)padNode.getProperty("rel", 0.05f);
         }
+
+        // State restoration may have appended files absent from the scan cache.
+        // Publish only after all pad restoration work completes.
+        publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
     }
 }
 
