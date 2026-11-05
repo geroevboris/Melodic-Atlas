@@ -3,6 +3,7 @@
 #include "AcousticFeatureExtractor.h"
 #include "TonalFeatureExtractor.h"
 #include "CharacterAnalyzer.h"
+#include "PercussionGate.h"
 
 namespace Atlas
 {
@@ -130,6 +131,7 @@ namespace Atlas
 
             classifySample(file, outRecord);
             CharacterAnalyzer::evaluate(outRecord);
+            PercussionGate::evaluate(outRecord);
             return true;
         }
 
