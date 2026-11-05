@@ -18,7 +18,9 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
 
 MelodicAtlasAudioProcessor::~MelodicAtlasAudioProcessor()
 {
-    stopThread(4000);
+    // Never forcibly terminate the scanner while it may still access members.
+    // A slow or disconnected drive can delay shutdown until an I/O call returns.
+    stopThread();
 }
 
 void MelodicAtlasAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -397,10 +399,11 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
     if (!folder.isDirectory())
         return;
 
-    // Do not replace the scan folder while a previous worker may still be using it.
-    // stopThread() can time out; a timed-out worker must be allowed to finish
-    // before starting a new scan.
-    if (!stopThread(2000))
+    // Request cancellation without forcibly killing the scanner.
+    // If it is blocked on disk I/O, leave the current scan alone and let
+    // the user try again after the worker has exited.
+    signalThreadShouldExit();
+    if (!waitForThreadToExit(2000))
         return;
 
     folderToScan = folder;
