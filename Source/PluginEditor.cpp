@@ -167,6 +167,9 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     groupFilterRects[0] = { gx, row1Y, allW, 24.0f };
     gx += allW + 6.0f;
 
+    btnDiscover = { gx, row1Y, 25.0f, 24.0f };
+    gx += 31.0f;
+
     for (int c = 0; c < 8; ++c)
     {
         auto cg = static_cast<Atlas::ClusterGroup>(c);
@@ -395,6 +398,15 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.setColour(allOn ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(monoBold);
     g.drawText("ALL", groupFilterRects[0], juce::Justification::centred, false);
+
+    // A small die-shaped Discover control alongside the filter choices.
+    g.setColour(juce::Colour(0xff28313f));
+    g.fillRoundedRectangle(btnDiscover, 4.0f);
+    g.setColour(juce::Colour(0xff91b6cd));
+    g.drawRoundedRectangle(btnDiscover, 4.0f, 1.0f);
+    auto die = btnDiscover.reduced(7.0f, 6.0f);
+    g.drawRoundedRectangle(die, 2.0f, 1.0f);
+    g.fillEllipse(die.getCentreX() - 1.5f, die.getCentreY() - 1.5f, 3.0f, 3.0f);
 
     for (int c = 0; c < 8; ++c)
     {
@@ -1414,6 +1426,12 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
 {
     auto pt = e.position;
 
+    if (btnDiscover.contains(pt))
+    {
+        discoverRandomFilter();
+        return;
+    }
+
     if (groupFilterRects[0].contains(pt))
     {
         selectedClustersMask = 0;
@@ -1522,6 +1540,56 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
                 repaint();
             }
         });
+}
+
+void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
+{
+    // Pick a real sample first, then derive a strict, nonempty filter
+    // combination from its tags. Never require the user to loosen AND logic.
+    const auto snapshot = audioProcessor.getSampleDatabaseSnapshot();
+    if (!snapshot || snapshot->empty())
+        return;
+
+    auto& rng = juce::Random::getSystemRandom();
+    const uint32_t availableFlags[] = {
+        Atlas::Character_Dark, Atlas::Character_Bright,
+        Atlas::Character_Warm, Atlas::Character_Clean,
+        Atlas::Character_Noisy, Atlas::Character_Pluck,
+        Atlas::Character_Sustain, Atlas::Character_Textural
+    };
+
+    for (int attempt = 0; attempt < 80; ++attempt)
+    {
+        const auto& rec = (*snapshot)[(size_t)rng.nextInt((int)snapshot->size())];
+        const int group = (int)rec.cluster;
+        if (group < 0 || group >= 7)
+            continue;
+
+        const uint32_t tags = rec.acoustic.valid
+            ? rec.characterMask : rec.subMask;
+        uint32_t choices[8] {};
+        int count = 0;
+        for (uint32_t flag : availableFlags)
+            if ((tags & flag) != 0)
+                choices[count++] = flag;
+        if (count == 0)
+            continue;
+
+        selectedClustersMask = (1u << group);
+        selectedClusterSubgroupBit.fill(0);
+        const int firstIndex = rng.nextInt(count);
+        selectedMoodMask = choices[firstIndex];
+        if (count > 1 && rng.nextBool())
+        {
+            const int secondIndex = (firstIndex + 1 + rng.nextInt(count - 1)) % count;
+            selectedMoodMask |= choices[secondIndex];
+        }
+
+        updateDynamicLayoutRects();
+        applyCurrentFiltersToMap();
+        repaint();
+        return;
+    }
 }
 
 void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
