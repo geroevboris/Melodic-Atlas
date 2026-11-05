@@ -4,6 +4,7 @@
 #include "TonalFeatureExtractor.h"
 #include "CharacterAnalyzer.h"
 #include "PercussionGate.h"
+#include "SoundIdentityAnalyzer.h"
 
 namespace Atlas
 {
@@ -132,6 +133,7 @@ namespace Atlas
             classifySample(file, outRecord);
             CharacterAnalyzer::evaluate(outRecord);
             PercussionGate::evaluate(outRecord);
+            SoundIdentityAnalyzer::evaluate(file, outRecord);
             return true;
         }
 
