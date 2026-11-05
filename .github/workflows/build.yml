@@ -3,6 +3,8 @@ name: Build Melodic-Atlas VST3/AU
 on:
   push:
     branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 # Автоматически отменяет старые билды в очереди при сохранении следующего файла
