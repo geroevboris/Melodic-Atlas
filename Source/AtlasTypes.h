@@ -115,6 +115,16 @@ namespace Atlas
         float sustainRatio = 0.0f;
     };
 
+    struct TonalFeatures
+    {
+        bool valid = false;
+        int validWindowCount = 0;
+        float periodicity = 0.0f;
+        float pitchStability = 0.0f;
+        float pitchDeviationSemitones = 0.0f;
+        float estimatedMidi = 0.0f;
+    };
+
     struct SampleRecord
     {
         juce::File file;
@@ -144,6 +154,7 @@ namespace Atlas
         PercussionState percussionState = PercussionState::NotEvaluated;
         float identityConfidence = 0.0f;
         AcousticFeatures acoustic;
+        TonalFeatures tonal;
         uint32_t characterMask = 0;
         std::array<float, 9> characterScores {};
         uint32_t subMask = Sub_None;
