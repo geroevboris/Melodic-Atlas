@@ -7,10 +7,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Автоматически отменяет старые билды в очереди при сохранении следующего файла
+# Keep an already-running build alive while developing. In-progress
+# macOS builds must not be cancelled by subsequent branch updates.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
