@@ -1,6 +1,7 @@
 #pragma once
 #include "AtlasTypes.h"
 #include "AcousticFeatureExtractor.h"
+#include "TonalFeatureExtractor.h"
 
 namespace Atlas
 {
@@ -122,6 +123,8 @@ namespace Atlas
                 0.5f * (1.0f - confidence) + 0.5f * std::abs(attackRatio - 0.5f) * 1.6f);
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, 1.0f - confidence);
             outRecord.acoustic = AcousticFeatureExtractor::analyze(
+                downmix.data(), maxSamplesToRead, sr);
+            outRecord.tonal = TonalFeatureExtractor::analyze(
                 downmix.data(), maxSamplesToRead, sr);
 
             classifySample(file, outRecord);
