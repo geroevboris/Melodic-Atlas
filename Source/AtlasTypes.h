@@ -82,6 +82,24 @@ namespace Atlas
         uint32_t flagBit = Sub_None;
     };
 
+    // Identity and percussion decisions are independent. Legacy records
+    // start as NotEvaluated rather than inheriting guesses as trusted labels.
+    enum class IdentityState : int
+    {
+        NotEvaluated = 0,
+        Identified   = 1,
+        Ambiguous    = 2,
+        Unidentified = 3
+    };
+
+    enum class PercussionState : int
+    {
+        NotEvaluated = 0,
+        Melodic      = 1,
+        Percussive   = 2,
+        Uncertain    = 3
+    };
+
     struct SampleRecord
     {
         juce::File file;
@@ -105,6 +123,13 @@ namespace Atlas
         float mapX = 0.5f;
         float mapY = 0.5f;
         ClusterGroup cluster = ClusterGroup::Synth;
+        // Legacy display/category fields remain intact until the new
+        // classifier is validated; these fields do not change current UI.
+        IdentityState identityState = IdentityState::NotEvaluated;
+        PercussionState percussionState = PercussionState::NotEvaluated;
+        float identityConfidence = 0.0f;
+        uint32_t characterMask = 0;
+        std::array<float, 9> characterScores {};
         uint32_t subMask = Sub_None;
         int toneShadeBucket = 1;
     };
