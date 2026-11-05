@@ -42,9 +42,12 @@ public:
     float getScanProgress() const    { return scanProgress.load(); }
     int getScannedCount() const      { return scannedCount.load(); }
 
-    const std::vector<Atlas::SampleRecord>& getSampleDatabase() const
+    // Readers retain their own immutable database snapshot. A scan may
+    // replace the current database without invalidating existing readers.
+    std::shared_ptr<const std::vector<Atlas::SampleRecord>> getSampleDatabaseSnapshot() const
     {
-        return sampleDatabase;
+        const juce::ScopedLock sl(dbLock);
+        return publishedDatabase;
     }
 
     Atlas::SamplerEngine& getSamplerEngine()
@@ -102,9 +105,10 @@ private:
     void generateDemoAtlas();
     juce::File getDatabaseCacheFile() const;
 
-    juce::CriticalSection dbLock;
+    mutable juce::CriticalSection dbLock;
     juce::AudioFormatManager formatManager;
     std::vector<Atlas::SampleRecord> sampleDatabase;
+    std::shared_ptr<const std::vector<Atlas::SampleRecord>> publishedDatabase;
     Atlas::SamplerEngine samplerEngine;
 
     std::vector<Atlas::ProjectSnapshot> undoStack;
