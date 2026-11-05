@@ -2,6 +2,7 @@
 #include "AtlasTypes.h"
 #include "AcousticFeatureExtractor.h"
 #include "TonalFeatureExtractor.h"
+#include "CharacterAnalyzer.h"
 
 namespace Atlas
 {
@@ -128,6 +129,7 @@ namespace Atlas
                 downmix.data(), maxSamplesToRead, sr);
 
             classifySample(file, outRecord);
+            CharacterAnalyzer::evaluate(outRecord);
             return true;
         }
 
