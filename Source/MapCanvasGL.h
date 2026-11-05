@@ -476,16 +476,9 @@ namespace Atlas
                 const uint32_t tags = rec.acoustic.valid
                     ? rec.characterMask : rec.subMask;
                 const uint32_t matched = tags & activeMoodMask;
-                // One or two selected tags require all requested qualities.
-                // With three or more, allow a partial match rather than
-                // unexpectedly hiding the whole library.
-                const int selectedCount = juce::countNumberOfSetBits(activeMoodMask);
-                if (selectedCount <= 2)
-                {
-                    if (matched != activeMoodMask)
-                        return false;
-                }
-                else if (juce::countNumberOfSetBits(matched) < 2)
+                // Strict intersection: every selected quality must match.
+                // An empty map is an intentional and meaningful result.
+                if (matched != activeMoodMask)
                     return false;
             }
 
