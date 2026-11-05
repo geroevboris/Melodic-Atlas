@@ -468,8 +468,26 @@ namespace Atlas
                     return false;
             }
 
-            if (activeMoodMask != 0 && (rec.subMask & activeMoodMask) == 0)
-                return false;
+            if (activeMoodMask != 0)
+            {
+                // Category selection ORs instrument groups; character tags
+                // independently intersect with those groups (AND).
+                // Unrescanned legacy cache entries retain the old mood tags.
+                const uint32_t tags = rec.acoustic.valid
+                    ? rec.characterMask : rec.subMask;
+                const uint32_t matched = tags & activeMoodMask;
+                // One or two selected tags require all requested qualities.
+                // With three or more, allow a partial match rather than
+                // unexpectedly hiding the whole library.
+                const int selectedCount = juce::countNumberOfSetBits(activeMoodMask);
+                if (selectedCount <= 2)
+                {
+                    if (matched != activeMoodMask)
+                        return false;
+                }
+                else if (juce::countNumberOfSetBits(matched) < 2)
+                    return false;
+            }
 
             return true;
         }
