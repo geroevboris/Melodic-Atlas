@@ -1,5 +1,6 @@
 #pragma once
 #include "AtlasTypes.h"
+#include "AcousticFeatureExtractor.h"
 
 namespace Atlas
 {
@@ -24,11 +25,23 @@ namespace Atlas
             const int maxSamplesToRead = (int)std::min<juce::int64>(
                 reader->lengthInSamples, (juce::int64)(sr * 6.0));
 
-            juce::AudioBuffer<float> buffer(1, maxSamplesToRead);
+            // Retain legacy left-channel data for today's classifier and map,
+            // but measure new acoustic features from a proper mono downmix.
+            const bool stereo = reader->numChannels > 1;
+            juce::AudioBuffer<float> buffer(stereo ? 2 : 1, maxSamplesToRead);
             buffer.clear();
-            reader->read(&buffer, 0, maxSamplesToRead, 0, true, false);
+            if (!reader->read(&buffer, 0, maxSamplesToRead, 0, true, stereo))
+                return false;
 
             const float* data = buffer.getReadPointer(0);
+            std::vector<float> downmix((size_t)maxSamplesToRead);
+            const float* right = stereo ? buffer.getReadPointer(1) : nullptr;
+            for (int i = 0; i < maxSamplesToRead; ++i)
+            {
+                const float a = std::isfinite(data[i]) ? data[i] : 0.0f;
+                const float b = right && std::isfinite(right[i]) ? right[i] : a;
+                downmix[(size_t)i] = 0.5f * (a + b);
+            }
 
             float sumSq = 0.0f;
             float peak = 0.0f;
@@ -108,6 +121,8 @@ namespace Atlas
                 0.06f, 0.94f,
                 0.5f * (1.0f - confidence) + 0.5f * std::abs(attackRatio - 0.5f) * 1.6f);
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, 1.0f - confidence);
+            outRecord.acoustic = AcousticFeatureExtractor::analyze(
+                downmix.data(), maxSamplesToRead, sr);
 
             classifySample(file, outRecord);
             return true;

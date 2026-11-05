@@ -322,6 +322,15 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("identityState", (int)rec.identityState, nullptr);
         item.setProperty("percussionState", (int)rec.percussionState, nullptr);
         item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
+        item.setProperty("acousticValid", rec.acoustic.valid, nullptr);
+        item.setProperty("acousticCentroidHz", rec.acoustic.spectralCentroidHz, nullptr);
+        item.setProperty("acousticCentroidNorm", rec.acoustic.spectralCentroidNorm, nullptr);
+        item.setProperty("acousticFlatness", rec.acoustic.spectralFlatness, nullptr);
+        item.setProperty("acousticLow", rec.acoustic.lowBandRatio, nullptr);
+        item.setProperty("acousticMid", rec.acoustic.midBandRatio, nullptr);
+        item.setProperty("acousticHigh", rec.acoustic.highBandRatio, nullptr);
+        item.setProperty("acousticOnset", rec.acoustic.onsetActivity, nullptr);
+        item.setProperty("acousticSustain", rec.acoustic.sustainRatio, nullptr);
         item.setProperty("characterMask", (int)rec.characterMask, nullptr);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             item.setProperty("char" + juce::String((int)feature),
@@ -397,6 +406,23 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             juce::jlimit(0, 3, (int)item.getProperty("percussionState", 0)));
         rec.identityConfidence = juce::jlimit(
             0.0f, 1.0f, (float)item.getProperty("identityConfidence", 0.0f));
+        rec.acoustic.valid = (bool)item.getProperty("acousticValid", false);
+        rec.acoustic.spectralCentroidHz =
+            (float)item.getProperty("acousticCentroidHz", 0.0f);
+        rec.acoustic.spectralCentroidNorm =
+            (float)item.getProperty("acousticCentroidNorm", 0.0f);
+        rec.acoustic.spectralFlatness =
+            (float)item.getProperty("acousticFlatness", 0.0f);
+        rec.acoustic.lowBandRatio =
+            (float)item.getProperty("acousticLow", 0.0f);
+        rec.acoustic.midBandRatio =
+            (float)item.getProperty("acousticMid", 0.0f);
+        rec.acoustic.highBandRatio =
+            (float)item.getProperty("acousticHigh", 0.0f);
+        rec.acoustic.onsetActivity =
+            (float)item.getProperty("acousticOnset", 0.0f);
+        rec.acoustic.sustainRatio =
+            (float)item.getProperty("acousticSustain", 0.0f);
         rec.characterMask = (uint32_t)(int)item.getProperty("characterMask", 0);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             rec.characterScores[feature] = juce::jlimit(
