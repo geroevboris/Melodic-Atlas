@@ -321,6 +321,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("shade", rec.toneShadeBucket, nullptr);
         item.setProperty("identityState", (int)rec.identityState, nullptr);
         item.setProperty("percussionState", (int)rec.percussionState, nullptr);
+        item.setProperty("percussionConfidence", rec.percussionConfidence, nullptr);
         item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
         item.setProperty("acousticValid", rec.acoustic.valid, nullptr);
         item.setProperty("acousticCentroidHz", rec.acoustic.spectralCentroidHz, nullptr);
@@ -410,6 +411,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             juce::jlimit(0, 3, (int)item.getProperty("identityState", 0)));
         rec.percussionState = static_cast<Atlas::PercussionState>(
             juce::jlimit(0, 3, (int)item.getProperty("percussionState", 0)));
+        rec.percussionConfidence = juce::jlimit(
+            0.0f, 1.0f, (float)item.getProperty("percussionConfidence", 0.0f));
         rec.identityConfidence = juce::jlimit(
             0.0f, 1.0f, (float)item.getProperty("identityConfidence", 0.0f));
         rec.acoustic.valid = (bool)item.getProperty("acousticValid", false);
@@ -440,6 +443,11 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             (float)item.getProperty("tonalDeviation", 0.0f);
         rec.tonal.estimatedMidi =
             (float)item.getProperty("tonalMidi", 0.0f);
+        // When upgrading from a previous v4 cache, compute the gate from
+        // already-measured descriptors rather than re-reading the audio.
+        if (rec.percussionState == Atlas::PercussionState::NotEvaluated &&
+            rec.acoustic.valid && rec.tonal.valid)
+            Atlas::PercussionGate::evaluate(rec);
         rec.characterMask = (uint32_t)(int)item.getProperty("characterMask", 0);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             rec.characterScores[feature] = juce::jlimit(
