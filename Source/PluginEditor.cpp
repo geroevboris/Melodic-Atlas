@@ -431,7 +431,9 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
         }
         else if (selectedMoodMask != 0)
         {
-            const int count = juce::countNumberOfSetBits(selectedMoodMask);
+            int count = 0;
+            for (uint32_t bits = selectedMoodMask; bits != 0; bits &= (bits - 1))
+                ++count;
             juce::String mShort = count == 1
                 ? Atlas::MusicMath::getSubgroupShortLabel(
                     Atlas::ClusterGroup::Other, selectedMoodMask)
