@@ -419,9 +419,12 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
         }
         else if (selectedMoodMask != 0)
         {
-            juce::String mShort = Atlas::MusicMath::getSubgroupShortLabel(
-                Atlas::ClusterGroup::Other, selectedMoodMask);
-            label += mShort.isNotEmpty() ? (":" + mShort) : ":ON";
+            const int count = juce::countNumberOfSetBits(selectedMoodMask);
+            juce::String mShort = count == 1
+                ? Atlas::MusicMath::getSubgroupShortLabel(
+                    Atlas::ClusterGroup::Other, selectedMoodMask)
+                : juce::String(count);
+            label += ":" + mShort;
         }
 
         juce::Colour col = Atlas::MusicMath::getClusterColour(cg, 1);
@@ -1542,7 +1545,11 @@ void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
         {
             if (res >= 1 && res <= (int)options.size())
             {
-                selectedMoodMask = options[(size_t)(res - 1)].flagBit;
+                const uint32_t flag = options[(size_t)(res - 1)].flagBit;
+                if (flag == 0)
+                    selectedMoodMask = 0;
+                else
+                    selectedMoodMask ^= flag;
                 updateDynamicLayoutRects();
                 applyCurrentFiltersToMap();
                 repaint();
