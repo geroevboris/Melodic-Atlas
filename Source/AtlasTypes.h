@@ -75,6 +75,22 @@ namespace Atlas
         Sub_BellMetallic = 1 << 11
     };
 
+    // Character flags form an independent axis from instrument subtypes.
+    // Low six bits intentionally match legacy MOODS selections so saved
+    // project filters keep their meaning during migration.
+    enum CharacterFlags : uint32_t
+    {
+        Character_Clean     = 1u << 0,
+        Character_Noisy     = 1u << 1,
+        Character_Warm      = 1u << 2,
+        Character_Pluck     = 1u << 3,
+        Character_Sustain   = 1u << 4,
+        Character_Textural  = 1u << 6,
+        Character_Dark      = 1u << 12,
+        Character_Bright    = 1u << 13,
+        Character_Rhythmic  = 1u << 14
+    };
+
     struct SubgroupOption
     {
         juce::String fullName;
