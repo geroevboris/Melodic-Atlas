@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             artifact_name: Melodic-Atlas-macOS-Universal
           - os: windows-latest
             artifact_name: Melodic-Atlas-Windows-x64
