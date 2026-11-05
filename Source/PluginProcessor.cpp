@@ -7,7 +7,8 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
       juce::Thread("MelodicAtlasScannerThread")
 {
     formatManager.registerBasicFormats();
-    samplerEngine.setSampleDatabase(&sampleDatabase);
+    publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>();
+    samplerEngine.setSampleDatabase(publishedDatabase);
 
     if (!loadDatabaseCacheFromDisk())
     {
@@ -17,7 +18,11 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
 
 MelodicAtlasAudioProcessor::~MelodicAtlasAudioProcessor()
 {
-    stopThread(4000);
+    // Request cooperative cancellation and wait for the worker to exit.
+    // Do not forcibly terminate a thread that may be accessing members.
+    // A blocked disk read may delay destruction until it returns.
+    signalThreadShouldExit();
+    waitForThreadToExit(-1);
 }
 
 void MelodicAtlasAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -318,7 +323,13 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
     }
 
     if (auto xml = root.createXml())
-        xml->writeTo(getDatabaseCacheFile());
+    {
+        // Write a complete cache before replacing the previous valid version.
+        // A failed/interrupted write must not truncate the existing database.
+        juce::TemporaryFile temporaryCache(getDatabaseCacheFile());
+        if (xml->writeTo(temporaryCache.getFile()))
+            temporaryCache.overwriteTargetFileWithTemporary();
+    }
 }
 
 bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
@@ -379,7 +390,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
-    samplerEngine.setSampleDatabase(&sampleDatabase);
+    publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+    samplerEngine.setSampleDatabase(publishedDatabase);
     databaseVersion.fetch_add(1);
     return true;
 }
@@ -389,7 +401,13 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
     if (!folder.isDirectory())
         return;
 
-    stopThread(2000);
+    // Request cancellation without forcibly killing the scanner.
+    // If it is blocked on disk I/O, leave the current scan alone and let
+    // the user try again after the worker has exited.
+    signalThreadShouldExit();
+    if (!waitForThreadToExit(2000))
+        return;
+
     folderToScan = folder;
     scanning.store(true);
     scanProgress.store(0.0f);
@@ -429,7 +447,8 @@ void MelodicAtlasAudioProcessor::run()
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
-            samplerEngine.setSampleDatabase(&sampleDatabase);
+            publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+            samplerEngine.setSampleDatabase(publishedDatabase);
             databaseVersion.fetch_add(1);
         }
         saveDatabaseCacheToDisk();
@@ -641,6 +660,12 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
             st.sustainLvl = (float)padNode.getProperty("sus", 1.0f);
             st.releaseSec = (float)padNode.getProperty("rel", 0.05f);
         }
+
+        // State restoration may have appended files absent from the scan cache.
+        // Publish only after all pad restoration work completes.
+        publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
     }
 }
 

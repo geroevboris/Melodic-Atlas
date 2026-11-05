@@ -18,9 +18,9 @@ namespace Atlas
             stopTimer();
         }
 
-        void setSampleDatabase(const std::vector<SampleRecord>* dbPtr)
+        void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
-            database = dbPtr;
+            database = std::move(dbSnapshot);
             activeSampleIndex = -1;
             hoveredSampleIndex = -1;
             auditionHistory.clear();
@@ -537,7 +537,7 @@ namespace Atlas
         }
 
         SamplerEngine& samplerEngine;
-        const std::vector<SampleRecord>* database = nullptr;
+        std::shared_ptr<const std::vector<SampleRecord>> database;
 
         bool showLoopsOnly = false;
         uint32_t activeClustersMask = 0;

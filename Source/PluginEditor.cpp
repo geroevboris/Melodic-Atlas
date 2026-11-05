@@ -21,14 +21,14 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     setSize(audioProcessor.savedEditorWidth, audioProcessor.savedEditorHeight);
 
     addAndMakeVisible(mapCanvas);
-    mapCanvas.setSampleDatabase(&audioProcessor.getSampleDatabase());
+    mapCanvas.setSampleDatabase(audioProcessor.getSampleDatabaseSnapshot());
     applyCurrentFiltersToMap();
 
     // Правый клик по точке назначает звук в пэд тихо (без воспроизведения)
     mapCanvas.onSampleRightClicked = [this](int sampleIdx)
     {
-        const auto& db = audioProcessor.getSampleDatabase();
-        if (sampleIdx < 0 || sampleIdx >= (int)db.size())
+        const auto db = audioProcessor.getSampleDatabaseSnapshot();
+        if (sampleIdx < 0 || sampleIdx >= (int)db->size())
             return;
 
         if (selectedPads.empty())
@@ -1794,9 +1794,9 @@ void MelodicAtlasAudioProcessorEditor::handleBankAndRightPanelClick(
         if (padState.sampleIndex < 0)
         {
             int activeMapIdx = mapCanvas.getActiveSampleIndex();
-            const auto& db = audioProcessor.getSampleDatabase();
+            const auto db = audioProcessor.getSampleDatabaseSnapshot();
             if ((plusBtnZone.contains(pt) || e.mods.isPopupMenu()) &&
-                activeMapIdx >= 0 && activeMapIdx < (int)db.size())
+                activeMapIdx >= 0 && activeMapIdx < (int)db->size())
             {
                 audioProcessor.assignSampleToPadWithPreviewSettings(i, activeMapIdx, true);
                 currentlyHeldPadIndex = i;
@@ -1982,7 +1982,7 @@ void MelodicAtlasAudioProcessorEditor::timerCallback()
     if (currentVer != lastSeenDbVersion)
     {
         lastSeenDbVersion = currentVer;
-        mapCanvas.setSampleDatabase(&audioProcessor.getSampleDatabase());
+        mapCanvas.setSampleDatabase(audioProcessor.getSampleDatabaseSnapshot());
         repaint();
     }
 
