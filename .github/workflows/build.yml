@@ -2,7 +2,7 @@ name: Build Melodic-Atlas VST3/AU
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "dev/**" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
