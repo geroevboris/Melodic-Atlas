@@ -319,7 +319,13 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
     }
 
     if (auto xml = root.createXml())
-        xml->writeTo(getDatabaseCacheFile());
+    {
+        // Write a complete cache before replacing the previous valid version.
+        // A failed/interrupted write must not truncate the existing database.
+        juce::TemporaryFile temporaryCache(getDatabaseCacheFile());
+        if (xml->writeTo(temporaryCache.getFile()))
+            temporaryCache.overwriteTargetFileWithTemporary();
+    }
 }
 
 bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
