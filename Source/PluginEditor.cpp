@@ -167,6 +167,9 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     groupFilterRects[0] = { gx, row1Y, allW, 24.0f };
     gx += allW + 6.0f;
 
+    btnDiscover = { gx, row1Y, 25.0f, 24.0f };
+    gx += 31.0f;
+
     for (int c = 0; c < 8; ++c)
     {
         auto cg = static_cast<Atlas::ClusterGroup>(c);
@@ -396,6 +399,15 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.setFont(monoBold);
     g.drawText("ALL", groupFilterRects[0], juce::Justification::centred, false);
 
+    // A small die-shaped Discover control alongside the filter choices.
+    g.setColour(juce::Colour(0xff28313f));
+    g.fillRoundedRectangle(btnDiscover, 4.0f);
+    g.setColour(juce::Colour(0xff91b6cd));
+    g.drawRoundedRectangle(btnDiscover, 4.0f, 1.0f);
+    auto die = btnDiscover.reduced(7.0f, 6.0f);
+    g.drawRoundedRectangle(die, 2.0f, 1.0f);
+    g.fillEllipse(die.getCentreX() - 1.5f, die.getCentreY() - 1.5f, 3.0f, 3.0f);
+
     for (int c = 0; c < 8; ++c)
     {
         auto cg = static_cast<Atlas::ClusterGroup>(c);
@@ -419,9 +431,14 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
         }
         else if (selectedMoodMask != 0)
         {
-            juce::String mShort = Atlas::MusicMath::getSubgroupShortLabel(
-                Atlas::ClusterGroup::Other, selectedMoodMask);
-            label += mShort.isNotEmpty() ? (":" + mShort) : ":ON";
+            int count = 0;
+            for (uint32_t bits = selectedMoodMask; bits != 0; bits &= (bits - 1))
+                ++count;
+            juce::String mShort = count == 1
+                ? Atlas::MusicMath::getSubgroupShortLabel(
+                    Atlas::ClusterGroup::Other, selectedMoodMask)
+                : juce::String(count);
+            label += ":" + mShort;
         }
 
         juce::Colour col = Atlas::MusicMath::getClusterColour(cg, 1);
@@ -1411,6 +1428,12 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
 {
     auto pt = e.position;
 
+    if (btnDiscover.contains(pt))
+    {
+        discoverRandomFilter();
+        return;
+    }
+
     if (groupFilterRects[0].contains(pt))
     {
         selectedClustersMask = 0;
@@ -1521,6 +1544,54 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
         });
 }
 
+void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
+{
+    // The die randomizes the filter itself, not a sample. Empty selections
+    // are valid: this is for unexpected creative searches, not guaranteed hits.
+    auto& rng = juce::Random::getSystemRandom();
+    const uint32_t flags[] = {
+        Atlas::Character_Dark, Atlas::Character_Bright,
+        Atlas::Character_Warm, Atlas::Character_Clean,
+        Atlas::Character_Noisy, Atlas::Character_Pluck,
+        Atlas::Character_Sustain, Atlas::Character_Textural
+    };
+
+    // Usually one instrument category, occasionally all or two categories.
+    selectedClustersMask = 0;
+    const int categoryMode = rng.nextInt(10);
+    if (categoryMode < 8)
+    {
+        const int first = rng.nextInt(7);
+        selectedClustersMask = (1u << first);
+        if (categoryMode == 7)
+        {
+            const int second = (first + 1 + rng.nextInt(6)) % 7;
+            selectedClustersMask |= (1u << second);
+        }
+    }
+
+    selectedClusterSubgroupBit.fill(0);
+    selectedMoodMask = 0;
+
+    // One to three independently selected qualities, with strict AND
+    // semantics. No lookup against sample contents, no relaxed matching.
+    const int qualityCount = 1 + rng.nextInt(3);
+    int selectedCount = 0;
+    while (selectedCount < qualityCount)
+    {
+        const uint32_t flag = flags[rng.nextInt(8)];
+        if ((selectedMoodMask & flag) == 0)
+        {
+            selectedMoodMask |= flag;
+            ++selectedCount;
+        }
+    }
+
+    updateDynamicLayoutRects();
+    applyCurrentFiltersToMap();
+    repaint();
+}
+
 void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
     juce::Rectangle<float> targetBtn)
 {
@@ -1542,7 +1613,11 @@ void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
         {
             if (res >= 1 && res <= (int)options.size())
             {
-                selectedMoodMask = options[(size_t)(res - 1)].flagBit;
+                const uint32_t flag = options[(size_t)(res - 1)].flagBit;
+                if (flag == 0)
+                    selectedMoodMask = 0;
+                else
+                    selectedMoodMask ^= flag;
                 updateDynamicLayoutRects();
                 applyCurrentFiltersToMap();
                 repaint();
