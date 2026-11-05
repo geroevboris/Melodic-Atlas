@@ -46,10 +46,10 @@ namespace Atlas
             bankRevBuffer.clear();
         }
 
-        void setSampleDatabase(const std::vector<SampleRecord>* dbPtr)
+        void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
             const juce::ScopedLock sl(engineLock);
-            database = dbPtr;
+            database = std::move(dbSnapshot);
         }
 
         void setMusicalContext(int keyRoot, ScaleType scale, PitchMode pMode,
@@ -1035,7 +1035,7 @@ namespace Atlas
         juce::AudioFormatManager formatManager;
         std::unordered_map<juce::String, std::shared_ptr<CachedAudioData>> audioCache;
 
-        const std::vector<SampleRecord>* database = nullptr;
+        std::shared_ptr<const std::vector<SampleRecord>> database;
         double currentSampleRate = 48000.0;
 
         int projectKeyRoot = 9;
