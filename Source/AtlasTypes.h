@@ -385,13 +385,15 @@ namespace Atlas
                     };
                 case ClusterGroup::Other:
                     return {
-                        { "All Moods", "", Sub_None },
-                        { "Clean / Pure", "CLEAN", Sub_Clean },
-                        { "Noisy / Lo-Fi", "NOISY", Sub_Noisy },
-                        { "Warm / Analog", "WARM", Sub_Warm },
-                        { "Plucky / Short", "PLUCK", Sub_Pluck },
-                        { "Sustained", "SUST", Sub_Sustain },
-                        { "Textural / Atmos", "TEXT", Sub_Textural }
+                        { "Clear Character", "", Sub_None },
+                        { "Dark", "DARK", Character_Dark },
+                        { "Bright", "BRIGHT", Character_Bright },
+                        { "Warm", "WARM", Character_Warm },
+                        { "Clean", "CLEAN", Character_Clean },
+                        { "Noisy", "NOISY", Character_Noisy },
+                        { "Plucky", "PLUCK", Character_Pluck },
+                        { "Sustained", "SUST", Character_Sustain },
+                        { "Textural", "TEXT", Character_Textural }
                     };
                 default:
                     return {};
