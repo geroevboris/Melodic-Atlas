@@ -100,6 +100,21 @@ namespace Atlas
         Uncertain    = 3
     };
 
+    // New measured acoustic descriptors; kept separate from legacy map
+    // features until classification and map changes can be calibrated.
+    struct AcousticFeatures
+    {
+        bool valid = false;
+        float spectralCentroidHz = 0.0f;
+        float spectralCentroidNorm = 0.0f;
+        float spectralFlatness = 0.0f;
+        float lowBandRatio = 0.0f;
+        float midBandRatio = 0.0f;
+        float highBandRatio = 0.0f;
+        float onsetActivity = 0.0f;
+        float sustainRatio = 0.0f;
+    };
+
     struct SampleRecord
     {
         juce::File file;
@@ -128,6 +143,7 @@ namespace Atlas
         IdentityState identityState = IdentityState::NotEvaluated;
         PercussionState percussionState = PercussionState::NotEvaluated;
         float identityConfidence = 0.0f;
+        AcousticFeatures acoustic;
         uint32_t characterMask = 0;
         std::array<float, 9> characterScores {};
         uint32_t subMask = Sub_None;
