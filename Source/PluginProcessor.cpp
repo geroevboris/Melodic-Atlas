@@ -320,6 +320,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("subMask", (int)rec.subMask, nullptr);
         item.setProperty("shade", rec.toneShadeBucket, nullptr);
         item.setProperty("identityState", (int)rec.identityState, nullptr);
+        item.setProperty("identityCluster", (int)rec.identityCluster, nullptr);
         item.setProperty("percussionState", (int)rec.percussionState, nullptr);
         item.setProperty("percussionConfidence", rec.percussionConfidence, nullptr);
         item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
@@ -409,6 +410,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.toneShadeBucket = (int)item.getProperty("shade", 1);
         rec.identityState = static_cast<Atlas::IdentityState>(
             juce::jlimit(0, 3, (int)item.getProperty("identityState", 0)));
+        rec.identityCluster = static_cast<Atlas::ClusterGroup>(
+            juce::jlimit(0, 7, (int)item.getProperty("identityCluster", 7)));
         rec.percussionState = static_cast<Atlas::PercussionState>(
             juce::jlimit(0, 3, (int)item.getProperty("percussionState", 0)));
         rec.percussionConfidence = juce::jlimit(
@@ -443,6 +446,11 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             (float)item.getProperty("tonalDeviation", 0.0f);
         rec.tonal.estimatedMidi =
             (float)item.getProperty("tonalMidi", 0.0f);
+        // Legacy cache records have no independently evaluated identity.
+        // Reuse existing measurements without rescanning the audio.
+        if (rec.identityState == Atlas::IdentityState::NotEvaluated &&
+            (rec.acoustic.valid || rec.tonal.valid))
+            Atlas::SoundIdentityAnalyzer::evaluate(rec.file, rec);
         // When upgrading from a previous v4 cache, compute the gate from
         // already-measured descriptors rather than re-reading the audio.
         if (rec.percussionState == Atlas::PercussionState::NotEvaluated &&

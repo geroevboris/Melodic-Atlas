@@ -167,6 +167,7 @@ namespace Atlas
         // Legacy display/category fields remain intact until the new
         // classifier is validated; these fields do not change current UI.
         IdentityState identityState = IdentityState::NotEvaluated;
+        ClusterGroup identityCluster = ClusterGroup::Other;
         PercussionState percussionState = PercussionState::NotEvaluated;
         float percussionConfidence = 0.0f;
         float identityConfidence = 0.0f;
