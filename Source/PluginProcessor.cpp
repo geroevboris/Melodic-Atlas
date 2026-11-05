@@ -287,7 +287,7 @@ juce::File MelodicAtlasAudioProcessor::getDatabaseCacheFile() const
     auto dir = juce::File::getSpecialLocation(
         juce::File::userApplicationDataDirectory).getChildFile("MelodicAtlas");
     dir.createDirectory();
-    return dir.getChildFile("ScannedDatabaseCache_v3.xml");
+    return dir.getChildFile("ScannedDatabaseCache_v4.xml");
 }
 
 void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
@@ -319,6 +319,13 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("cluster", (int)rec.cluster, nullptr);
         item.setProperty("subMask", (int)rec.subMask, nullptr);
         item.setProperty("shade", rec.toneShadeBucket, nullptr);
+        item.setProperty("identityState", (int)rec.identityState, nullptr);
+        item.setProperty("percussionState", (int)rec.percussionState, nullptr);
+        item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
+        item.setProperty("characterMask", (int)rec.characterMask, nullptr);
+        for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
+            item.setProperty("char" + juce::String((int)feature),
+                             rec.characterScores[feature], nullptr);
         root.appendChild(item, nullptr);
     }
 
@@ -335,6 +342,11 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 {
     juce::File cacheFile = getDatabaseCacheFile();
+    // Keep existing libraries usable without forcing a rescan. The legacy
+    // classifier output remains available for display, but is not treated
+    // as a confident acoustic identity.
+    if (!cacheFile.existsAsFile())
+        cacheFile = cacheFile.getSiblingFile("ScannedDatabaseCache_v3.xml");
     if (!cacheFile.existsAsFile())
         return false;
 
@@ -379,6 +391,17 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.cluster = static_cast<Atlas::ClusterGroup>(rawCluster);
         rec.subMask = (uint32_t)(int)item.getProperty("subMask", 0);
         rec.toneShadeBucket = (int)item.getProperty("shade", 1);
+        rec.identityState = static_cast<Atlas::IdentityState>(
+            juce::jlimit(0, 3, (int)item.getProperty("identityState", 0)));
+        rec.percussionState = static_cast<Atlas::PercussionState>(
+            juce::jlimit(0, 3, (int)item.getProperty("percussionState", 0)));
+        rec.identityConfidence = juce::jlimit(
+            0.0f, 1.0f, (float)item.getProperty("identityConfidence", 0.0f));
+        rec.characterMask = (uint32_t)(int)item.getProperty("characterMask", 0);
+        for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
+            rec.characterScores[feature] = juce::jlimit(
+                0.0f, 1.0f,
+                (float)item.getProperty("char" + juce::String((int)feature), 0.0f));
 
         loaded.push_back(std::move(rec));
     }
