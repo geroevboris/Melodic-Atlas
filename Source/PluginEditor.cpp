@@ -1546,52 +1546,50 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
 
 void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
 {
-    // Pick a real sample first, then derive a strict, nonempty filter
-    // combination from its tags. Never require the user to loosen AND logic.
-    const auto snapshot = audioProcessor.getSampleDatabaseSnapshot();
-    if (!snapshot || snapshot->empty())
-        return;
-
+    // The die randomizes the filter itself, not a sample. Empty selections
+    // are valid: this is for unexpected creative searches, not guaranteed hits.
     auto& rng = juce::Random::getSystemRandom();
-    const uint32_t availableFlags[] = {
+    const uint32_t flags[] = {
         Atlas::Character_Dark, Atlas::Character_Bright,
         Atlas::Character_Warm, Atlas::Character_Clean,
         Atlas::Character_Noisy, Atlas::Character_Pluck,
         Atlas::Character_Sustain, Atlas::Character_Textural
     };
 
-    for (int attempt = 0; attempt < 80; ++attempt)
+    // Usually one instrument category, occasionally all or two categories.
+    selectedClustersMask = 0;
+    const int categoryMode = rng.nextInt(10);
+    if (categoryMode < 8)
     {
-        const auto& rec = (*snapshot)[(size_t)rng.nextInt((int)snapshot->size())];
-        const int group = (int)rec.cluster;
-        if (group < 0 || group >= 7)
-            continue;
-
-        const uint32_t tags = rec.acoustic.valid
-            ? rec.characterMask : rec.subMask;
-        uint32_t choices[8] {};
-        int count = 0;
-        for (uint32_t flag : availableFlags)
-            if ((tags & flag) != 0)
-                choices[count++] = flag;
-        if (count == 0)
-            continue;
-
-        selectedClustersMask = (1u << group);
-        selectedClusterSubgroupBit.fill(0);
-        const int firstIndex = rng.nextInt(count);
-        selectedMoodMask = choices[firstIndex];
-        if (count > 1 && rng.nextBool())
+        const int first = rng.nextInt(7);
+        selectedClustersMask = (1u << first);
+        if (categoryMode == 7)
         {
-            const int secondIndex = (firstIndex + 1 + rng.nextInt(count - 1)) % count;
-            selectedMoodMask |= choices[secondIndex];
+            const int second = (first + 1 + rng.nextInt(6)) % 7;
+            selectedClustersMask |= (1u << second);
         }
-
-        updateDynamicLayoutRects();
-        applyCurrentFiltersToMap();
-        repaint();
-        return;
     }
+
+    selectedClusterSubgroupBit.fill(0);
+    selectedMoodMask = 0;
+
+    // One to three independently selected qualities, with strict AND
+    // semantics. No lookup against sample contents, no relaxed matching.
+    const int qualityCount = 1 + rng.nextInt(3);
+    int selectedCount = 0;
+    while (selectedCount < qualityCount)
+    {
+        const uint32_t flag = flags[rng.nextInt(8)];
+        if ((selectedMoodMask & flag) == 0)
+        {
+            selectedMoodMask |= flag;
+            ++selectedCount;
+        }
+    }
+
+    updateDynamicLayoutRects();
+    applyCurrentFiltersToMap();
+    repaint();
 }
 
 void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
