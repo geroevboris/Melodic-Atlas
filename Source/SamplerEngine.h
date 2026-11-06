@@ -475,23 +475,10 @@ namespace Atlas
                 const float* srcL = buf.getReadPointer(0);
                 const float* srcR = buf.getNumChannels() > 1 ? buf.getReadPointer(1) : srcL;
 
-                int semiShift = MusicMath::calculatePitchShift(
-                    pv.record.pitchClass, projectKeyRoot, projectScale, pitchMode, octaveShift);
-                double srRatio = pv.audio->sampleRate / std::max(8000.0, currentSampleRate);
-                double step = std::pow(2.0, ((double)semiShift + (double)previewPitchSemitones) / 12.0) * srRatio;
-
-                if (pv.record.isLoop)
-                {
-                    if (syncBpm && pv.record.detectedBpm > 40.0)
-                    {
-                        double effBpm = currentBpm * (double)globalBpmMultiplier;
-                        step *= juce::jlimit(0.25, 4.0, effBpm / pv.record.detectedBpm);
-                    }
-                    else
-                    {
-                        step *= (double)globalBpmMultiplier;
-                    }
-                }
+                // Map audition deliberately has no key/scale or BPM processing.
+                // One global Tune controls plain varispeed for every sample.
+                const double srRatio = pv.audio->sampleRate / std::max(8000.0, currentSampleRate);
+                double step = std::pow(2.0, (double)previewPitchSemitones / 12.0) * srRatio;
 
                 step = juce::jlimit(0.05, 8.0, step);
                 const int tailStartFrame = std::max(0, totalFrames - 256);

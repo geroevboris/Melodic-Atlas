@@ -63,8 +63,9 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     };
 
     setupEncoder(previewTuneSlider, "TUNE", "Preview Pitch (Semitones) - Double-click to reset",
-                 -12.0f, 12.0f, 0.0f,
-                 [this](float v) { audioProcessor.bankPitchSemitones.store(v); });
+                 -24.0f, 24.0f, 0.0f,
+                  [this](float v) { audioProcessor.bankPitchSemitones.store(v); });
+    previewTuneSlider.setRange(-24.0, 24.0, 1.0);
     previewTuneSlider.setValue(audioProcessor.bankPitchSemitones.load(),
                                juce::dontSendNotification);
 
@@ -142,16 +143,9 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     btnOneShots = { hx, 8.0f, 76.0f, 24.0f }; hx += 80.0f;
     btnLoops    = { hx, 8.0f, 54.0f, 24.0f }; hx += 54.0f + groupGap;
 
-    lblKeyRect          = { hx, 8.0f, 30.0f, 24.0f }; hx += 32.0f;
-    btnKeyRoot          = { hx, 8.0f, 44.0f, 24.0f }; hx += 48.0f;
-    btnScaleType        = { hx, 8.0f, 74.0f, 24.0f }; hx += 78.0f;
-    btnPitchMode        = { hx, 8.0f, 48.0f, 24.0f }; hx += 52.0f;
-    btnTransposeQuality = { hx, 8.0f, 62.0f, 24.0f }; hx += 62.0f + groupGap;
-
-    lblBpmRect   = { hx, 8.0f, 32.0f, 24.0f }; hx += 34.0f;
-    btnBpmHalf   = { hx, 8.0f, 25.0f, 24.0f }; hx += 28.0f;
-    btnBpmSync   = { hx, 8.0f, 54.0f, 24.0f }; hx += 57.0f;
-    btnBpmDouble = { hx, 8.0f, 25.0f, 24.0f }; hx += 25.0f;
+    // Retired auto key/scale and map BPM controls.
+    lblKeyRect = btnKeyRoot = btnScaleType = btnPitchMode = btnTransposeQuality = {};
+    lblBpmRect = btnBpmHalf = btnBpmSync = btnBpmDouble = {};
 
     float scanW = juce::jlimit(126.0f, 164.0f, w - hx - 22.0f);
     float scanX = std::max(hx + 8.0f, w - scanW - 14.0f);
@@ -199,15 +193,10 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
         gx += btnW + 6.0f;
     }
 
-    // Вертикальный блок OCTAVE с круглыми кнопками со стрелками + ручки TUNE и REV
-    float octBtnX = w - 42.0f;
-    btnOctUp     = { octBtnX, filterY + 3.0f, 15.0f, 15.0f };
-    octValueRect = { octBtnX - 6.0f, filterY + 18.0f, 27.0f, 12.0f };
-    btnOctDown   = { octBtnX, filterY + 30.0f, 15.0f, 15.0f };
-    octLabelRect = { octBtnX - 54.0f, filterY + 14.0f, 50.0f, 20.0f };
-
-    mapReverbSlider.setBounds  ((int)(octLabelRect.getX() - 48.0f), (int)(filterY + 3.0f), 42, 42);
-    previewTuneSlider.setBounds((int)(octLabelRect.getX() - 96.0f), (int)(filterY + 3.0f), 42, 42);
+    // One global preview Tune knob; no separate octave.
+    btnOctUp = btnOctDown = octValueRect = octLabelRect = {};
+    mapReverbSlider.setBounds((int)(w - 84.0f), (int)(filterY + 3.0f), 42, 42);
+    previewTuneSlider.setBounds((int)(w - 132.0f), (int)(filterY + 3.0f), 42, 42);
 
     btnPadTriggerMode = { 66.0f,  bankTopY, 102.0f, 20.0f };
     btnChromaticMode  = { 174.0f, bankTopY, 96.0f,  20.0f };
@@ -317,62 +306,6 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     drawBtn(btnOneShots, "ONE-SHOTS", !audioProcessor.showLoopsTab.load());
     drawBtn(btnLoops,    "LOOPS",     audioProcessor.showLoopsTab.load());
 
-    g.setColour(juce::Colour(0xff8c98a8));
-    g.setFont(monoReg);
-    g.drawText("KEY:", lblKeyRect, juce::Justification::centredLeft, false);
-
-    // Идеально отцентрированная кнопка выбора тональности (буква + треугольник по центру)
-    g.setColour(juce::Colour(0xff283f35));
-    g.fillRoundedRectangle(btnKeyRoot, 3.0f);
-    g.setColour(juce::Colour(0xff7ec8a3));
-    g.drawRoundedRectangle(btnKeyRoot, 3.0f, 1.0f);
-
-    juce::String keyStr = Atlas::MusicMath::getNoteName(audioProcessor.projectKeyRoot.load());
-    float keyTextW = monoReg.getStringWidthFloat(keyStr);
-    float triW = 6.5f;
-    float gapW = 4.5f;
-    float totalKeyContentW = keyTextW + gapW + triW;
-    float keyStartX = btnKeyRoot.getCentreX() - totalKeyContentW * 0.5f;
-
-    g.setColour(juce::Colours::white);
-    g.setFont(monoReg);
-    g.drawText(keyStr,
-               juce::Rectangle<float>(keyStartX, btnKeyRoot.getY(),
-                                      keyTextW + 2.0f, btnKeyRoot.getHeight()),
-               juce::Justification::centredLeft, false);
-    drawDropdownTriangle(
-        g,
-        juce::Rectangle<float>(keyStartX + keyTextW + gapW,
-                               btnKeyRoot.getCentreY() - 2.2f, triW, 4.5f),
-        juce::Colours::white);
-
-    drawBtn(btnScaleType,
-            Atlas::MusicMath::getScaleShortName(
-                static_cast<Atlas::ScaleType>(audioProcessor.projectScaleType.load())),
-            true);
-
-    int pMode = audioProcessor.pitchModeIndex.load();
-    drawBtn(btnPitchMode,
-            (pMode == 0) ? "SNAP" : (pMode == 1 ? "ROOT" : "OFF"),
-            pMode != 2);
-
-    drawBtn(btnTransposeQuality,
-            (audioProcessor.transposeQualityIndex.load() == 0) ? "CLEAN" : "STRETCH",
-            true);
-
-    g.setColour(juce::Colour(0xff8c98a8));
-    g.setFont(monoReg);
-    g.drawText("BPM:", lblBpmRect, juce::Justification::centredLeft, false);
-
-    bool bpmSyncOn = audioProcessor.bpmLockedToHost.load();
-    float bpmMult  = audioProcessor.globalBpmMultiplier.load();
-    double shownBpm = audioProcessor.currentBpm.load() *
-                      (bpmSyncOn ? (double)bpmMult : 1.0);
-
-    drawBtn(btnBpmHalf,   "/2", bpmSyncOn && std::abs(bpmMult - 0.5f) < 0.05f);
-    drawBtn(btnBpmSync,   juce::String(shownBpm, 1), bpmSyncOn, juce::Colour(0xff283f35));
-    drawBtn(btnBpmDouble, "x2", bpmSyncOn && std::abs(bpmMult - 2.0f) < 0.05f);
-
     juce::String scanTxt = audioProcessor.isCurrentlyScanning()
         ? ("SCAN " + juce::String((int)(audioProcessor.getScanProgress() * 100.0f)) + "%")
         : (btnScanFolder.getWidth() < 142.0f ? "SCAN FOLDER" : "SCAN SAMPLE FOLDER");
@@ -459,29 +392,7 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
                              on ? juce::Colours::white : juce::Colour(0xff8a96a6));
     }
 
-    // Отрисовка надписи OCTAVE и вертикальных круглых кнопок со стрелками
-    int oct = audioProcessor.octaveShift.load();
-    g.setColour(juce::Colour(0xff9aa7b8));
-    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 10.0f, juce::Font::bold));
-    g.drawText("OCTAVE", octLabelRect, juce::Justification::centredRight, false);
-
-    auto drawCircleArrowBtn = [&](juce::Rectangle<float> r, bool isUp, bool active)
-    {
-        g.setColour(active ? juce::Colour(0xff284035) : juce::Colour(0xff1d232c));
-        g.fillEllipse(r);
-        g.setColour(active ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff3a4554));
-        g.drawEllipse(r, 1.1f);
-        drawVerticalArrowIcon(g, r.reduced(4.0f, 4.5f), isUp,
-                              active ? juce::Colours::white : juce::Colour(0xffb8c4d4));
-    };
-
-    drawCircleArrowBtn(btnOctUp,   true,  oct > 0);
-    drawCircleArrowBtn(btnOctDown, false, oct < 0);
-
-    g.setColour(oct != 0 ? juce::Colour(0xff7ec8a3) : juce::Colour(0xffdce6f2));
-    g.setFont(monoBold);
-    juce::String octValStr = (oct > 0) ? ("+" + juce::String(oct)) : juce::String(oct);
-    g.drawText(octValStr, octValueRect, juce::Justification::centred, false);
+    // No separate octave control.
 }
 
 void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
@@ -783,22 +694,13 @@ void MelodicAtlasAudioProcessorEditor::drawPadSyncView(
         g.drawText(txt, br, juce::Justification::centred, false);
     };
 
-    // Ряд 1: BPM SYNC, /2, x2
+    // Tempo controls only; no SNAP / ROOT pitch auto-correction.
     float y1 = contentTop;
     drawMiniChoiceBtn({ startX, y1, colW, rowH }, "BPM", st.padSyncBpm);
     drawMiniChoiceBtn({ startX + colW + 4.0f, y1, colW, rowH },
                       "/2", std::abs(st.padSpeedMult - 0.5f) < 0.05f);
     drawMiniChoiceBtn({ startX + (colW + 4.0f) * 2.0f, y1, colW, rowH },
                       "x2", std::abs(st.padSpeedMult - 2.0f) < 0.05f);
-
-    // Ряд 2: SNAP, ROOT, OFF
-    float y2 = contentTop + rowH + 4.0f;
-    drawMiniChoiceBtn({ startX, y2, colW, rowH },
-                      "SNAP", st.padPitchMode == Atlas::PitchMode::ScaleSnap);
-    drawMiniChoiceBtn({ startX + colW + 4.0f, y2, colW, rowH },
-                      "ROOT", st.padPitchMode == Atlas::PitchMode::RootForce);
-    drawMiniChoiceBtn({ startX + (colW + 4.0f) * 2.0f, y2, colW, rowH },
-                      "OFF",  st.padPitchMode == Atlas::PitchMode::Bypass);
 }
 
 void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
@@ -1378,48 +1280,6 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(const juce::MouseEve
         applyCurrentFiltersToMap();
         repaint();
     }
-    else if (btnKeyRoot.contains(pt))
-        showKeyPopupMenu();
-    else if (btnScaleType.contains(pt))
-        showScalePopupMenu();
-    else if (btnPitchMode.contains(pt))
-    {
-        audioProcessor.pitchModeIndex.store(
-            (audioProcessor.pitchModeIndex.load() + 1) % 3);
-        repaint();
-    }
-    else if (btnTransposeQuality.contains(pt))
-    {
-        audioProcessor.transposeQualityIndex.store(
-            (audioProcessor.transposeQualityIndex.load() + 1) % 2);
-        repaint();
-    }
-    else if (btnBpmHalf.contains(pt))
-    {
-        // Включает/выключает делитель /2, сохраняя активную привязку к BPM
-        audioProcessor.bpmLockedToHost.store(true);
-        float curM = audioProcessor.globalBpmMultiplier.load();
-        audioProcessor.globalBpmMultiplier.store(
-            (std::abs(curM - 0.5f) < 0.05f) ? 1.0f : 0.5f);
-        repaint();
-    }
-    else if (btnBpmDouble.contains(pt))
-    {
-        // Включает/выключает множитель x2, сохраняя активную привязку к BPM
-        audioProcessor.bpmLockedToHost.store(true);
-        float curM = audioProcessor.globalBpmMultiplier.load();
-        audioProcessor.globalBpmMultiplier.store(
-            (std::abs(curM - 2.0f) < 0.05f) ? 1.0f : 2.0f);
-        repaint();
-    }
-    else if (btnBpmSync.contains(pt))
-    {
-        bool nowLocked = !audioProcessor.bpmLockedToHost.load();
-        audioProcessor.bpmLockedToHost.store(nowLocked);
-        if (!nowLocked)
-            audioProcessor.globalBpmMultiplier.store(1.0f);
-        repaint();
-    }
     else if (btnScanFolder.contains(pt))
         openFolderChooser();
 }
@@ -1496,18 +1356,6 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
         return;
     }
 
-    if (btnOctUp.expanded(3.0f).contains(pt))
-    {
-        audioProcessor.octaveShift.store(
-            juce::jlimit(-2, 2, audioProcessor.octaveShift.load() + 1));
-        repaint();
-    }
-    else if (btnOctDown.expanded(3.0f).contains(pt))
-    {
-        audioProcessor.octaveShift.store(
-            juce::jlimit(-2, 2, audioProcessor.octaveShift.load() - 1));
-        repaint();
-    }
 }
 
 void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
@@ -1736,11 +1584,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankAndRightPanelClick(
             juce::Rectangle<float> bHalf(startX + colW + 4.0f, contentTop, colW, rowH);
             juce::Rectangle<float> bDoub(startX + (colW + 4.0f) * 2.0f, contentTop, colW, rowH);
 
-            float y2 = contentTop + rowH + 4.0f;
-            juce::Rectangle<float> bSnap(startX, y2, colW, rowH);
-            juce::Rectangle<float> bRoot(startX + colW + 4.0f, y2, colW, rowH);
-            juce::Rectangle<float> bOff (startX + (colW + 4.0f) * 2.0f, y2, colW, rowH);
-
             audioProcessor.getSamplerEngine().saveCurrentPadToHistory(i);
 
             if (bSync.contains(pt))
@@ -1761,22 +1604,6 @@ void MelodicAtlasAudioProcessorEditor::handleBankAndRightPanelClick(
                 padState.padSpeedMult = (std::abs(padState.padSpeedMult - 2.0f) < 0.05f)
                                       ? 1.0f : 2.0f;
             }
-            else if (bSnap.contains(pt))
-            {
-                padState.padPitchMode = Atlas::PitchMode::ScaleSnap;
-                audioProcessor.recalculatePadPitch(i);
-            }
-            else if (bRoot.contains(pt))
-            {
-                padState.padPitchMode = Atlas::PitchMode::RootForce;
-                audioProcessor.recalculatePadPitch(i);
-            }
-            else if (bOff.contains(pt))
-            {
-                padState.padPitchMode = Atlas::PitchMode::Bypass;
-                audioProcessor.recalculatePadPitch(i);
-            }
-
             repaint();
             return;
         }

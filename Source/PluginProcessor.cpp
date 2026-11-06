@@ -141,15 +141,8 @@ void MelodicAtlasAudioProcessor::recalculatePadPitch(int padIdx)
         return;
 
     auto& st = samplerEngine.getPadState(padIdx);
-    int newPitch = Atlas::MusicMath::calculatePitchShift(
-        rec->pitchClass,
-        projectKeyRoot.load(),
-        static_cast<Atlas::ScaleType>(projectScaleType.load()),
-        st.padPitchMode,
-        octaveShift.load()
-    ) + (int)std::round(bankPitchSemitones.load());
-
-    st.semitoneOffset = juce::jlimit(-24, 24, newPitch);
+    // Retained for old call sites: manual Tune is never auto-overwritten.
+    juce::ignoreUnused(rec, st);
 }
 
 void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(
@@ -179,22 +172,16 @@ void MelodicAtlasAudioProcessor::assignSampleToPadWithPreviewSettings(
 
     if (!lockOn)
     {
-        st.padPitchMode = static_cast<Atlas::PitchMode>(pitchModeIndex.load());
-        st.padSyncBpm = bpmLockedToHost.load();
+        st.padPitchMode = Atlas::PitchMode::Bypass;
+        // New pads keep preview varispeed unchanged; user opts into BPM.
+        st.padSyncBpm = false;
         st.padSpeedMult = 1.0f;
         st.playbackMode = rec.isLoop
             ? Atlas::PadPlaybackMode::Loop
             : Atlas::PadPlaybackMode::OneShot;
 
-        int previewPitch = Atlas::MusicMath::calculatePitchShift(
-            rec.pitchClass,
-            projectKeyRoot.load(),
-            static_cast<Atlas::ScaleType>(projectScaleType.load()),
-            st.padPitchMode,
-            octaveShift.load()
-        ) + (int)std::round(bankPitchSemitones.load());
-
-        st.semitoneOffset = juce::jlimit(-24, 24, previewPitch);
+        st.semitoneOffset = juce::jlimit(-24, 24,
+            (int)std::round(bankPitchSemitones.load()));
         st.centOffset = 0;
 
         st.attackSec = 0.005f;
@@ -672,13 +659,18 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
     projectScaleType.store(state.getProperty("scaleType", 0));
     pitchModeIndex.store(state.getProperty("pitchMode", 0));
     transposeQualityIndex.store(state.getProperty("transposeQual", 0));
-    octaveShift.store(state.getProperty("octShift", 0));
+    octaveShift.store(0);
     bpmLockedToHost.store(state.getProperty("bpmLocked", true));
     currentBpm.store(state.getProperty("manualBpm", 120.0));
     globalBpmMultiplier.store((float)state.getProperty("bpmMult", 1.0f));
     reverbAmount.store(state.getProperty("reverb", 0.25f));
     bankReverbAmount.store(state.getProperty("bankReverb", 0.30f));
-    bankPitchSemitones.store(state.getProperty("bankPitch", 0.0f));
+    // Migrate old preview octave into the single unified Tune parameter.
+    const float oldPreviewTune = (float)state.getProperty("bankPitch", 0.0f);
+    const int oldPreviewOctave = juce::jlimit(-2, 2,
+        (int)state.getProperty("octShift", 0));
+    bankPitchSemitones.store(juce::jlimit(-24.0f, 24.0f,
+        oldPreviewTune + 12.0f * (float)oldPreviewOctave));
     padSettingsLocked.store(state.getProperty("padLocked", false));
     masterVolumeDb.store(state.getProperty("masterDb", 0.0f));
     bankModeIndex.store(state.getProperty("bankMode", 1));
