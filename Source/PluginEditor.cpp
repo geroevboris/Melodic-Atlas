@@ -65,7 +65,7 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     setupEncoder(previewTuneSlider, "TUNE", "Preview Pitch (Semitones) - Double-click to reset",
                  -24.0f, 24.0f, 0.0f,
                   [this](float v) { audioProcessor.bankPitchSemitones.store(v); });
-    previewTuneSlider.setInterval(1.0);
+    previewTuneSlider.setRange(-24.0, 24.0, 1.0);
     previewTuneSlider.setValue(audioProcessor.bankPitchSemitones.load(),
                                juce::dontSendNotification);
 
