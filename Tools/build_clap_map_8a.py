@@ -35,7 +35,7 @@ DRUM_DIRS = {
 
 def explicit_drum(path: Path) -> bool:
     import re
-    tokens = set(filter(None, re.split(r"[ _\\-.()\\[\\]{}0123456789]+", path.stem.lower())))
+    tokens = set(filter(None, re.split(r"[^a-z]+", path.stem.lower())))
     return bool(tokens & DRUM_TOKENS) or any(
         parent.name.lower() in DRUM_DIRS for parent in (path.parent, path.parent.parent)
     )
