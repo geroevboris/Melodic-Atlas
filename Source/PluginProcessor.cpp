@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "NeuralMapImport.h"
+#include <unordered_map>
 
 MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
     : AudioProcessor(
@@ -292,6 +293,8 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         juce::ValueTree item("Sample");
         item.setProperty("path", rec.file.getFullPathName(), nullptr);
         item.setProperty("name", rec.name, nullptr);
+        item.setProperty("sourceBytes", (juce::int64)rec.sourceBytes, nullptr);
+        item.setProperty("sourceModifiedMs", (juce::int64)rec.sourceModifiedMs, nullptr);
         item.setProperty("isLoop", rec.isLoop, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
         item.setProperty("bpm", rec.detectedBpm, nullptr);
@@ -390,6 +393,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         Atlas::SampleRecord rec;
         rec.file = f;
         rec.name = item.getProperty("name", f.getFileNameWithoutExtension()).toString();
+        rec.sourceBytes = (int64_t)(juce::int64)item.getProperty("sourceBytes", (juce::int64)-1);
+        rec.sourceModifiedMs = (int64_t)(juce::int64)item.getProperty("sourceModifiedMs", (juce::int64)-1);
         rec.isLoop = (bool)item.getProperty("isLoop", false);
         rec.durationSec = (double)item.getProperty("dur", 1.0);
         rec.detectedBpm = (double)item.getProperty("bpm", 120.0);
@@ -519,6 +524,23 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
         return;
 
     folderToScan = folder;
+    incrementalRefresh.store(false);
+    scanning.store(true);
+    scanProgress.store(0.0f);
+    scannedCount.store(0);
+    startThread(juce::Thread::Priority::low);
+}
+
+void MelodicAtlasAudioProcessor::refreshLibraryAsync()
+{
+    if (scanning.load() || !folderToScan.isDirectory())
+        return;
+
+    signalThreadShouldExit();
+    if (!waitForThreadToExit(2000))
+        return;
+
+    incrementalRefresh.store(true);
     scanning.store(true);
     scanProgress.store(0.0f);
     scannedCount.store(0);
@@ -535,6 +557,18 @@ void MelodicAtlasAudioProcessor::run()
     const int total = audioFiles.size();
     newRecords.reserve((size_t)std::min(total, 8000));
 
+    // Snapshot old descriptors before scanning; no lock is held during I/O.
+    // Preserve unchanged data, avoiding repeated audio decoding on Refresh.
+    std::unordered_map<std::string, Atlas::SampleRecord> unchangedCandidates;
+    if (incrementalRefresh.load())
+    {
+        const juce::ScopedLock sl(dbLock);
+        unchangedCandidates.reserve(sampleDatabase.size());
+        for (const auto& record : sampleDatabase)
+            unchangedCandidates.emplace(record.file.getFullPathName().toStdString(), record);
+    }
+    bool hasChangedRecords = !incrementalRefresh.load();
+
     for (int i = 0; i < total; ++i)
     {
         if (threadShouldExit())
@@ -547,10 +581,26 @@ void MelodicAtlasAudioProcessor::run()
         if (Atlas::PercussionGate::isExplicitDrumFile(file))
             continue;
 
+        const int64_t fileBytes = (int64_t)file.getSize();
+        const int64_t modifiedMs = (int64_t)file.getLastModificationTime().toMilliseconds();
+        auto old = unchangedCandidates.find(file.getFullPathName().toStdString());
+        if (old != unchangedCandidates.end()
+            && old->second.sourceBytes == fileBytes
+            && old->second.sourceModifiedMs == modifiedMs)
+        {
+            if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
+                newRecords.push_back(old->second);
+            scannedCount.store((int)newRecords.size());
+            continue;
+        }
+
+        hasChangedRecords = true;
         Atlas::SampleRecord rec;
         if (Atlas::AudioAnalyzer::analyzeFile(file, formatManager, rec)
             && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
         {
+            rec.sourceBytes = fileBytes;
+            rec.sourceModifiedMs = modifiedMs;
             newRecords.push_back(std::move(rec));
             scannedCount.store((int)newRecords.size());
         }
@@ -558,7 +608,10 @@ void MelodicAtlasAudioProcessor::run()
 
     if (!threadShouldExit() && !newRecords.empty())
     {
-        Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
+        // Cached DSP positions stay fixed if nothing changed. Neural
+        // coordinates are refreshed from the manifest when available.
+        if (hasChangedRecords || newRecords.size() != unchangedCandidates.size())
+            Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
         // Worker thread only; does not touch the audio callback.
         Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         {
