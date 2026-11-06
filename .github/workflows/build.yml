@@ -68,6 +68,35 @@ jobs:
       - name: Build Plugin (Release)
         run: cmake --build build --config Release --parallel 4
 
+      - name: Diagnose macOS plugin loading and dynamic linkage (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-') && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          vst="build/MelodicAtlas_artefacts/Release/VST3/Melodic-Atlas.vst3"
+          au="build/MelodicAtlas_artefacts/Release/AU/Melodic-Atlas.component"
+          for bundle in "$vst" "$au"; do
+            echo "=== $bundle ==="
+            find "$bundle/Contents" -maxdepth 3 -type f -print
+            binary="$(find "$bundle/Contents/MacOS" -type f -maxdepth 1 | head -1)"
+            echo "--- architectures ---"
+            lipo -info "$binary"
+            echo "--- dynamic libraries ---"
+            otool -L "$binary"
+            echo "--- runtime search paths ---"
+            otool -l "$binary" | grep -A 3 LC_RPATH || true
+            echo "--- signatures ---"
+            codesign -dv --verbose=2 "$bundle" 2>&1 || true
+            codesign --verify --deep --strict --verbose=2 "$bundle" 2>&1 || true
+            echo "--- dependency verification ---"
+            dylib="$bundle/Contents/Frameworks/libonnxruntime.dylib"
+            otool -D "$dylib"
+            otool -L "$dylib" | head -25
+            codesign --verify --verbose=2 "$dylib" 2>&1 || true
+          done
+          echo "--- host OS ---"
+          sw_vers
+
       - name: Verify bundled native CLAP weights and runtime (8B)
         if: startsWith(github.ref, 'refs/heads/dev/8b-')
         run: python Tools/verify_native_bundle_8b.py
