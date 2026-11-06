@@ -26,8 +26,10 @@ namespace Atlas
                 rec.pitchEvidenceStrength =
                     periodicity * stability * ((float)windows / 3.0f);
 
-                if (windows == 3 && periodicity >= 0.68f &&
-                    stability >= 0.85f)
+                // A stable estimate is evidence of a candidate tone, NOT
+                // proof of monophony: chords may also contain periodicity.
+                if (windows == 3 && periodicity >= 0.75f &&
+                    stability >= 0.90f)
                     rec.pitchStructure = PitchStructure::StableToneCandidate;
                 else if (windows < 2 || periodicity < 0.38f)
                     rec.pitchStructure = PitchStructure::NoReliableTone;
