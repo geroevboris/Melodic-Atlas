@@ -16,7 +16,7 @@ import urllib.request
 import zipfile
 
 VERSION = "1.22.1"
-MAC_VERSION = "1.22.0"
+MAC_VERSION = "1.19.2"
 PLATFORMS = {
     "macos": f"onnxruntime-osx-universal2-{MAC_VERSION}.tgz",
     "windows": f"onnxruntime-win-x64-{VERSION}.zip",
