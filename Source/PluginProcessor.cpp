@@ -2,6 +2,11 @@
 #include "PluginEditor.h"
 #include "NeuralMapImport.h"
 #include "ClapAudioFeatures.h"
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+#include "ClapOnnxEncoder.h"
+#include "NativeClapProjection.h"
+#include "ClapPluginResources.h"
+#endif
 static_assert(Atlas::ClapAudioFeatures::frames == 1001 &&
               Atlas::ClapAudioFeatures::bands == 64,
               "Unexpected CLAP HTSAT feature shape");
@@ -595,6 +600,30 @@ void MelodicAtlasAudioProcessor::run()
             unchangedCandidates.emplace(record.file.getFullPathName().toStdString(), record);
     }
     bool hasChangedRecords = !incrementalRefresh.load();
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    std::unique_ptr<Atlas::ClapOnnxEncoder> nativeClap;
+    bool nativeInferenceFailed = false;
+    auto ensureNativeClap = [&]() -> bool
+    {
+        if (nativeInferenceFailed)
+            return false;
+        if (nativeClap)
+            return true;
+        try
+        {
+            nativeClap = std::make_unique<Atlas::ClapOnnxEncoder>(
+                Atlas::nativeClapModelFile());
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            nativeInferenceFailed = true;
+            juce::Logger::writeToLog(
+                "Native CLAP initialization failed: " + juce::String(error.what()));
+            return false;
+        }
+    };
+#endif
 
     for (int i = 0; i < total; ++i)
     {
@@ -628,6 +657,15 @@ void MelodicAtlasAudioProcessor::run()
         {
             rec.sourceBytes = fileBytes;
             rec.sourceModifiedMs = modifiedMs;
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+            if (ensureNativeClap())
+            {
+                rec.clapEmbeddingValid = nativeClap->embed(
+                    file, formatManager, rec.clapEmbedding);
+                if (!rec.clapEmbeddingValid)
+                    nativeInferenceFailed = true;
+            }
+#endif
             newRecords.push_back(std::move(rec));
             scannedCount.store((int)newRecords.size());
         }
@@ -657,7 +695,26 @@ void MelodicAtlasAudioProcessor::run()
                 }
         }
         // Worker thread only; does not touch the audio callback.
-        Atlas::NeuralMapImport::apply(folderToScan, newRecords);
+        // Native CLAP + UMAP takes priority over legacy external manifests.
+        bool projectedByNativeClap = false;
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+        if (!nativeInferenceFailed)
+        {
+            try
+            {
+                projectedByNativeClap =
+                    Atlas::NativeClapProjection::apply(
+                        newRecords, unchangedCandidates);
+            }
+            catch (const std::exception& error)
+            {
+                juce::Logger::writeToLog(
+                    "Native UMAP failed: " + juce::String(error.what()));
+            }
+        }
+#endif
+        if (!projectedByNativeClap)
+            Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
