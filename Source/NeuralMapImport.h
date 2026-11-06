@@ -37,7 +37,10 @@ namespace Atlas
                 return false;
 
             auto* entries = obj->getProperty("samples").getArray();
-            if (entries == nullptr || entries->size() != (int)records.size())
+            // The inference manifest can contain extra audio files which the
+        // scanner later rejects as percussion. Each accepted sample must
+        // still have a valid, current coordinate.
+        if (entries == nullptr || entries->size() < (int)records.size())
                 return false;
 
             struct Entry
