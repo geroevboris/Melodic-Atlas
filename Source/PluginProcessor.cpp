@@ -316,6 +316,12 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("rough", rec.harmonicRoughness, nullptr);
         item.setProperty("mx", rec.mapX, nullptr);
         item.setProperty("my", rec.mapY, nullptr);
+        item.setProperty("neuralMapValid", rec.neuralMapValid, nullptr);
+        if (rec.neuralMapValid)
+        {
+            item.setProperty("neuralMapX", rec.neuralMapX, nullptr);
+            item.setProperty("neuralMapY", rec.neuralMapY, nullptr);
+        }
         item.setProperty("cluster", (int)rec.cluster, nullptr);
         item.setProperty("subMask", (int)rec.subMask, nullptr);
         item.setProperty("shade", rec.toneShadeBucket, nullptr);
@@ -404,6 +410,18 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.harmonicRoughness = (float)item.getProperty("rough", 0.1f);
         rec.mapX = (float)item.getProperty("mx", 0.5f);
         rec.mapY = (float)item.getProperty("my", 0.5f);
+        // Missing fields in legacy caches naturally fall back to DSP.
+        const float neuralX = (float)item.getProperty("neuralMapX", 0.5f);
+        const float neuralY = (float)item.getProperty("neuralMapY", 0.5f);
+        rec.neuralMapValid = (bool)item.getProperty("neuralMapValid", false)
+            && std::isfinite(neuralX) && std::isfinite(neuralY)
+            && neuralX >= 0.0f && neuralX <= 1.0f
+            && neuralY >= 0.0f && neuralY <= 1.0f;
+        if (rec.neuralMapValid)
+        {
+            rec.neuralMapX = neuralX;
+            rec.neuralMapY = neuralY;
+        }
         int rawCluster = juce::jlimit(0, 6, (int)item.getProperty("cluster", 1));
         rec.cluster = static_cast<Atlas::ClusterGroup>(rawCluster);
         rec.subMask = (uint32_t)(int)item.getProperty("subMask", 0);
