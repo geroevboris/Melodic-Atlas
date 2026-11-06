@@ -38,6 +38,8 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     void scanFolderAsync(const juce::File& folder);
+    void refreshLibraryAsync();
+    bool hasLibraryToRefresh() const { return folderToScan.isDirectory(); }
     bool isCurrentlyScanning() const { return scanning.load(); }
     float getScanProgress() const    { return scanProgress.load(); }
     int getScannedCount() const      { return scannedCount.load(); }
@@ -115,6 +117,7 @@ private:
     std::vector<Atlas::ProjectSnapshot> redoStack;
 
     juce::File folderToScan;
+    std::atomic<bool> incrementalRefresh { false };
     std::atomic<bool> scanning { false };
     std::atomic<float> scanProgress { 0.0f };
     std::atomic<int> scannedCount { 0 };
