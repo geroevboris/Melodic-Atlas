@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # Собираем Universal Binary (Apple Silicon arm64 + Intel x86_64 для Rosetta)
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal architectures" FORCE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version" FORCE)
 endif()
 
 project(MelodicAtlas VERSION 1.1.0)
