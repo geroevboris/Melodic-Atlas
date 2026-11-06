@@ -152,6 +152,11 @@ if(ATLAS_ENABLE_NATIVE_CLAP)
                         "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.dylib"
                     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                         "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.1.22.0.dylib"
+                    # The bundle's code signature must be applied AFTER
+                    # model weights and ONNX Runtime have been installed.
+                    # Otherwise macOS AU hosts can reject the modified bundle.
+                    COMMAND /usr/bin/codesign --force --deep --sign -
+                        --timestamp=none "${atlas_bundle}"
                     VERBATIM)
             else()
                 if(atlas_format STREQUAL "VST3")
