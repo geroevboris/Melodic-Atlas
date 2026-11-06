@@ -163,6 +163,12 @@ namespace Atlas
         float highBandRatio = 0.2f;
         float mapX = 0.5f;
         float mapY = 0.5f;
+        // Optional normalized Pure CLAP / UMAP Balanced coordinates.
+        // Never overwrite the legacy map; an incomplete ML projection is
+        // not mixed with DSP geometry.
+        bool neuralMapValid = false;
+        float neuralMapX = 0.5f;
+        float neuralMapY = 0.5f;
         ClusterGroup cluster = ClusterGroup::Synth;
         // Legacy display/category fields remain intact until the new
         // classifier is validated; these fields do not change current UI.
