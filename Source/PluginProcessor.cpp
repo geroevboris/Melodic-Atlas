@@ -1,6 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "NeuralMapImport.h"
+#include "ClapAudioFeatures.h"
+static_assert(Atlas::ClapAudioFeatures::frames == 1001 &&
+              Atlas::ClapAudioFeatures::bands == 64,
+              "Unexpected CLAP HTSAT feature shape");
 #include <unordered_map>
 
 MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
@@ -611,7 +615,24 @@ void MelodicAtlasAudioProcessor::run()
         // Cached DSP positions stay fixed if nothing changed. Neural
         // coordinates are refreshed from the manifest when available.
         if (hasChangedRecords || newRecords.size() != unchangedCandidates.size())
+        {
             Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
+            // A refresh must not make existing dots jump. Newly analyzed
+            // samples use the fresh geometry; unchanged ones keep positions.
+            if (incrementalRefresh.load())
+                for (auto& record : newRecords)
+                {
+                    const auto it = unchangedCandidates.find(
+                        record.file.getFullPathName().toStdString());
+                    if (it != unchangedCandidates.end()
+                        && it->second.sourceBytes == record.sourceBytes
+                        && it->second.sourceModifiedMs == record.sourceModifiedMs)
+                    {
+                        record.mapX = it->second.mapX;
+                        record.mapY = it->second.mapY;
+                    }
+                }
+        }
         // Worker thread only; does not touch the audio callback.
         Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         {
