@@ -36,6 +36,7 @@ namespace Atlas
                         neuralMapActive = false;
                         break;
                     }
+            candidateOrderDirty = true;
             visibleSamplesDirty = true;
             activeSampleIndex = -1;
             hoveredSampleIndex = -1;
@@ -52,6 +53,7 @@ namespace Atlas
             activeClustersMask = clustersMask;
             clusterSubMasks = perClusterSubs;
             activeMoodMask = moodMask;
+            candidateOrderDirty = true;
             visibleSamplesDirty = true;
             repaint();
         }
@@ -317,7 +319,8 @@ namespace Atlas
         {
             if (std::abs(wheel.deltaY) > 0.0001f)
             {
-                float zoomMultiplier = std::pow(1.25f, wheel.deltaY * 3.2f);
+                // Smaller steps on trackpads avoid abrupt density changes.
+                float zoomMultiplier = std::pow(1.16f, wheel.deltaY * 3.2f);
                 setZoomAroundPoint(zoomFactor * zoomMultiplier, e.position);
             }
 
@@ -550,34 +553,40 @@ namespace Atlas
             if (database == nullptr || getWidth() <= 0 || getHeight() <= 26)
                 return;
 
-            struct Candidate { int index; uint32_t priority; };
-            std::vector<Candidate> candidates;
-            candidates.reserve(database->size());
-            for (int i = 0; i < (int)database->size(); ++i)
+            // Sorting and category checks are O(N log N). Cache that work
+            // across trackpad zoom events; rebuild only after scan/filter changes.
+            if (candidateOrderDirty)
             {
-                const auto& r = (*database)[(size_t)i];
-                if (r.isLoop != showLoopsOnly || !matchesCurrentFilter(r))
-                    continue;
-
-                // Stable pseudo-random priority avoids always choosing the
-                // first file in a sample pack. An unchanged library retains
-                // its representatives across zoom levels.
-                uint32_t key = (uint32_t)i + 0x9e3779b9u;
-                key ^= key >> 16;
-                key *= 0x7feb352du;
-                key ^= key >> 15;
-                key *= 0x846ca68bu;
-                key ^= key >> 16;
-                candidates.push_back({ i, key });
-            }
-            std::sort(candidates.begin(), candidates.end(),
-                [](const Candidate& a, const Candidate& b)
+                candidateOrderDirty = false;
+                sortedCandidateIndices.clear();
+                sortedCandidateIndices.reserve(database->size());
+                for (int i = 0; i < (int)database->size(); ++i)
                 {
-                    return a.priority == b.priority
-                        ? a.index < b.index : a.priority < b.priority;
-                });
+                    const auto& r = (*database)[(size_t)i];
+                    if (r.isLoop == showLoopsOnly && matchesCurrentFilter(r))
+                        sortedCandidateIndices.push_back(i);
+                }
+                auto priorityFor = [](int i) -> uint32_t
+                {
+                    uint32_t key = (uint32_t)i + 0x9e3779b9u;
+                    key ^= key >> 16;
+                    key *= 0x7feb352du;
+                    key ^= key >> 15;
+                    key *= 0x846ca68bu;
+                    key ^= key >> 16;
+                    return key;
+                };
+                std::sort(sortedCandidateIndices.begin(), sortedCandidateIndices.end(),
+                    [&](int a, int b)
+                    {
+                        const auto pa = priorityFor(a), pb = priorityFor(b);
+                        return pa == pb ? a < b : pa < pb;
+                    });
+            }
 
-            constexpr float minSpacingPx = 8.0f;
+            // Increase separation for click/drag audition. This is display-
+            // only LOD; the persistent semantic coordinates never move.
+            constexpr float minSpacingPx = 15.0f;
             const float width = (float)getWidth();
             const float height = (float)getHeight() - 26.0f;
             const float cellSize = minSpacingPx;
@@ -585,16 +594,16 @@ namespace Atlas
             using CellKey = uint64_t;
             struct Occupant { float x, y; };
             std::unordered_map<CellKey, std::vector<Occupant>> cells;
-            cells.reserve(candidates.size());
+            cells.reserve(sortedCandidateIndices.size());
 
             auto cellKey = [](int x, int y) -> CellKey
             {
                 return ((uint64_t)(uint32_t)x << 32) | (uint32_t)y;
             };
 
-            for (const auto& candidate : candidates)
+            for (int candidateIndex : sortedCandidateIndices)
             {
-                const auto& rec = (*database)[(size_t)candidate.index];
+                const auto& rec = (*database)[(size_t)candidateIndex];
                 // Use the very same transform as the renderer, minus pan.
                 const auto coords = effectiveMapCoordinates(rec);
                 const float x = (width * 0.5f +
@@ -626,7 +635,7 @@ namespace Atlas
                 if (!overlaps)
                 {
                     cells[cellKey(cellX, cellY)].push_back({ x, y });
-                    visibleSampleIndices.push_back(candidate.index);
+                    visibleSampleIndices.push_back(candidateIndex);
                 }
             }
         }
@@ -698,6 +707,8 @@ namespace Atlas
         // Recomputed only when data, filters, viewport size or zoom changes.
         // Panning and auditioning do not alter the visible representatives.
         bool neuralMapActive = false;
+        mutable bool candidateOrderDirty = true;
+        mutable std::vector<int> sortedCandidateIndices;
         mutable bool visibleSamplesDirty = true;
         mutable std::vector<int> visibleSampleIndices;
 
