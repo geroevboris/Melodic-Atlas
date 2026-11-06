@@ -97,6 +97,21 @@ jobs:
           echo "--- host OS ---"
           sw_vers
 
+      - name: Validate AU in macOS AudioComponentRegistrar (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-') && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "build/MelodicAtlas_artefacts/Release/AU/Melodic-Atlas.component" \
+            "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          echo "--- Audio Units registration ---"
+          auval -a | grep -i -A 2 -B 2 'Melodic-Atlas' || true
+          echo "--- Actual AU load and validation ---"
+          auval -v aumu MlAt BrAu
+
       - name: Verify bundled native CLAP weights and runtime (8B)
         if: startsWith(github.ref, 'refs/heads/dev/8b-')
         run: python Tools/verify_native_bundle_8b.py
