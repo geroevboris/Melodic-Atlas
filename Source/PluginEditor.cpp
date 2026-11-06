@@ -147,9 +147,12 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     lblKeyRect = btnKeyRoot = btnScaleType = btnPitchMode = btnTransposeQuality = {};
     lblBpmRect = btnBpmHalf = btnBpmSync = btnBpmDouble = {};
 
-    float scanW = juce::jlimit(126.0f, 164.0f, w - hx - 22.0f);
-    float scanX = std::max(hx + 8.0f, w - scanW - 14.0f);
-    btnScanFolder = { scanX, 8.0f, w - scanX - 14.0f, 24.0f };
+    // Persistent library and explicit Refresh are separate operations.
+    const float refreshW = 75.0f;
+    float scanW = juce::jlimit(126.0f, 164.0f, w - hx - refreshW - 26.0f);
+    float scanX = std::max(hx + 8.0f, w - scanW - refreshW - 20.0f);
+    btnScanFolder = { scanX, 8.0f, scanW, 24.0f };
+    btnRefreshLibrary = { scanX + scanW + 6.0f, 8.0f, refreshW, 24.0f };
 
     // Кнопки фильтров кластеров и MOODS
     const juce::Font filterFont(
@@ -315,6 +318,8 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
         : (btnScanFolder.getWidth() < 142.0f ? "SCAN FOLDER" : "SCAN SAMPLE FOLDER");
     drawBtn(btnScanFolder, scanTxt,
             audioProcessor.isCurrentlyScanning(), juce::Colour(0xff354839));
+    drawBtn(btnRefreshLibrary, "REFRESH",
+            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff334053));
 }
 
 void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
@@ -1288,7 +1293,15 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(const juce::MouseEve
         repaint();
     }
     else if (btnScanFolder.contains(pt))
-        openFolderChooser();
+    {
+        if (!audioProcessor.isCurrentlyScanning())
+            openFolderChooser();
+    }
+    else if (btnRefreshLibrary.contains(pt))
+    {
+        if (!audioProcessor.isCurrentlyScanning())
+            audioProcessor.refreshLibraryAsync();
+    }
 }
 
 void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEvent& e)
@@ -1923,6 +1936,6 @@ void MelodicAtlasAudioProcessorEditor::timerCallback()
     if (audioProcessor.isCurrentlyScanning())
     {
         repaint((int)btnScanFolder.getX() - 4, 0,
-                (int)btnScanFolder.getWidth() + 8, 40);
+                (int)(btnRefreshLibrary.getRight() - btnScanFolder.getX()) + 8, 40);
     }
 }
