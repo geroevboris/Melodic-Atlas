@@ -141,6 +141,23 @@ namespace Atlas
         float estimatedMidi = 0.0f;
     };
 
+    // Passive evidence only: these classifications must NOT silently change
+    // playback until an independently validated detector is implemented.
+    enum class PitchStructure : int
+    {
+        NotEvaluated = 0,
+        StableToneCandidate = 1,
+        ComplexOrMoving = 2,
+        NoReliableTone = 3
+    };
+
+    enum class TempoEvidence : int
+    {
+        NotEvaluated = 0,
+        NoSyncEvidence = 1,
+        TempoTaggedCandidate = 2
+    };
+
     struct SampleRecord
     {
         juce::File file;
@@ -179,6 +196,12 @@ namespace Atlas
         float identityConfidence = 0.0f;
         AcousticFeatures acoustic;
         TonalFeatures tonal;
+        PitchStructure pitchStructure = PitchStructure::NotEvaluated;
+        TempoEvidence tempoEvidence = TempoEvidence::NotEvaluated;
+        // Evidence confidence, not a calibrated probability of correctness.
+        float pitchEvidenceStrength = 0.0f;
+        // A future beat tracker will supply a separately validated BPM.
+        float tempoEvidenceStrength = 0.0f;
         uint32_t characterMask = 0;
         std::array<float, 9> characterScores {};
         uint32_t subMask = Sub_None;
