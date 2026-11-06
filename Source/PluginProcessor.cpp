@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "NeuralMapImport.h"
 
 MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
     : AudioProcessor(
@@ -487,6 +488,10 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         return false;
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
+    // The projected map may be published independently of the legacy cache.
+    // This allows updating an existing library without re-decoding its audio.
+    // A missing/stale/incomplete manifest leaves the legacy map intact.
+    Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
@@ -544,6 +549,8 @@ void MelodicAtlasAudioProcessor::run()
     if (!threadShouldExit() && !newRecords.empty())
     {
         Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
+        // Worker thread only; does not touch the audio callback.
+        Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
