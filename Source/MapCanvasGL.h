@@ -25,6 +25,16 @@ namespace Atlas
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
             database = std::move(dbSnapshot);
+            // Require complete coverage: a partial imported projection must
+            // not mix neural and legacy coordinates on the same map.
+            neuralMapActive = database != nullptr && !database->empty();
+            if (neuralMapActive)
+                for (const auto& record : *database)
+                    if (!record.neuralMapValid)
+                    {
+                        neuralMapActive = false;
+                        break;
+                    }
             visibleSamplesDirty = true;
             activeSampleIndex = -1;
             hoveredSampleIndex = -1;
@@ -100,7 +110,7 @@ namespace Atlas
                 for (int i : visibleSampleIndices)
                 {
                     const auto& rec = (*database)[(size_t)i];
-                    auto pt = mapToScreen(rec.mapX, rec.mapY);
+                    auto pt = mapToScreen(rec);
                     if (pt.x < -4.0f || pt.x > w + 4.0f ||
                         pt.y < 26.0f || pt.y > mapBottomY - 4.0f)
                     {
@@ -495,6 +505,19 @@ namespace Atlas
             return true;
         }
 
+        juce::Point<float> effectiveMapCoordinates(const SampleRecord& rec) const
+        {
+            return neuralMapActive
+                ? juce::Point<float>(rec.neuralMapX, rec.neuralMapY)
+                : juce::Point<float>(rec.mapX, rec.mapY);
+        }
+
+        juce::Point<float> mapToScreen(const SampleRecord& rec) const
+        {
+            const auto pt = effectiveMapCoordinates(rec);
+            return mapToScreen(pt.x, pt.y);
+        }
+
         juce::Point<float> mapToScreen(float mx, float my) const
         {
             const float w = (float)getWidth();
@@ -567,10 +590,11 @@ namespace Atlas
             {
                 const auto& rec = (*database)[(size_t)candidate.index];
                 // Use the very same transform as the renderer, minus pan.
+                const auto coords = effectiveMapCoordinates(rec);
                 const float x = (width * 0.5f +
-                    (28.0f + rec.mapX * (width - 56.0f) - width * 0.5f) * zoomFactor);
+                    (28.0f + coords.x * (width - 56.0f) - width * 0.5f) * zoomFactor);
                 const float y = (height * 0.5f +
-                    (34.0f + rec.mapY * (height - 50.0f) - height * 0.5f) * zoomFactor);
+                    (34.0f + coords.y * (height - 50.0f) - height * 0.5f) * zoomFactor);
                 if (!std::isfinite(x) || !std::isfinite(y))
                     continue;
 
@@ -615,7 +639,7 @@ namespace Atlas
             for (int i : visibleSampleIndices)
             {
                 const auto& rec = (*database)[(size_t)i];
-                float dSq = mousePt.getDistanceSquaredFrom(mapToScreen(rec.mapX, rec.mapY));
+                float dSq = mousePt.getDistanceSquaredFrom(mapToScreen(rec));
                 if (dSq < bestDistSq)
                 {
                     bestDistSq = dSq;
@@ -667,6 +691,7 @@ namespace Atlas
 
         // Recomputed only when data, filters, viewport size or zoom changes.
         // Panning and auditioning do not alter the visible representatives.
+        bool neuralMapActive = false;
         mutable bool visibleSamplesDirty = true;
         mutable std::vector<int> visibleSampleIndices;
 
