@@ -1,12 +1,14 @@
-name: CLAP Map 8A Python Smoke Tests
+name: CLAP Map 8A/8B Python Smoke Tests
 
 on:
   push:
     branches:
       - 'dev/8a-*'
+      - 'dev/8b-*'
   pull_request:
     paths:
       - 'Tools/build_clap_map_8a.py'
+      - 'Tools/fetch_clap_onnx_8b.py'
       - '.github/workflows/clap-map-smoke.yml'
   workflow_dispatch:
 
@@ -19,3 +21,24 @@ jobs:
         run: python3 -m py_compile Tools/build_clap_map_8a.py
       - name: Offline self-test (no Torch or downloads)
         run: python3 Tools/build_clap_map_8a.py --self-test
+      - name: Build-time model verifier unit tests (no download)
+        run: |
+          python3 -m py_compile Tools/fetch_clap_onnx_8b.py
+          python3 - <<'PY'
+          import importlib.util
+          import tempfile
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("model_fetch", "Tools/fetch_clap_onnx_8b.py")
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          with tempfile.TemporaryDirectory() as d:
+              path = Path(d) / "test.onnx"
+              path.write_bytes(b"fixture")
+              assert not m.verify(path)
+              m.MODEL_BYTES = 7
+              m.MODEL_SHA256 = __import__("hashlib").sha256(b"fixture").hexdigest()
+              assert m.verify(path)
+              path.write_bytes(b"spoiled")
+              assert not m.verify(path)
+          print("Model verifier PASS")
+          PY
