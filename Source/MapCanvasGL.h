@@ -1,5 +1,9 @@
 #pragma once
 #include "SamplerEngine.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <unordered_map>
 
 namespace Atlas
 {
@@ -21,6 +25,7 @@ namespace Atlas
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
             database = std::move(dbSnapshot);
+            visibleSamplesDirty = true;
             activeSampleIndex = -1;
             hoveredSampleIndex = -1;
             auditionHistory.clear();
@@ -36,6 +41,7 @@ namespace Atlas
             activeClustersMask = clustersMask;
             clusterSubMasks = perClusterSubs;
             activeMoodMask = moodMask;
+            visibleSamplesDirty = true;
             repaint();
         }
 
@@ -54,6 +60,11 @@ namespace Atlas
         }
 
         std::function<void(int sampleIdx)> onSampleRightClicked;
+
+        void resized() override
+        {
+            visibleSamplesDirty = true;
+        }
 
         void paint(juce::Graphics& g) override
         {
@@ -85,12 +96,10 @@ namespace Atlas
 
             if (database != nullptr)
             {
-                for (int i = 0; i < (int)database->size(); ++i)
+                ensureVisibleSamples();
+                for (int i : visibleSampleIndices)
                 {
                     const auto& rec = (*database)[(size_t)i];
-                    if (rec.isLoop != showLoopsOnly || !matchesCurrentFilter(rec))
-                        continue;
-
                     auto pt = mapToScreen(rec.mapX, rec.mapY);
                     if (pt.x < -4.0f || pt.x > w + 4.0f ||
                         pt.y < 26.0f || pt.y > mapBottomY - 4.0f)
@@ -177,6 +186,7 @@ namespace Atlas
             if (zoomResetRect.contains(pt))
             {
                 zoomFactor = 1.0f;
+                visibleSamplesDirty = true;
                 panOffset = { 0.0f, 0.0f };
                 repaint();
                 return;
@@ -497,6 +507,100 @@ namespace Atlas
             };
         }
 
+        // Semantic zoom: show a deterministic, collision-free subset at each
+        // zoom level. Every marker is a real playable sample. Zooming reveals
+        // additional samples without changing any sample's map coordinates.
+        // Use world-space pixels (no pan offset) so moving the viewport does
+        // not reshuffle which samples exist at a given zoom level.
+        void ensureVisibleSamples() const
+        {
+            if (!visibleSamplesDirty)
+                return;
+            visibleSamplesDirty = false;
+            visibleSampleIndices.clear();
+            if (database == nullptr || getWidth() <= 0 || getHeight() <= 26)
+                return;
+
+            struct Candidate { int index; uint32_t priority; };
+            std::vector<Candidate> candidates;
+            candidates.reserve(database->size());
+            for (int i = 0; i < (int)database->size(); ++i)
+            {
+                const auto& r = (*database)[(size_t)i];
+                if (r.isLoop != showLoopsOnly || !matchesCurrentFilter(r))
+                    continue;
+
+                // Stable pseudo-random priority avoids always choosing the
+                // first file in a sample pack. An unchanged library retains
+                // its representatives across zoom levels.
+                uint32_t key = (uint32_t)i + 0x9e3779b9u;
+                key ^= key >> 16;
+                key *= 0x7feb352du;
+                key ^= key >> 15;
+                key *= 0x846ca68bu;
+                key ^= key >> 16;
+                candidates.push_back({ i, key });
+            }
+            std::sort(candidates.begin(), candidates.end(),
+                [](const Candidate& a, const Candidate& b)
+                {
+                    return a.priority == b.priority
+                        ? a.index < b.index : a.priority < b.priority;
+                });
+
+            constexpr float minSpacingPx = 8.0f;
+            const float width = (float)getWidth();
+            const float height = (float)getHeight() - 26.0f;
+            const float cellSize = minSpacingPx;
+            const float minDistSq = minSpacingPx * minSpacingPx;
+            using CellKey = uint64_t;
+            struct Occupant { float x, y; };
+            std::unordered_map<CellKey, std::vector<Occupant>> cells;
+            cells.reserve(candidates.size());
+
+            auto cellKey = [](int x, int y) -> CellKey
+            {
+                return ((uint64_t)(uint32_t)x << 32) | (uint32_t)y;
+            };
+
+            for (const auto& candidate : candidates)
+            {
+                const auto& rec = (*database)[(size_t)candidate.index];
+                // Use the very same transform as the renderer, minus pan.
+                const float x = (width * 0.5f +
+                    (28.0f + rec.mapX * (width - 56.0f) - width * 0.5f) * zoomFactor);
+                const float y = (height * 0.5f +
+                    (34.0f + rec.mapY * (height - 50.0f) - height * 0.5f) * zoomFactor);
+                if (!std::isfinite(x) || !std::isfinite(y))
+                    continue;
+
+                const int cellX = (int)std::floor(x / cellSize);
+                const int cellY = (int)std::floor(y / cellSize);
+                bool overlaps = false;
+                for (int dy = -1; dy <= 1 && !overlaps; ++dy)
+                    for (int dx = -1; dx <= 1 && !overlaps; ++dx)
+                    {
+                        const auto it = cells.find(cellKey(cellX + dx, cellY + dy));
+                        if (it == cells.end())
+                            continue;
+                        for (const auto& other : it->second)
+                        {
+                            const float ddx = x - other.x, ddy = y - other.y;
+                            if (ddx * ddx + ddy * ddy < minDistSq)
+                            {
+                                overlaps = true;
+                                break;
+                            }
+                        }
+                    }
+                if (!overlaps)
+                {
+                    cells[cellKey(cellX, cellY)].push_back({ x, y });
+                    visibleSampleIndices.push_back(candidate.index);
+                }
+            }
+        }
+
         int findNearestSample(juce::Point<float> mousePt, float maxRadiusPx) const
         {
             if (database == nullptr)
@@ -505,12 +609,12 @@ namespace Atlas
             int bestIdx = -1;
             float bestDistSq = maxRadiusPx * maxRadiusPx;
 
-            for (int i = 0; i < (int)database->size(); ++i)
+            // Interaction follows the exact same LOD selection as painting:
+            // invisible samples must never intercept a mouse click.
+            ensureVisibleSamples();
+            for (int i : visibleSampleIndices)
             {
                 const auto& rec = (*database)[(size_t)i];
-                if (rec.isLoop != showLoopsOnly || !matchesCurrentFilter(rec))
-                    continue;
-
                 float dSq = mousePt.getDistanceSquaredFrom(mapToScreen(rec.mapX, rec.mapY));
                 if (dSq < bestDistSq)
                 {
@@ -535,6 +639,7 @@ namespace Atlas
             panOffset.y = (anchorScreenPt.y - cy) * (1.0f - ratio) + panOffset.y * ratio;
 
             zoomFactor = clampedZoom;
+            visibleSamplesDirty = true;
             clampPanOffset();
             repaint();
         }
@@ -559,6 +664,11 @@ namespace Atlas
         int hoveredSampleIndex = -1;
         int lastSweptSampleIndex = -1;
         uint32_t lastPreviewTriggerMs = 0;
+
+        // Recomputed only when data, filters, viewport size or zoom changes.
+        // Panning and auditioning do not alter the visible representatives.
+        mutable bool visibleSamplesDirty = true;
+        mutable std::vector<int> visibleSampleIndices;
 
         float zoomFactor = 1.0f;
         juce::Point<float> panOffset { 0.0f, 0.0f };
