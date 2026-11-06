@@ -311,6 +311,13 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("rough", rec.harmonicRoughness, nullptr);
         item.setProperty("mx", rec.mapX, nullptr);
         item.setProperty("my", rec.mapY, nullptr);
+        item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
+        if (rec.clapEmbeddingValid)
+        {
+            juce::MemoryBlock bytes(rec.clapEmbedding.data(),
+                rec.clapEmbedding.size() * sizeof(float));
+            item.setProperty("clapEmbedding", bytes.toBase64Encoding(), nullptr);
+        }
         item.setProperty("neuralMapValid", rec.neuralMapValid, nullptr);
         if (rec.neuralMapValid)
         {
@@ -411,6 +418,22 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.harmonicRoughness = (float)item.getProperty("rough", 0.1f);
         rec.mapX = (float)item.getProperty("mx", 0.5f);
         rec.mapY = (float)item.getProperty("my", 0.5f);
+        // This is the scanner's native CLAP vector cache, independent of
+        // the old offline Python UMAP manifest.
+        rec.clapEmbeddingValid = false;
+        if ((bool)item.getProperty("clapEmbeddingValid", false))
+        {
+            juce::MemoryBlock bytes;
+            if (bytes.fromBase64Encoding(
+                    item.getProperty("clapEmbedding", "").toString())
+                && bytes.getSize() == rec.clapEmbedding.size() * sizeof(float))
+            {
+                std::memcpy(rec.clapEmbedding.data(), bytes.getData(), bytes.getSize());
+                rec.clapEmbeddingValid = std::all_of(
+                    rec.clapEmbedding.begin(), rec.clapEmbedding.end(),
+                    [](float value) { return std::isfinite(value); });
+            }
+        }
         // Missing fields in legacy caches naturally fall back to DSP.
         const float neuralX = (float)item.getProperty("neuralMapX", 0.5f);
         const float neuralY = (float)item.getProperty("neuralMapY", 0.5f);
