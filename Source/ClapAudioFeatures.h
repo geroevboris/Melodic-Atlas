@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <vector>
 
 namespace Atlas
