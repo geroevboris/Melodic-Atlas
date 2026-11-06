@@ -16,9 +16,9 @@ import urllib.request
 import zipfile
 
 VERSION = "1.22.1"
-URL_BASE = "https://github.com/microsoft/onnxruntime/releases/download/v" + VERSION + "/"
+MAC_VERSION = "1.22.0"
 PLATFORMS = {
-    "macos": f"onnxruntime-osx-universal2-{VERSION}.tgz",
+    "macos": f"onnxruntime-osx-universal2-{MAC_VERSION}.tgz",
     "windows": f"onnxruntime-win-x64-{VERSION}.zip",
 }
 KNOWN_SHA256 = {
@@ -39,7 +39,10 @@ def run(system: str, base: Path) -> Path:
         fd, temp = tempfile.mkstemp(prefix="ort-download-", dir=base)
         try:
             with os.fdopen(fd, "wb") as out:
-                req = urllib.request.Request(URL_BASE + name,
+                release_version = MAC_VERSION if system == "macos" else VERSION
+                release_url = ("https://github.com/microsoft/onnxruntime/releases/"
+                               f"download/v{release_version}/{name}")
+                req = urllib.request.Request(release_url,
                     headers={"User-Agent": "MelodicAtlas-Build/8B"})
                 with urllib.request.urlopen(req, timeout=180) as response:
                     shutil.copyfileobj(response, out)
@@ -75,7 +78,7 @@ def run(system: str, base: Path) -> Path:
             tar.extractall(base, filter="data")
     if not (root / "include" / "onnxruntime_cxx_api.h").is_file():
         raise RuntimeError(f"ONNX Runtime archive missing C++ headers: {root}")
-    print(f"Prepared pinned ONNX Runtime {VERSION}: {root}")
+    print(f"Prepared ONNX Runtime {MAC_VERSION if system == 'macos' else VERSION}: {root}")
     return root
 
 
