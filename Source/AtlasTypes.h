@@ -187,6 +187,10 @@ namespace Atlas
         // Optional normalized Pure CLAP / UMAP Balanced coordinates.
         // Never overwrite the legacy map; an incomplete ML projection is
         // not mixed with DSP geometry.
+        // CLAP features stored locally for incremental native UMAP refresh.
+        // Never read or write these arrays from the audio callback.
+        bool clapEmbeddingValid = false;
+        std::array<float, 512> clapEmbedding {};
         bool neuralMapValid = false;
         float neuralMapX = 0.5f;
         float neuralMapY = 0.5f;
