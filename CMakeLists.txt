@@ -118,7 +118,7 @@ if(ATLAS_ENABLE_NATIVE_CLAP)
 
     if(APPLE)
         set(ATLAS_ORT_LINK "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.dylib")
-        set(ATLAS_ORT_VERSIONED "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.22.0.dylib")
+        set(ATLAS_ORT_VERSIONED "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.19.2.dylib")
         if(NOT EXISTS "${ATLAS_ORT_LINK}")
             message(FATAL_ERROR "macOS ONNX Runtime dylib not found")
         endif()
