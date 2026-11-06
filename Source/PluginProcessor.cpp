@@ -346,6 +346,10 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("tonalStability", rec.tonal.pitchStability, nullptr);
         item.setProperty("tonalDeviation", rec.tonal.pitchDeviationSemitones, nullptr);
         item.setProperty("tonalMidi", rec.tonal.estimatedMidi, nullptr);
+        item.setProperty("pitchStructure", (int)rec.pitchStructure, nullptr);
+        item.setProperty("tempoEvidence", (int)rec.tempoEvidence, nullptr);
+        item.setProperty("pitchEvidenceStrength", rec.pitchEvidenceStrength, nullptr);
+        item.setProperty("tempoEvidenceStrength", rec.tempoEvidenceStrength, nullptr);
         item.setProperty("characterMask", (int)rec.characterMask, nullptr);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
             item.setProperty("char" + juce::String((int)feature),
@@ -465,6 +469,20 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             (float)item.getProperty("tonalDeviation", 0.0f);
         rec.tonal.estimatedMidi =
             (float)item.getProperty("tonalMidi", 0.0f);
+        // Legacy cache entries remain explicitly NotEvaluated. Never infer a
+        // trusted pitch class or tempo from old placeholder/default values.
+        rec.pitchStructure = static_cast<Atlas::PitchStructure>(
+            juce::jlimit(0, 3, (int)item.getProperty("pitchStructure", 0)));
+        rec.tempoEvidence = static_cast<Atlas::TempoEvidence>(
+            juce::jlimit(0, 2, (int)item.getProperty("tempoEvidence", 0)));
+        const float savedPitchStrength =
+            (float)item.getProperty("pitchEvidenceStrength", 0.0f);
+        const float savedTempoStrength =
+            (float)item.getProperty("tempoEvidenceStrength", 0.0f);
+        rec.pitchEvidenceStrength = std::isfinite(savedPitchStrength)
+            ? juce::jlimit(0.0f, 1.0f, savedPitchStrength) : 0.0f;
+        rec.tempoEvidenceStrength = std::isfinite(savedTempoStrength)
+            ? juce::jlimit(0.0f, 1.0f, savedTempoStrength) : 0.0f;
         // Legacy cache records have no independently evaluated identity.
         // Reuse existing measurements without rescanning the audio.
         if (rec.identityState == Atlas::IdentityState::NotEvaluated &&
