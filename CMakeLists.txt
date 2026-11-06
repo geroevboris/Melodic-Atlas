@@ -118,7 +118,7 @@ if(ATLAS_ENABLE_NATIVE_CLAP)
 
     if(APPLE)
         set(ATLAS_ORT_LINK "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.dylib")
-        set(ATLAS_ORT_VERSIONED "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.22.1.dylib")
+        set(ATLAS_ORT_VERSIONED "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.22.0.dylib")
         if(NOT EXISTS "${ATLAS_ORT_LINK}")
             message(FATAL_ERROR "macOS ONNX Runtime dylib not found")
         endif()
@@ -151,7 +151,7 @@ if(ATLAS_ENABLE_NATIVE_CLAP)
                     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                         "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.dylib"
                     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                        "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.1.22.1.dylib"
+                        "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.1.22.0.dylib"
                     VERBATIM)
             else()
                 if(atlas_format STREQUAL "VST3")
