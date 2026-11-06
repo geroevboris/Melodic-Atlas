@@ -5,6 +5,7 @@
 #include "CharacterAnalyzer.h"
 #include "PercussionGate.h"
 #include "SoundIdentityAnalyzer.h"
+#include "PitchRhythmEvidence.h"
 
 namespace Atlas
 {
@@ -134,6 +135,7 @@ namespace Atlas
             CharacterAnalyzer::evaluate(outRecord);
             PercussionGate::evaluate(outRecord);
             SoundIdentityAnalyzer::evaluate(file, outRecord);
+            PitchRhythmEvidence::evaluate(outRecord);
             return true;
         }
 
