@@ -68,6 +68,10 @@ jobs:
       - name: Build Plugin (Release)
         run: cmake --build build --config Release --parallel 4
 
+      - name: Verify bundled native CLAP weights and runtime (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        run: python Tools/verify_native_bundle_8b.py
+
       - name: Upload Built Plugins
         uses: actions/upload-artifact@v4
         with:
