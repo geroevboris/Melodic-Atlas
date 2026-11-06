@@ -542,9 +542,14 @@ void MelodicAtlasAudioProcessor::run()
 
         scanProgress.store((float)(i + 1) / (float)std::max(1, total));
 
+        const auto& file = audioFiles.getReference(i);
+        // Skip unambiguous drum-labeled files before expensive audio decode.
+        if (Atlas::PercussionGate::isExplicitDrumFile(file))
+            continue;
+
         Atlas::SampleRecord rec;
-        if (Atlas::AudioAnalyzer::analyzeFile(
-                audioFiles.getReference(i), formatManager, rec))
+        if (Atlas::AudioAnalyzer::analyzeFile(file, formatManager, rec)
+            && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
         {
             newRecords.push_back(std::move(rec));
             scannedCount.store((int)newRecords.size());

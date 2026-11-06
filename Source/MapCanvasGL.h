@@ -1,5 +1,6 @@
 #pragma once
 #include "SamplerEngine.h"
+#include "PercussionGate.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -476,6 +477,11 @@ namespace Atlas
 
         bool matchesCurrentFilter(const SampleRecord& rec) const
         {
+            // A cached legacy entry may be present in the database for old
+            // projects/pad history, but must not appear on the melodic map.
+            if (PercussionGate::shouldExcludeFromAtlas(rec))
+                return false;
+
             int cIdx = juce::jlimit(0, 6, (int)rec.cluster);
 
             if (activeClustersMask != 0)

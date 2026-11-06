@@ -161,13 +161,11 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     groupFilterRects[0] = { gx, row1Y, allW, 24.0f };
     gx += allW + 6.0f;
 
-    btnDiscover = { gx, row1Y, 25.0f, 24.0f };
-    gx += 31.0f;
-
+    // Discover belongs after the instrument and character filters.
     for (int c = 0; c < 8; ++c)
     {
         auto cg = static_cast<Atlas::ClusterGroup>(c);
-        juce::String baseLabel = Atlas::MusicMath::getClusterName(cg);
+        juce::String baseLabel = c == 7 ? "CHAR" : Atlas::MusicMath::getClusterName(cg);
 
         if (c < 7)
         {
@@ -186,12 +184,18 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
             baseLabel += mShort.isNotEmpty() ? (":" + mShort) : ":ON";
         }
 
+        // Character traits are an independent AND-filter, not an
+        // eighth instrument category. A visual gap separates the two.
+        if (c == 7)
+            gx += 12.0f;
         float textW = filterFont.getStringWidthFloat(baseLabel);
         float btnW = textW + 28.0f;
         groupFilterRects[(size_t)(c + 1)] = { gx, row1Y, btnW, 24.0f };
         groupDropdownRects[(size_t)c]     = { gx + btnW - 18.0f, row1Y, 18.0f, 24.0f };
         gx += btnW + 6.0f;
     }
+    // Keep Discover next to the last filter, never on the left by ALL.
+    btnDiscover = { gx + 4.0f, row1Y, 59.0f, 24.0f };
 
     // One global preview Tune knob; no separate octave.
     btnOctUp = btnOctDown = octValueRect = octLabelRect = {};
@@ -337,9 +341,10 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.fillRoundedRectangle(btnDiscover, 4.0f);
     g.setColour(juce::Colour(0xff91b6cd));
     g.drawRoundedRectangle(btnDiscover, 4.0f, 1.0f);
-    auto die = btnDiscover.reduced(7.0f, 6.0f);
-    g.drawRoundedRectangle(die, 2.0f, 1.0f);
-    g.fillEllipse(die.getCentreX() - 1.5f, die.getCentreY() - 1.5f, 3.0f, 3.0f);
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(),
+                        9.5f, juce::Font::bold));
+    g.drawText("DISCOVER", btnDiscover, juce::Justification::centred, false);
 
     for (int c = 0; c < 8; ++c)
     {
@@ -351,7 +356,7 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
             ? ((selectedClustersMask & (1u << c)) != 0)
             : (selectedMoodMask != 0);
 
-        juce::String label = Atlas::MusicMath::getClusterName(cg);
+        juce::String label = c == 7 ? "CHAR" : Atlas::MusicMath::getClusterName(cg);
         if (c < 7)
         {
             uint32_t subBit = selectedClusterSubgroupBit[(size_t)c];
@@ -374,7 +379,9 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
             label += ":" + mShort;
         }
 
-        juce::Colour col = Atlas::MusicMath::getClusterColour(cg, 1);
+        juce::Colour col = c == 7
+            ? juce::Colour(0xff92a6cd)
+            : Atlas::MusicMath::getClusterColour(cg, 1);
 
         g.setColour(on ? col.withAlpha(0.32f) : juce::Colour(0xff1d232c));
         g.fillRoundedRectangle(btnR, 3.0f);

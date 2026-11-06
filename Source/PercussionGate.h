@@ -10,6 +10,33 @@ namespace Atlas
     class PercussionGate
     {
     public:
+        // Deliberately narrow, word-boundary metadata gate. It must not
+        // reject melodic sounds containing these syllables as substrings.
+        // A pitched drum is still a drum for a melodic-only browser.
+        static bool isExplicitDrumFile(const juce::File& file)
+        {
+            juce::StringArray words;
+            words.addTokens(file.getFileNameWithoutExtension().toLowerCase(),
+                            " _-.()[]{}0123456789", "");
+            static constexpr const char* drumWords[] = {
+                "kick", "kicks", "snare", "snares", "clap", "claps",
+                "hihat", "hihats", "hat", "hats", "cymbal", "cymbals",
+                "crash", "ride", "rimshot", "rim", "tambourine",
+                "shaker", "shakers", "cowbell", "tom", "toms",
+                "drum", "drums", "percussion", "perc"
+            };
+            for (const char* token : drumWords)
+                if (words.contains(token))
+                    return true;
+            return false;
+        }
+
+        static bool shouldExcludeFromAtlas(const SampleRecord& rec)
+        {
+            return isExplicitDrumFile(rec.file)
+                || rec.percussionState == PercussionState::Percussive;
+        }
+
         static void evaluate(SampleRecord& rec)
         {
             rec.percussionState = PercussionState::NotEvaluated;
