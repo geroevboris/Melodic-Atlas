@@ -533,7 +533,14 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     // The projected map may be published independently of the legacy cache.
     // This allows updating an existing library without re-decoding its audio.
     // A missing/stale/incomplete manifest leaves the legacy map intact.
-    Atlas::NeuralMapImport::apply(folderToScan, loaded);
+    // Native CLAP coordinates already cached must not be silently replaced
+    // by a separate legacy Python projection manifest on next DAW launch.
+    const bool completeNativeMap = std::all_of(
+        loaded.begin(), loaded.end(),
+        [](const Atlas::SampleRecord& record)
+        { return record.clapEmbeddingValid && record.neuralMapValid; });
+    if (!completeNativeMap)
+        Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
