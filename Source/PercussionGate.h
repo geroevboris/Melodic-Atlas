@@ -4,9 +4,8 @@
 
 namespace Atlas
 {
-    // Scanner-only, high-precision provisional percussion gate.
-    // Intentionally prioritizes retaining pitched plucks, bells and stabs
-    // over achieving high percussion recall. No file is deleted or hidden.
+    // Shared scan/map exclusion policy. Never delete a user's source file.
+    // Strong metadata exclusions outrank a pitched drum's stable fundamental.
     class PercussionGate
     {
     public:
@@ -15,19 +14,48 @@ namespace Atlas
         // A pitched drum is still a drum for a melodic-only browser.
         static bool isExplicitDrumFile(const juce::File& file)
         {
-            juce::StringArray words;
-            words.addTokens(file.getFileNameWithoutExtension().toLowerCase(),
-                            " _-.()[]{}0123456789", "");
-            static constexpr const char* drumWords[] = {
-                "kick", "kicks", "snare", "snares", "clap", "claps",
-                "hihat", "hihats", "hat", "hats", "cymbal", "cymbals",
-                "crash", "ride", "rimshot", "rim", "tambourine",
-                "shaker", "shakers", "cowbell", "tom", "toms",
-                "drum", "drums", "percussion", "perc"
+            // Use filename AND explicitly named drum-category directories.
+            // Keep arbitrary sample-pack names out of this decision.
+            const auto hasDrumTokens = [](const juce::String& value)
+            {
+                juce::StringArray words;
+                words.addTokens(value.toLowerCase(),
+                                " _-.()[]{}0123456789", "");
+                static constexpr const char* drumWords[] = {
+                    "kick", "kicks", "bd", "snare", "snares", "snr", "sd",
+                    "clap", "claps", "cp", "hihat", "hihats", "hh",
+                    "closedhat", "openhat", "hat", "hats", "cymbal",
+                    "cymbals", "crash", "ride", "rimshot", "rim",
+                    "tambourine", "shaker", "shakers", "cowbell",
+                    "tom", "toms", "drum", "drums", "percussion",
+                    "perc", "conga", "bongo", "clave", "claves",
+                    "woodblock", "tamb", "timbale"
+                };
+                for (const char* token : drumWords)
+                    if (words.contains(token))
+                        return true;
+                return false;
             };
-            for (const char* token : drumWords)
-                if (words.contains(token))
+            if (hasDrumTokens(file.getFileNameWithoutExtension()))
+                return true;
+
+            // Some libraries use anonymous numbered files stored beneath
+            // Drums/Kicks/Snares/Hats. Match category folders, not whole packs.
+            for (int level = 0; level < 2; ++level)
+            {
+                const auto dir = level == 0 ? file.getParentDirectory()
+                    : file.getParentDirectory().getParentDirectory();
+                const juce::String folder = dir.getFileName().toLowerCase();
+                if (folder == "drums" || folder == "drum" ||
+                    folder == "percussion" || folder == "perc" ||
+                    folder == "kicks" || folder == "kick" ||
+                    folder == "snares" || folder == "snare" ||
+                    folder == "claps" || folder == "clap" ||
+                    folder == "hats" || folder == "hihat" ||
+                    folder == "hi hats" || folder == "cymbals" ||
+                    folder == "shakers" || folder == "toms")
                     return true;
+            }
             return false;
         }
 
