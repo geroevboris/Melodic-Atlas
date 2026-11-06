@@ -86,3 +86,88 @@ target_link_libraries(MelodicAtlas
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+
+# Stage 8B: native offline CLAP. Release builds enable this explicitly and
+# provide a pinned ONNX model + ONNX Runtime as BUILD INPUTS. Users never
+# download dependencies at scan time.
+option(ATLAS_ENABLE_NATIVE_CLAP "Embed local CLAP inference into plugin bundles" OFF)
+set(ATLAS_ONNXRUNTIME_ROOT "" CACHE PATH "Extracted ONNX Runtime C++ distribution")
+set(ATLAS_CLAP_MODEL_PATH "" CACHE FILEPATH "Pinned, SHA-256-verified audio_model.onnx")
+
+if(ATLAS_ENABLE_NATIVE_CLAP)
+    if(NOT EXISTS "${ATLAS_CLAP_MODEL_PATH}")
+        message(FATAL_ERROR "CLAP model missing. Build-time fetch must provide ATLAS_CLAP_MODEL_PATH.")
+    endif()
+    if(NOT EXISTS "${ATLAS_ONNXRUNTIME_ROOT}/include/onnxruntime_cxx_api.h")
+        message(FATAL_ERROR "ONNX Runtime distribution missing. Set ATLAS_ONNXRUNTIME_ROOT.")
+    endif()
+
+    FetchContent_Declare(
+        umappp
+        GIT_REPOSITORY https://github.com/libscran/umappp.git
+        GIT_TAG v3.3.2
+        GIT_SHALLOW TRUE
+    )
+    set(UMAPPP_TESTS OFF CACHE BOOL "No dependency tests in plugin build" FORCE)
+    FetchContent_MakeAvailable(umappp)
+
+    target_compile_definitions(MelodicAtlas PRIVATE ATLAS_ENABLE_NATIVE_CLAP=1)
+    target_include_directories(MelodicAtlas PRIVATE "${ATLAS_ONNXRUNTIME_ROOT}/include")
+    target_link_libraries(MelodicAtlas PRIVATE libscran::umappp)
+
+    if(APPLE)
+        set(ATLAS_ORT_LINK "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.dylib")
+        set(ATLAS_ORT_VERSIONED "${ATLAS_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.22.1.dylib")
+        if(NOT EXISTS "${ATLAS_ORT_LINK}")
+            message(FATAL_ERROR "macOS ONNX Runtime dylib not found")
+        endif()
+    elseif(WIN32)
+        set(ATLAS_ORT_LINK "${ATLAS_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+        set(ATLAS_ORT_DLL "${ATLAS_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll")
+        if(NOT EXISTS "${ATLAS_ORT_LINK}" OR NOT EXISTS "${ATLAS_ORT_DLL}")
+            message(FATAL_ERROR "Windows ONNX Runtime import library or DLL not found")
+        endif()
+    else()
+        message(FATAL_ERROR "Native CLAP currently supports macOS and Windows only.")
+    endif()
+    target_link_libraries(MelodicAtlas PRIVATE "${ATLAS_ORT_LINK}")
+
+    foreach(atlas_format IN ITEMS VST3 AU Standalone)
+        set(atlas_wrapper "MelodicAtlas_${atlas_format}")
+        if(TARGET "${atlas_wrapper}")
+            if(APPLE)
+                set(atlas_bundle "$<TARGET_BUNDLE_DIR:${atlas_wrapper}>")
+                set(atlas_resources "${atlas_bundle}/Contents/Resources")
+                set(atlas_frameworks "${atlas_bundle}/Contents/Frameworks")
+                set_target_properties("${atlas_wrapper}" PROPERTIES
+                    BUILD_RPATH "@loader_path/../Frameworks"
+                    INSTALL_RPATH "@loader_path/../Frameworks")
+                add_custom_command(TARGET "${atlas_wrapper}" POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "${atlas_resources}"
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "${atlas_frameworks}"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${ATLAS_CLAP_MODEL_PATH}" "${atlas_resources}/clap_audio.onnx"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.dylib"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${ATLAS_ORT_LINK}" "${atlas_frameworks}/libonnxruntime.1.22.1.dylib"
+                    VERBATIM)
+            else()
+                if(atlas_format STREQUAL "VST3")
+                    set(atlas_resources
+                        "$<TARGET_FILE_DIR:${atlas_wrapper}>/../Resources")
+                else()
+                    set(atlas_resources "$<TARGET_FILE_DIR:${atlas_wrapper}>")
+                endif()
+                add_custom_command(TARGET "${atlas_wrapper}" POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "${atlas_resources}"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${ATLAS_CLAP_MODEL_PATH}" "${atlas_resources}/clap_audio.onnx"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "${ATLAS_ORT_DLL}" "$<TARGET_FILE_DIR:${atlas_wrapper}>/onnxruntime.dll"
+                    VERBATIM)
+            endif()
+        endif()
+    endforeach()
+endif()
