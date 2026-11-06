@@ -1,0 +1,21 @@
+name: CLAP Map 8A Python Smoke Tests
+
+on:
+  push:
+    branches:
+      - 'dev/8a-*'
+  pull_request:
+    paths:
+      - 'Tools/build_clap_map_8a.py'
+      - '.github/workflows/clap-map-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  python-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: python3 -m py_compile Tools/build_clap_map_8a.py
+      - name: Offline self-test (no Torch or downloads)
+        run: python3 Tools/build_clap_map_8a.py --self-test
