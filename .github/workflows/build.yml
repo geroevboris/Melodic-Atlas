@@ -31,7 +31,38 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure CMake
+      - name: Setup Python for native 8B packaging
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch pinned local CLAP and ONNX Runtime (build-time only)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        shell: bash
+        run: |
+          python Tools/fetch_clap_onnx_8b.py build/assets/clap_audio.onnx
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            python Tools/prepare_native_runtime_8b.py macos build/native
+          else
+            python Tools/prepare_native_runtime_8b.py windows build/native
+          fi
+
+      - name: Configure Native CLAP CMake (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            ort="$GITHUB_WORKSPACE/build/native/onnxruntime-osx-universal2-1.22.1"
+          else
+            ort="$GITHUB_WORKSPACE/build/native/onnxruntime-win-x64-1.22.1"
+          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DATLAS_ENABLE_NATIVE_CLAP=ON \
+            "-DATLAS_ONNXRUNTIME_ROOT=$ort" \
+            "-DATLAS_CLAP_MODEL_PATH=$GITHUB_WORKSPACE/build/assets/clap_audio.onnx"
+
+      - name: Configure CMake (legacy/other branches)
+        if: "!startsWith(github.ref, 'refs/heads/dev/8b-')"
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Plugin (Release)
