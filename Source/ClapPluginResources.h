@@ -3,7 +3,16 @@
 
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX 1
+#endif
 #include <windows.h>
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 #elif JUCE_MAC
 #include <dlfcn.h>
 #endif
