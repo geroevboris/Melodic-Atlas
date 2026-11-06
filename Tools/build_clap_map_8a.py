@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-MODEL_ID = "laion/clap-htsat-unfused"
+MODEL_ID = "laion-clap-HTSAT-tiny-630k-audioset-nonfusion"
 SCHEMA = 1
 AUDIO_EXTS = {".wav", ".aif", ".aiff", ".flac", ".ogg", ".mp3"}
 DRUM_TOKENS = {
@@ -166,6 +166,11 @@ def run(folder: Path, *, rebuild: bool, batch_size: int, device: str) -> None:
                     **fingerprint(items[rel]),
                     "embedding": (vec / norm).astype(float).tolist(),
                 }
+            # Checkpoint progress after every successful batch. If a later
+            # file is unreadable, the expensive embeddings can be resumed.
+            atomic_json(vector_file, {
+                "schema": SCHEMA, "model": MODEL_ID, "samples": valid_vectors
+            })
             print(f"  CLAP {min(offset + batch_size, len(needing_inference))}/{len(needing_inference)}", flush=True)
 
     ordered = sorted(items)
