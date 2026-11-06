@@ -162,6 +162,10 @@ namespace Atlas
     {
         juce::File file;
         juce::String name;
+        // File identity for incremental Refresh; missing legacy values require
+        // one fresh analysis rather than trusting potentially stale features.
+        int64_t sourceBytes = -1;
+        int64_t sourceModifiedMs = -1;
         bool isLoop = false;
         bool isPolyChord = false;
         double durationSec = 0.0;
