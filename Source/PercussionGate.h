@@ -23,13 +23,13 @@ namespace Atlas
                                 " _-.()[]{}0123456789", "");
                 static constexpr const char* drumWords[] = {
                     "kick", "kicks", "bd", "snare", "snares", "snr", "sd",
-                    "clap", "claps", "cp", "hihat", "hihats", "hi", "hh",
+                    "clap", "claps", "cp", "hihat", "hihats", "hh",
                     "closedhat", "openhat", "hat", "hats", "cymbal",
                     "cymbals", "crash", "ride", "rimshot", "rim",
                     "tambourine", "shaker", "shakers", "cowbell",
                     "tom", "toms", "drum", "drums", "percussion",
                     "perc", "conga", "bongo", "clave", "claves",
-                    "woodblock", "tamb", "claves", "timbale"
+                    "woodblock", "tamb", "timbale"
                 };
                 for (const char* token : drumWords)
                     if (words.contains(token))
