@@ -112,9 +112,9 @@ namespace Atlas
             knncolle::VptreeBuilder<int, double, double> neighbors(
                 std::make_shared<knncolle::EuclideanDistance<double, double>>());
             umappp::Options options;
-            options.num_neighbors = std::min(20, n - 1);
-            options.num_epochs = 200;
-            options.min_dist = 0.15;
+            options.num_neighbors = std::min(12, n - 1);
+            options.num_epochs = 250;
+            options.min_dist = 0.055;
             std::vector<double> coords((size_t)n * 2);
             auto status = umappp::initialize(
                 dimensions, n, vectors.data(), neighbors,
