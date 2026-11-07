@@ -297,6 +297,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 
     juce::ValueTree root("MelodicAtlasDatabaseCache");
     root.setProperty("scannedFolder", folderToScan.getFullPathName(), nullptr);
+    root.setProperty("mapGeometryVersion", geometryVersionCurrent.load() ? 2 : 0, nullptr);
 
     for (const auto& rec : sampleDatabase)
     {
@@ -395,6 +396,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     auto root = juce::ValueTree::fromXml(*xml);
     if (!root.isValid() || root.getNumChildren() == 0)
         return false;
+
+    const int savedMapVersion = (int)root.getProperty("mapGeometryVersion", 0);
 
     juce::String savedFolder = root.getProperty("scannedFolder", "").toString();
     if (savedFolder.isNotEmpty())
@@ -526,8 +529,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             Atlas::SoundIdentityAnalyzer::evaluate(rec.file, rec);
         // When upgrading from a previous v4 cache, compute the gate from
         // already-measured descriptors rather than re-reading the audio.
-        if (rec.percussionState == Atlas::PercussionState::NotEvaluated &&
-            rec.acoustic.valid && rec.tonal.valid)
+        // Re-evaluate already measured records under the updated gate,
+        // including those previously labelled Melodic or Uncertain.
+        if (rec.acoustic.valid && rec.tonal.valid)
             Atlas::PercussionGate::evaluate(rec);
         rec.characterMask = (uint32_t)(int)item.getProperty("characterMask", 0);
         for (size_t feature = 0; feature < rec.characterScores.size(); ++feature)
@@ -555,14 +559,42 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         loaded.begin(), loaded.end(),
         [](const Atlas::SampleRecord& record)
         { return record.clapEmbeddingValid && record.neuralMapValid; });
-    if (!completeNativeMap)
+    bool migratedGeometry = false;
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    const bool allNativeEmbeddings =
+        loaded.size() >= 4 && std::all_of(loaded.begin(), loaded.end(),
+            [](const Atlas::SampleRecord& rec) {
+                return rec.clapEmbeddingValid;
+            });
+    if (savedMapVersion < 2 && allNativeEmbeddings)
+    {
+        try
+        {
+            // One-time full fit; empty old-anchor set deliberately avoids
+            // retaining the previous, scattered UMAP coordinates.
+            migratedGeometry = Atlas::NativeClapProjection::apply(loaded, {});
+        }
+        catch (const std::exception& error)
+        {
+            juce::Logger::writeToLog(
+                "CLAP map migration failed: " + juce::String(error.what()));
+        }
+    }
+#endif
+    if (!completeNativeMap && !migratedGeometry)
         Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
-    const juce::ScopedLock sl(dbLock);
-    sampleDatabase = std::move(loaded);
-    publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
-    samplerEngine.setSampleDatabase(publishedDatabase);
-    databaseVersion.fetch_add(1);
+    geometryVersionCurrent.store(savedMapVersion >= 2 || migratedGeometry);
+    {
+        const juce::ScopedLock sl(dbLock);
+        sampleDatabase = std::move(loaded);
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    if (migratedGeometry)
+        saveDatabaseCacheToDisk();
     return true;
 }
 
@@ -783,6 +815,7 @@ void MelodicAtlasAudioProcessor::run()
 #endif
         if (!projectedByNativeClap)
             Atlas::NeuralMapImport::apply(folderToScan, newRecords);
+        geometryVersionCurrent.store(projectedByNativeClap);
         // CLAP clusters are independent of map coordinates and filters.
         Atlas::ClapColourClusters::apply(newRecords);
         for (auto& record : newRecords)
