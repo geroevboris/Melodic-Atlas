@@ -29,7 +29,10 @@ namespace Atlas
                     "tambourine", "shaker", "shakers", "cowbell",
                     "tom", "toms", "drum", "drums", "percussion",
                     "perc", "conga", "bongo", "clave", "claves",
-                    "woodblock", "tamb", "timbale"
+                    "woodblock", "tamb", "timbale", "timbales",
+                    "cabasa", "guiro", "agogo", "triangle", "castanet",
+                    "castanets", "finger", "snap", "snaps", "stick",
+                    "sticks", "brush", "brushes", "click", "clicks"
                 };
                 for (const char* token : drumWords)
                     if (words.contains(token))
@@ -110,13 +113,23 @@ namespace Atlas
             const bool decaying = a.sustainRatio <= 0.28f;
             const bool weakPitch = t.validWindowCount == 0
                                 || t.periodicity < 0.35f;
+            // Second, more sensitive gate for sharp, dry, moderately noisy
+            // percussion. A strong tonal track above already protects
+            // mallets, piano attacks and pitched synth plucks.
+            const bool drySharpTransient =
+                a.spectralFlatness >= 0.23f
+                && a.onsetActivity >= 0.085f
+                && a.sustainRatio <= 0.19f
+                && (t.validWindowCount == 0 || t.periodicity < 0.43f);
 
-            if (noisy && impulsive && decaying && weakPitch)
+            if ((noisy && impulsive && decaying && weakPitch)
+                || drySharpTransient)
             {
                 rec.percussionState = PercussionState::Percussive;
                 // This is rule evidence strength, not calibrated probability.
                 rec.percussionConfidence = juce::jlimit(0.0f, 1.0f,
-                    0.55f + 0.20f * (a.spectralFlatness - 0.48f)
+                    drySharpTransient ? 0.58f
+                        : 0.55f + 0.20f * (a.spectralFlatness - 0.48f)
                           + 0.20f * (a.onsetActivity - 0.13f)
                           + 0.10f * (0.28f - a.sustainRatio));
                 return;
