@@ -473,6 +473,37 @@ namespace Atlas
             return base;
         }
 
+        // Six globally stable timbre colours. Position is determined by
+        // CLAP/UMAP; colour intentionally does NOT encode instrument identity.
+        // These bands use measured spectral and envelope descriptors, so
+        // the same recording retains its colour across libraries/scans.
+        static juce::Colour getTimbreColour(const SampleRecord& rec)
+        {
+            if (!rec.acoustic.valid)
+                return juce::Colour(0xff82919e); // unmeasured / legacy
+
+            const auto& a = rec.acoustic;
+            const float flat = juce::jlimit(0.0f, 1.0f, a.spectralFlatness);
+            const float onset = juce::jlimit(0.0f, 1.0f, a.onsetActivity);
+            const float sustain = juce::jlimit(0.0f, 1.0f, a.sustainRatio);
+            const float low = juce::jlimit(0.0f, 1.0f, a.lowBandRatio);
+            const float high = juce::jlimit(0.0f, 1.0f, a.highBandRatio);
+
+            // Rough/noisy timbres, deep and warm sounds, bright sounds,
+            // short plucks and diffuse sustained sounds use fixed colours.
+            if (flat >= 0.30f)
+                return juce::Colour(0xffa789ca); // noisy/textured
+            if (low >= 0.57f)
+                return juce::Colour(0xff5b85c8); // deep/low
+            if (high >= 0.32f)
+                return juce::Colour(0xffe2ad68); // bright/airy
+            if (sustain < 0.38f && onset >= 0.05f)
+                return juce::Colour(0xffce7b76); // plucky/short
+            if (sustain >= 0.65f)
+                return juce::Colour(0xff65b7a5); // soft/sustained
+            return juce::Colour(0xffb4a16e);     // warm/mid
+        }
+
         static int calculatePitchShift(int samplePitchClass,
                                        int projectKeyRoot,
                                        ScaleType scaleType,
