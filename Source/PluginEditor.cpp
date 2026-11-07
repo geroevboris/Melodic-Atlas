@@ -384,9 +384,9 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
             label += ":" + mShort;
         }
 
-        juce::Colour col = c == 7
-            ? juce::Colour(0xff92a6cd)
-            : Atlas::MusicMath::getClusterColour(cg, 1);
+        // Instrument filter highlights stay neutral. Their colours must
+        // not imply an instrument owns one of the CLAP map colour families.
+        juce::Colour col = juce::Colour(0xff92a6cd);
 
         g.setColour(on ? col.withAlpha(0.32f) : juce::Colour(0xff1d232c));
         g.fillRoundedRectangle(btnR, 3.0f);
