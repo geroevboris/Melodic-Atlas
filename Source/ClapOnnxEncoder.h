@@ -61,7 +61,7 @@ namespace Atlas
             constexpr size_t featureCount =
                 (size_t)ClapAudioFeatures::frames * ClapAudioFeatures::bands;
             bool allPrepared = std::all_of(prepared.begin(), prepared.end(),
-                [](const auto& f) { return f.size() == featureCount; });
+                [featureCount](const auto& f) { return f.size() == featureCount; });
 
             if (count > 1 && allPrepared && modelSupportsDynamicBatch())
             {
