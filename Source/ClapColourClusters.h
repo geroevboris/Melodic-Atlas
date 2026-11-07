@@ -17,6 +17,12 @@ namespace Atlas
         static constexpr int dimensions = 512;
         using Centre = std::array<float, dimensions>;
 
+        // Two levels: find up to 18 fine neighbourhoods, then merge
+        // the closest ones into six broad, colour-coded families.
+        // Both levels use cosine similarity in original CLAP space.
+        static constexpr int fineGroups = 18;
+        static constexpr int algorithmVersion = 2;
+
         static void apply(std::vector<SampleRecord>& records)
         {
             std::vector<size_t> valid;
@@ -30,90 +36,160 @@ namespace Atlas
             if (valid.empty())
                 return;
 
-            const int k = std::min(groups, (int)valid.size());
-            // Preserve known colour families on an incremental refresh:
-            // recompute old centres, then allocate new sounds to them.
-            // Avoid changing every colour merely because a new sample arrived.
-            std::array<Centre, groups> centres {};
-            std::array<int, groups> counts {};
+            // Preserve colour families from THIS algorithm when refreshing.
+            // Old six-way k-means assignments do not qualify.
+            std::array<Centre, groups> existing {};
+            std::array<int, groups> existingCount {};
             int established = 0;
             for (size_t i : valid)
             {
                 const auto& rec = records[i];
-                if (rec.cachedColourGroup < 0 || rec.cachedColourGroup >= groups)
+                if (rec.colourAlgorithmVersion != algorithmVersion
+                    || rec.cachedColourGroup < 0
+                    || rec.cachedColourGroup >= groups)
                     continue;
-                const int group = rec.cachedColourGroup;
-                ++counts[(size_t)group];
+                const int g = rec.cachedColourGroup;
+                ++existingCount[(size_t)g];
                 for (int d = 0; d < dimensions; ++d)
-                    centres[(size_t)group][(size_t)d] += rec.clapEmbedding[(size_t)d];
+                    existing[(size_t)g][(size_t)d] +=
+                        rec.clapEmbedding[(size_t)d];
             }
-            for (int c = 0; c < groups; ++c)
-                if (counts[(size_t)c] > 0)
+            for (int g = 0; g < groups; ++g)
+                if (existingCount[(size_t)g] != 0)
                 {
-                    normalize(centres[(size_t)c]);
+                    normalize(existing[(size_t)g]);
                     ++established;
                 }
-
             if (established == groups)
             {
                 for (size_t i : valid)
-                    records[i].colourGroup = nearest(
-                        records[i].clapEmbedding, centres, groups);
+                {
+                    auto& rec = records[i];
+                    // Keep previously assigned samples stable; use nearest
+                    // established family for genuinely new embeddings.
+                    rec.colourGroup = rec.colourAlgorithmVersion == algorithmVersion
+                        && rec.cachedColourGroup >= 0
+                        && rec.cachedColourGroup < groups
+                            ? rec.cachedColourGroup
+                            : nearest(rec.clapEmbedding, existing, groups);
+                    rec.colourAlgorithmVersion = algorithmVersion;
+                }
                 return;
             }
 
-            // Deterministic spherical k-means. Farthest-point seeds give
-            // broad, well-spaced groups without random initialisation.
-            // File order is explicitly stabilized for repeatable scans.
             std::sort(valid.begin(), valid.end(), [&](size_t a, size_t b) {
                 return records[a].file.getFullPathName().compare(
                     records[b].file.getFullPathName()) < 0;
             });
-            centres[0] = records[valid[0]].clapEmbedding;
+            const int k = std::min((int)valid.size(), fineGroups);
+            std::vector<Centre> fine((size_t)k);
+            fine[0] = records[valid[0]].clapEmbedding;
             for (int c = 1; c < k; ++c)
             {
+                float farthestScore = std::numeric_limits<float>::infinity();
                 size_t farthest = valid[0];
-                float smallestBest = std::numeric_limits<float>::infinity();
-                for (size_t i : valid)
+                for (size_t index : valid)
                 {
                     float best = -std::numeric_limits<float>::infinity();
                     for (int j = 0; j < c; ++j)
-                        best = std::max(best,
-                            dot(records[i].clapEmbedding, centres[(size_t)j]));
-                    if (best < smallestBest)
+                        best = std::max(best, dot(records[index].clapEmbedding,
+                                                  fine[(size_t)j]));
+                    if (best < farthestScore)
                     {
-                        smallestBest = best;
-                        farthest = i;
+                        farthestScore = best;
+                        farthest = index;
                     }
                 }
-                centres[(size_t)c] = records[farthest].clapEmbedding;
+                fine[(size_t)c] = records[farthest].clapEmbedding;
             }
 
-            for (int iteration = 0; iteration < 16; ++iteration)
+            std::vector<int> assignment(records.size(), -1);
+            std::vector<int> sizes((size_t)k);
+            for (int iter = 0; iter < 16; ++iter)
             {
-                std::array<Centre, groups> sums {};
-                std::array<int, groups> sizes {};
+                std::vector<Centre> sums((size_t)k);
+                std::fill(sizes.begin(), sizes.end(), 0);
                 bool changed = false;
-                for (size_t i : valid)
+                for (size_t index : valid)
                 {
-                    auto& rec = records[i];
-                    const int group = nearest(rec.clapEmbedding, centres, k);
-                    if (rec.colourGroup != group)
+                    const int c = nearest(records[index].clapEmbedding, fine, k);
+                    if (assignment[index] != c)
                         changed = true;
-                    rec.colourGroup = group;
-                    ++sizes[(size_t)group];
+                    assignment[index] = c;
+                    ++sizes[(size_t)c];
                     for (int d = 0; d < dimensions; ++d)
-                        sums[(size_t)group][(size_t)d] +=
-                            rec.clapEmbedding[(size_t)d];
+                        sums[(size_t)c][(size_t)d] +=
+                            records[index].clapEmbedding[(size_t)d];
                 }
                 for (int c = 0; c < k; ++c)
-                    if (sizes[(size_t)c] > 0)
+                    if (sizes[(size_t)c] != 0)
                     {
                         normalize(sums[(size_t)c]);
-                        centres[(size_t)c] = sums[(size_t)c];
+                        fine[(size_t)c] = sums[(size_t)c];
                     }
                 if (!changed)
                     break;
+            }
+
+            struct Family
+            {
+                Centre sum {};
+                int size = 0;
+                std::vector<int> members;
+            };
+            std::vector<Family> families;
+            for (int c = 0; c < k; ++c)
+                if (sizes[(size_t)c] > 0)
+                {
+                    Family f;
+                    f.size = sizes[(size_t)c];
+                    f.members.push_back(c);
+                    for (int d = 0; d < dimensions; ++d)
+                        f.sum[(size_t)d] =
+                            fine[(size_t)c][(size_t)d] * (float)f.size;
+                    families.push_back(std::move(f));
+                }
+
+            // Agglomerative merging by highest cosine similarity of family
+            // centroids; no arbitrary 2-D spatial proximity is involved.
+            while (families.size() > (size_t)groups)
+            {
+                float best = -std::numeric_limits<float>::infinity();
+                size_t bestA = 0, bestB = 1;
+                for (size_t a = 0; a < families.size(); ++a)
+                    for (size_t b = a + 1; b < families.size(); ++b)
+                    {
+                        Centre ca = families[a].sum;
+                        Centre cb = families[b].sum;
+                        normalize(ca);
+                        normalize(cb);
+                        const float similarity = dot(ca, cb);
+                        if (similarity > best)
+                        {
+                            best = similarity;
+                            bestA = a;
+                            bestB = b;
+                        }
+                    }
+                for (int d = 0; d < dimensions; ++d)
+                    families[bestA].sum[(size_t)d] +=
+                        families[bestB].sum[(size_t)d];
+                families[bestA].size += families[bestB].size;
+                families[bestA].members.insert(families[bestA].members.end(),
+                    families[bestB].members.begin(), families[bestB].members.end());
+                families.erase(families.begin() + (std::ptrdiff_t)bestB);
+            }
+
+            std::vector<int> fineToBroad((size_t)k, 0);
+            for (size_t group = 0; group < families.size(); ++group)
+                for (int fineIndex : families[group].members)
+                    fineToBroad[(size_t)fineIndex] = (int)group;
+
+            for (size_t index : valid)
+            {
+                auto& rec = records[index];
+                rec.colourGroup = fineToBroad[(size_t)assignment[index]];
+                rec.colourAlgorithmVersion = algorithmVersion;
             }
         }
 
@@ -136,8 +212,9 @@ namespace Atlas
                 v *= inv;
         }
 
+        template<typename Container>
         static int nearest(const Centre& vector,
-                           const std::array<Centre, groups>& centres,
+                           const Container& centres,
                            int count)
         {
             int result = 0;
