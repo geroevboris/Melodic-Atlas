@@ -562,8 +562,15 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
     if (!waitForThreadToExit(2000))
         return;
 
+    // A second scan of the same library must reuse already analysed
+    // records. A new folder still gets a complete fresh scan.
+    bool sameLibrary = false;
+    {
+        const juce::ScopedLock sl(dbLock);
+        sameLibrary = folderToScan == folder && !sampleDatabase.empty();
+    }
     folderToScan = folder;
-    incrementalRefresh.store(false);
+    incrementalRefresh.store(sameLibrary);
     scanning.store(true);
     scanProgress.store(0.0f);
     scannedCount.store(0);
@@ -680,7 +687,11 @@ void MelodicAtlasAudioProcessor::run()
         auto old = unchangedCandidates.find(file.getFullPathName().toStdString());
         if (old != unchangedCandidates.end()
             && old->second.sourceBytes == fileBytes
-            && old->second.sourceModifiedMs == modifiedMs)
+            && old->second.sourceModifiedMs == modifiedMs
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+            && old->second.clapEmbeddingValid
+#endif
+            )
         {
             if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
                 newRecords.push_back(old->second);
