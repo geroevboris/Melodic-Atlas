@@ -623,8 +623,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
     }
     else
     {
-        juce::Colour waveCol = Atlas::MusicMath::getClusterColour(
-            rec->cluster, rec->toneShadeBucket);
+        juce::Colour waveCol = Atlas::MusicMath::getTimbreColour(*rec);
         const auto& peaks = audio->waveformPeaks;
         if (!peaks.empty())
         {
