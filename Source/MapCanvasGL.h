@@ -124,7 +124,7 @@ namespace Atlas
                     bool isHovered = (i == hoveredSampleIndex);
 
                     juce::Colour dotCol = MusicMath::getClusterColour(
-                        rec.cluster, rec.toneShadeBucket);
+                        displayCluster(rec), rec.toneShadeBucket);
 
                     float radius = isActive ? 3.6f : (isHovered ? 2.8f : 1.9f);
 
@@ -424,7 +424,7 @@ namespace Atlas
                     historyNodeRects.push_back(nodeRect.expanded(4.0f));
 
                     juce::Colour c = MusicMath::getClusterColour(
-                        rec.cluster, rec.toneShadeBucket);
+                        displayCluster(rec), rec.toneShadeBucket);
                     g.setColour(c);
                     g.fillEllipse(nodeRect);
 
@@ -445,7 +445,7 @@ namespace Atlas
                 const auto& rec = (*database)[(size_t)activeSampleIndex];
                 juce::String info = rec.name + " [" +
                                     MusicMath::getNoteName(rec.pitchClass) + " | " +
-                                    MusicMath::getClusterName(rec.cluster) + "]";
+                                    MusicMath::getClusterName(displayCluster(rec)) + "]";
                 g.setColour(juce::Colour(0xffb8c4d4));
                 g.drawText(info,
                            (int)(w * 0.45f), (int)mapBottomY,
@@ -476,6 +476,15 @@ namespace Atlas
 
             samplerEngine.startPreview(sampleIdx, (*database)[(size_t)sampleIdx]);
             repaint();
+        }
+
+        static ClusterGroup displayCluster(const SampleRecord& rec)
+        {
+            if (rec.identityState == IdentityState::Identified
+                && (int)rec.identityCluster >= 0
+                && (int)rec.identityCluster < 7)
+                return rec.identityCluster;
+            return ClusterGroup::Other;
         }
 
         bool matchesCurrentFilter(const SampleRecord& rec) const
