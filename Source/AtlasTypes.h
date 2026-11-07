@@ -355,7 +355,7 @@ namespace Atlas
                 case ClusterGroup::Strings: return "STRINGS";
                 case ClusterGroup::Guitar:  return "GUITAR";
                 case ClusterGroup::FX:      return "FX";
-                case ClusterGroup::Other:   return "MOODS";
+                case ClusterGroup::Other:   return "UNKNOWN";
                 default:                    return "FX";
             }
         }
