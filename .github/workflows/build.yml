@@ -129,12 +129,19 @@ jobs:
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent VST3/Melodic-Atlas.vst3 "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-VST3-macOS.zip"
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent AU/Melodic-Atlas.component "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-AU-macOS.zip"
 
-      - name: Upload Built Plugins
+      - name: Upload macOS plugin ZIPs
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/dist/*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows plugin files
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            build/dist/*.zip
             build/MelodicAtlas_artefacts/Release/VST3/**
-            build/MelodicAtlas_artefacts/Release/AU/**
             build/MelodicAtlas_artefacts/Release/Standalone/**
