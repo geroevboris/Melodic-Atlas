@@ -118,6 +118,7 @@ private:
 
     juce::File folderToScan;
     std::atomic<bool> incrementalRefresh { false };
+    std::atomic<bool> geometryVersionCurrent { false };
     std::atomic<bool> scanning { false };
     std::atomic<float> scanProgress { 0.0f };
     std::atomic<int> scannedCount { 0 };
