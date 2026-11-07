@@ -124,7 +124,7 @@ namespace Atlas
                     bool isHovered = (i == hoveredSampleIndex);
 
                     juce::Colour dotCol = MusicMath::getClusterColour(
-                        rec.cluster, rec.toneShadeBucket);
+                        displayCluster(rec), rec.toneShadeBucket);
 
                     float radius = isActive ? 3.6f : (isHovered ? 2.8f : 1.9f);
 
@@ -424,7 +424,7 @@ namespace Atlas
                     historyNodeRects.push_back(nodeRect.expanded(4.0f));
 
                     juce::Colour c = MusicMath::getClusterColour(
-                        rec.cluster, rec.toneShadeBucket);
+                        displayCluster(rec), rec.toneShadeBucket);
                     g.setColour(c);
                     g.fillEllipse(nodeRect);
 
@@ -445,7 +445,7 @@ namespace Atlas
                 const auto& rec = (*database)[(size_t)activeSampleIndex];
                 juce::String info = rec.name + " [" +
                                     MusicMath::getNoteName(rec.pitchClass) + " | " +
-                                    MusicMath::getClusterName(rec.cluster) + "]";
+                                    MusicMath::getClusterName(displayCluster(rec)) + "]";
                 g.setColour(juce::Colour(0xffb8c4d4));
                 g.drawText(info,
                            (int)(w * 0.45f), (int)mapBottomY,
@@ -478,6 +478,15 @@ namespace Atlas
             repaint();
         }
 
+        static ClusterGroup displayCluster(const SampleRecord& rec)
+        {
+            if (rec.identityState == IdentityState::Identified
+                && (int)rec.identityCluster >= 0
+                && (int)rec.identityCluster < 7)
+                return rec.identityCluster;
+            return ClusterGroup::Other;
+        }
+
         bool matchesCurrentFilter(const SampleRecord& rec) const
         {
             // A cached legacy entry may be present in the database for old
@@ -485,11 +494,18 @@ namespace Atlas
             if (PercussionGate::shouldExcludeFromAtlas(rec))
                 return false;
 
-            int cIdx = juce::jlimit(0, 6, (int)rec.cluster);
+            // Only a validated instrument identity can satisfy instrument
+            // filters. Unidentified/legacy samples are still available under
+            // ALL as neutral points, not falsely labelled as synthesizers.
+            const bool identified =
+                rec.identityState == IdentityState::Identified
+                && (int)rec.identityCluster >= 0
+                && (int)rec.identityCluster < 7;
+            const int cIdx = identified ? (int)rec.identityCluster : 7;
 
             if (activeClustersMask != 0)
             {
-                if ((activeClustersMask & (1u << cIdx)) == 0)
+                if (cIdx == 7 || (activeClustersMask & (1u << cIdx)) == 0)
                     return false;
 
                 uint32_t reqClusterSub = clusterSubMasks[(size_t)cIdx];

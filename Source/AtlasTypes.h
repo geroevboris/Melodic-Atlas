@@ -162,6 +162,10 @@ namespace Atlas
     {
         juce::File file;
         juce::String name;
+        // File identity for incremental Refresh; missing legacy values require
+        // one fresh analysis rather than trusting potentially stale features.
+        int64_t sourceBytes = -1;
+        int64_t sourceModifiedMs = -1;
         bool isLoop = false;
         bool isPolyChord = false;
         double durationSec = 0.0;
@@ -183,6 +187,10 @@ namespace Atlas
         // Optional normalized Pure CLAP / UMAP Balanced coordinates.
         // Never overwrite the legacy map; an incomplete ML projection is
         // not mixed with DSP geometry.
+        // CLAP features stored locally for incremental native UMAP refresh.
+        // Never read or write these arrays from the audio callback.
+        bool clapEmbeddingValid = false;
+        std::array<float, 512> clapEmbedding {};
         bool neuralMapValid = false;
         float neuralMapX = 0.5f;
         float neuralMapY = 0.5f;
@@ -347,7 +355,7 @@ namespace Atlas
                 case ClusterGroup::Strings: return "STRINGS";
                 case ClusterGroup::Guitar:  return "GUITAR";
                 case ClusterGroup::FX:      return "FX";
-                case ClusterGroup::Other:   return "MOODS";
+                case ClusterGroup::Other:   return "UNKNOWN";
                 default:                    return "FX";
             }
         }

@@ -1,6 +1,16 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "NeuralMapImport.h"
+#include "ClapAudioFeatures.h"
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+#include "ClapOnnxEncoder.h"
+#include "NativeClapProjection.h"
+#include "ClapPluginResources.h"
+#endif
+static_assert(Atlas::ClapAudioFeatures::frames == 1001 &&
+              Atlas::ClapAudioFeatures::bands == 64,
+              "Unexpected CLAP HTSAT feature shape");
+#include <unordered_map>
 
 MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
     : AudioProcessor(
@@ -292,6 +302,8 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         juce::ValueTree item("Sample");
         item.setProperty("path", rec.file.getFullPathName(), nullptr);
         item.setProperty("name", rec.name, nullptr);
+        item.setProperty("sourceBytes", (juce::int64)rec.sourceBytes, nullptr);
+        item.setProperty("sourceModifiedMs", (juce::int64)rec.sourceModifiedMs, nullptr);
         item.setProperty("isLoop", rec.isLoop, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
         item.setProperty("bpm", rec.detectedBpm, nullptr);
@@ -304,6 +316,13 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("rough", rec.harmonicRoughness, nullptr);
         item.setProperty("mx", rec.mapX, nullptr);
         item.setProperty("my", rec.mapY, nullptr);
+        item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
+        if (rec.clapEmbeddingValid)
+        {
+            juce::MemoryBlock bytes(rec.clapEmbedding.data(),
+                rec.clapEmbedding.size() * sizeof(float));
+            item.setProperty("clapEmbedding", bytes.toBase64Encoding(), nullptr);
+        }
         item.setProperty("neuralMapValid", rec.neuralMapValid, nullptr);
         if (rec.neuralMapValid)
         {
@@ -390,6 +409,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         Atlas::SampleRecord rec;
         rec.file = f;
         rec.name = item.getProperty("name", f.getFileNameWithoutExtension()).toString();
+        rec.sourceBytes = (int64_t)(juce::int64)item.getProperty("sourceBytes", (juce::int64)-1);
+        rec.sourceModifiedMs = (int64_t)(juce::int64)item.getProperty("sourceModifiedMs", (juce::int64)-1);
         rec.isLoop = (bool)item.getProperty("isLoop", false);
         rec.durationSec = (double)item.getProperty("dur", 1.0);
         rec.detectedBpm = (double)item.getProperty("bpm", 120.0);
@@ -402,6 +423,22 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.harmonicRoughness = (float)item.getProperty("rough", 0.1f);
         rec.mapX = (float)item.getProperty("mx", 0.5f);
         rec.mapY = (float)item.getProperty("my", 0.5f);
+        // This is the scanner's native CLAP vector cache, independent of
+        // the old offline Python UMAP manifest.
+        rec.clapEmbeddingValid = false;
+        if ((bool)item.getProperty("clapEmbeddingValid", false))
+        {
+            juce::MemoryBlock bytes;
+            if (bytes.fromBase64Encoding(
+                    item.getProperty("clapEmbedding", "").toString())
+                && bytes.getSize() == rec.clapEmbedding.size() * sizeof(float))
+            {
+                std::memcpy(rec.clapEmbedding.data(), bytes.getData(), bytes.getSize());
+                rec.clapEmbeddingValid = std::all_of(
+                    rec.clapEmbedding.begin(), rec.clapEmbedding.end(),
+                    [](float value) { return std::isfinite(value); });
+            }
+        }
         // Missing fields in legacy caches naturally fall back to DSP.
         const float neuralX = (float)item.getProperty("neuralMapX", 0.5f);
         const float neuralY = (float)item.getProperty("neuralMapY", 0.5f);
@@ -496,7 +533,14 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     // The projected map may be published independently of the legacy cache.
     // This allows updating an existing library without re-decoding its audio.
     // A missing/stale/incomplete manifest leaves the legacy map intact.
-    Atlas::NeuralMapImport::apply(folderToScan, loaded);
+    // Native CLAP coordinates already cached must not be silently replaced
+    // by a separate legacy Python projection manifest on next DAW launch.
+    const bool completeNativeMap = std::all_of(
+        loaded.begin(), loaded.end(),
+        [](const Atlas::SampleRecord& record)
+        { return record.clapEmbeddingValid && record.neuralMapValid; });
+    if (!completeNativeMap)
+        Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
     const juce::ScopedLock sl(dbLock);
     sampleDatabase = std::move(loaded);
@@ -518,7 +562,31 @@ void MelodicAtlasAudioProcessor::scanFolderAsync(const juce::File& folder)
     if (!waitForThreadToExit(2000))
         return;
 
+    // A second scan of the same library must reuse already analysed
+    // records. A new folder still gets a complete fresh scan.
+    bool sameLibrary = false;
+    {
+        const juce::ScopedLock sl(dbLock);
+        sameLibrary = folderToScan == folder && !sampleDatabase.empty();
+    }
     folderToScan = folder;
+    incrementalRefresh.store(sameLibrary);
+    scanning.store(true);
+    scanProgress.store(0.0f);
+    scannedCount.store(0);
+    startThread(juce::Thread::Priority::low);
+}
+
+void MelodicAtlasAudioProcessor::refreshLibraryAsync()
+{
+    if (scanning.load() || !folderToScan.isDirectory())
+        return;
+
+    signalThreadShouldExit();
+    if (!waitForThreadToExit(2000))
+        return;
+
+    incrementalRefresh.store(true);
     scanning.store(true);
     scanProgress.store(0.0f);
     scannedCount.store(0);
@@ -535,6 +603,73 @@ void MelodicAtlasAudioProcessor::run()
     const int total = audioFiles.size();
     newRecords.reserve((size_t)std::min(total, 8000));
 
+    // Snapshot old descriptors before scanning; no lock is held during I/O.
+    // Preserve unchanged data, avoiding repeated audio decoding on Refresh.
+    std::unordered_map<std::string, Atlas::SampleRecord> unchangedCandidates;
+    if (incrementalRefresh.load())
+    {
+        const juce::ScopedLock sl(dbLock);
+        unchangedCandidates.reserve(sampleDatabase.size());
+        for (const auto& record : sampleDatabase)
+            unchangedCandidates.emplace(record.file.getFullPathName().toStdString(), record);
+    }
+    bool hasChangedRecords = !incrementalRefresh.load();
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    std::unique_ptr<Atlas::ClapOnnxEncoder> nativeClap;
+    bool nativeInferenceFailed = false;
+    auto ensureNativeClap = [&]() -> bool
+    {
+        if (nativeInferenceFailed)
+            return false;
+        if (nativeClap)
+            return true;
+        try
+        {
+            nativeClap = std::make_unique<Atlas::ClapOnnxEncoder>(
+                Atlas::nativeClapModelFile());
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            nativeInferenceFailed = true;
+            juce::Logger::writeToLog(
+                "Native CLAP initialization failed: " + juce::String(error.what()));
+            return false;
+        }
+    };
+#endif
+
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    // Only scanner-thread memory is modified. On a fixed-batch ONNX export
+    // the encoder safely falls back to single-item inference.
+    std::vector<size_t> pendingIndices;
+    std::vector<juce::File> pendingFiles;
+    pendingIndices.reserve(16);
+    pendingFiles.reserve(16);
+    auto flushClapBatch = [&]()
+    {
+        if (pendingFiles.empty())
+            return;
+        if (ensureNativeClap())
+        {
+            std::vector<std::array<float, Atlas::ClapOnnxEncoder::embeddingSize>> vectors;
+            std::vector<bool> valid;
+            nativeClap->embedBatch(pendingFiles, formatManager, vectors, valid);
+            for (size_t j = 0; j < pendingIndices.size(); ++j)
+            {
+                auto& record = newRecords[pendingIndices[j]];
+                record.clapEmbeddingValid = j < valid.size() && valid[j];
+                if (record.clapEmbeddingValid)
+                    record.clapEmbedding = vectors[j];
+            }
+            // A failure on a single corrupt file must not disable CLAP
+            // for the remainder of the library.
+        }
+        pendingFiles.clear();
+        pendingIndices.clear();
+    };
+#endif
+
     for (int i = 0; i < total; ++i)
     {
         if (threadShouldExit())
@@ -547,20 +682,90 @@ void MelodicAtlasAudioProcessor::run()
         if (Atlas::PercussionGate::isExplicitDrumFile(file))
             continue;
 
+        const int64_t fileBytes = (int64_t)file.getSize();
+        const int64_t modifiedMs = (int64_t)file.getLastModificationTime().toMilliseconds();
+        auto old = unchangedCandidates.find(file.getFullPathName().toStdString());
+        if (old != unchangedCandidates.end()
+            && old->second.sourceBytes == fileBytes
+            && old->second.sourceModifiedMs == modifiedMs
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+            && old->second.clapEmbeddingValid
+#endif
+            )
+        {
+            if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
+                newRecords.push_back(old->second);
+            scannedCount.store((int)newRecords.size());
+            continue;
+        }
+
+        hasChangedRecords = true;
         Atlas::SampleRecord rec;
         if (Atlas::AudioAnalyzer::analyzeFile(file, formatManager, rec)
             && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
         {
+            rec.sourceBytes = fileBytes;
+            rec.sourceModifiedMs = modifiedMs;
             newRecords.push_back(std::move(rec));
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+            pendingIndices.push_back(newRecords.size() - 1);
+            pendingFiles.push_back(file);
+            if (pendingFiles.size() == 16)
+                flushClapBatch();
+#endif
             scannedCount.store((int)newRecords.size());
         }
     }
 
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    if (!threadShouldExit())
+        flushClapBatch();
+#endif
+
     if (!threadShouldExit() && !newRecords.empty())
     {
-        Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
+        // Cached DSP positions stay fixed if nothing changed. Neural
+        // coordinates are refreshed from the manifest when available.
+        if (hasChangedRecords || newRecords.size() != unchangedCandidates.size())
+        {
+            Atlas::AudioAnalyzer::relaxMapCoordinates(newRecords);
+            // A refresh must not make existing dots jump. Newly analyzed
+            // samples use the fresh geometry; unchanged ones keep positions.
+            if (incrementalRefresh.load())
+                for (auto& record : newRecords)
+                {
+                    const auto it = unchangedCandidates.find(
+                        record.file.getFullPathName().toStdString());
+                    if (it != unchangedCandidates.end()
+                        && it->second.sourceBytes == record.sourceBytes
+                        && it->second.sourceModifiedMs == record.sourceModifiedMs)
+                    {
+                        record.mapX = it->second.mapX;
+                        record.mapY = it->second.mapY;
+                    }
+                }
+        }
         // Worker thread only; does not touch the audio callback.
-        Atlas::NeuralMapImport::apply(folderToScan, newRecords);
+        // Native CLAP + UMAP takes priority over legacy external manifests.
+        bool projectedByNativeClap = false;
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+        if (!nativeInferenceFailed)
+        {
+            try
+            {
+                projectedByNativeClap =
+                    Atlas::NativeClapProjection::apply(
+                        newRecords, unchangedCandidates);
+            }
+            catch (const std::exception& error)
+            {
+                juce::Logger::writeToLog(
+                    "Native UMAP failed: " + juce::String(error.what()));
+            }
+        }
+#endif
+        if (!projectedByNativeClap)
+            Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);

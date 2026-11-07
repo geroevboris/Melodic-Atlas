@@ -243,7 +243,7 @@ private:
     juce::Rectangle<float> btnGlobalUndo, btnGlobalRedo;
     juce::Rectangle<float> btnOneShots, btnLoops;
     juce::Rectangle<float> lblKeyRect, btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
-    juce::Rectangle<float> lblBpmRect, btnBpmHalf, btnBpmSync, btnBpmDouble, btnScanFolder;
+    juce::Rectangle<float> lblBpmRect, btnBpmHalf, btnBpmSync, btnBpmDouble, btnScanFolder, btnRefreshLibrary;
 
     juce::Rectangle<float> btnDiscover;
     std::array<juce::Rectangle<float>, 9> groupFilterRects;

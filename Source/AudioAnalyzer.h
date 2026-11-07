@@ -136,6 +136,13 @@ namespace Atlas
             PercussionGate::evaluate(outRecord);
             SoundIdentityAnalyzer::evaluate(file, outRecord);
             PitchRhythmEvidence::evaluate(outRecord);
+            // Never present a guess from the legacy heuristic as a confident
+            // instrument family. Ambiguous sounds remain browsable under ALL
+            // but do not leak into an instrument filter.
+            if (outRecord.identityState == IdentityState::Identified)
+                outRecord.cluster = outRecord.identityCluster;
+            else
+                outRecord.cluster = ClusterGroup::Other;
             return true;
         }
 
@@ -380,6 +387,13 @@ namespace Atlas
             }
 
             r.subMask = mask;
+            // relaxMapCoordinates re-runs this function for positioning.
+            // Preserve the conservative identity decision after every pass,
+            // including when the input came from a legacy cache.
+            if (r.identityState == IdentityState::Identified)
+                r.cluster = r.identityCluster;
+            else if (r.identityState != IdentityState::NotEvaluated)
+                r.cluster = ClusterGroup::Other;
         }
 
     private:

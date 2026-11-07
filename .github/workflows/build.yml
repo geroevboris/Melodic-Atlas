@@ -31,17 +31,117 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure CMake
+      - name: Setup Python for native 8B packaging
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch pinned local CLAP and ONNX Runtime (build-time only)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        shell: bash
+        run: |
+          python Tools/fetch_clap_onnx_8b.py build/assets/clap_audio.onnx
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            python Tools/prepare_native_runtime_8b.py macos build/native
+          else
+            python Tools/prepare_native_runtime_8b.py windows build/native
+          fi
+
+      - name: Configure Native CLAP CMake (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            ort="$GITHUB_WORKSPACE/build/native/onnxruntime-osx-universal2-1.19.2"
+          else
+            ort="$GITHUB_WORKSPACE/build/native/onnxruntime-win-x64-1.22.1"
+          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DATLAS_ENABLE_NATIVE_CLAP=ON \
+            "-DATLAS_ONNXRUNTIME_ROOT=$ort" \
+            "-DATLAS_CLAP_MODEL_PATH=$GITHUB_WORKSPACE/build/assets/clap_audio.onnx"
+
+      - name: Configure CMake (legacy/other branches)
+        if: "!startsWith(github.ref, 'refs/heads/dev/8b-')"
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Plugin (Release)
         run: cmake --build build --config Release --parallel 4
 
-      - name: Upload Built Plugins
+      - name: Diagnose macOS plugin loading and dynamic linkage (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-') && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          vst="build/MelodicAtlas_artefacts/Release/VST3/Melodic-Atlas.vst3"
+          au="build/MelodicAtlas_artefacts/Release/AU/Melodic-Atlas.component"
+          for bundle in "$vst" "$au"; do
+            echo "=== $bundle ==="
+            find "$bundle/Contents" -maxdepth 3 -type f -print
+            binary="$(find "$bundle/Contents/MacOS" -type f -maxdepth 1 | head -1)"
+            echo "--- architectures ---"
+            lipo -info "$binary"
+            echo "--- minimum macOS deployment target ---"
+            xcrun vtool -show-build "$binary" || true
+            echo "--- dynamic libraries ---"
+            otool -L "$binary"
+            echo "--- runtime search paths ---"
+            otool -l "$binary" | grep -A 3 LC_RPATH || true
+            echo "--- signatures ---"
+            codesign -dv --verbose=2 "$bundle" 2>&1 || true
+            codesign --verify --deep --strict --verbose=2 "$bundle" 2>&1 || true
+            echo "--- dependency verification ---"
+            dylib="$bundle/Contents/Frameworks/libonnxruntime.dylib"
+            xcrun vtool -show-build "$dylib"
+            otool -D "$dylib"
+            otool -L "$dylib" | head -25
+            codesign --verify --verbose=2 "$dylib" 2>&1 || true
+          done
+          echo "--- host OS ---"
+          sw_vers
+
+      - name: Validate AU in macOS AudioComponentRegistrar (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-') && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "build/MelodicAtlas_artefacts/Release/AU/Melodic-Atlas.component" \
+            "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          echo "--- Audio Units registration ---"
+          auval -a | grep -i -A 2 -B 2 'Melodic-Atlas' || true
+          echo "--- Actual AU load and validation ---"
+          auval -v aumu MlAt BrAu
+
+      - name: Verify bundled native CLAP weights and runtime (8B)
+        if: startsWith(github.ref, 'refs/heads/dev/8b-')
+        run: python Tools/verify_native_bundle_8b.py
+
+      - name: Package macOS plugin bundles without losing executable permissions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/dist
+          cd build/MelodicAtlas_artefacts/Release
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent VST3/Melodic-Atlas.vst3 "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-VST3-macOS.zip"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent AU/Melodic-Atlas.component "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-AU-macOS.zip"
+
+      - name: Upload macOS plugin ZIPs
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/dist/*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows plugin files
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
             build/MelodicAtlas_artefacts/Release/VST3/**
-            build/MelodicAtlas_artefacts/Release/AU/**
             build/MelodicAtlas_artefacts/Release/Standalone/**
