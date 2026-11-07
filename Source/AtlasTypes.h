@@ -485,12 +485,12 @@ namespace Atlas
         static juce::Colour getClapFamilyColour(const SampleRecord& rec)
         {
             static const juce::Colour palette[] = {
-                juce::Colour(0xff68b8d9), // cyan
-                juce::Colour(0xffd6a566), // amber
-                juce::Colour(0xffad91da), // lavender
-                juce::Colour(0xff69b99a), // mint
-                juce::Colour(0xffdc8292), // coral
-                juce::Colour(0xff91a6df)  // periwinkle
+                juce::Colour(0xff00c8ff), // cyan
+                juce::Colour(0xffffad00), // amber
+                juce::Colour(0xffb163ff), // lavender
+                juce::Colour(0xff1bda93), // mint
+                juce::Colour(0xffff5475), // coral
+                juce::Colour(0xff5f7cff)  // periwinkle
             };
             if (rec.colourGroup < 0 || rec.colourGroup >= 6)
                 return juce::Colour(0xff82919e);
