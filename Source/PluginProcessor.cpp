@@ -632,6 +632,37 @@ void MelodicAtlasAudioProcessor::run()
     };
 #endif
 
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    // Only scanner-thread memory is modified. On a fixed-batch ONNX export
+    // the encoder safely falls back to single-item inference.
+    std::vector<size_t> pendingIndices;
+    std::vector<juce::File> pendingFiles;
+    pendingIndices.reserve(16);
+    pendingFiles.reserve(16);
+    auto flushClapBatch = [&]()
+    {
+        if (pendingFiles.empty())
+            return;
+        if (ensureNativeClap())
+        {
+            std::vector<std::array<float, Atlas::ClapOnnxEncoder::embeddingSize>> vectors;
+            std::vector<bool> valid;
+            nativeClap->embedBatch(pendingFiles, formatManager, vectors, valid);
+            for (size_t j = 0; j < pendingIndices.size(); ++j)
+            {
+                auto& record = newRecords[pendingIndices[j]];
+                record.clapEmbeddingValid = j < valid.size() && valid[j];
+                if (record.clapEmbeddingValid)
+                    record.clapEmbedding = vectors[j];
+            }
+            // A failure on a single corrupt file must not disable CLAP
+            // for the remainder of the library.
+        }
+        pendingFiles.clear();
+        pendingIndices.clear();
+    };
+#endif
+
     for (int i = 0; i < total; ++i)
     {
         if (threadShouldExit())
@@ -664,19 +695,21 @@ void MelodicAtlasAudioProcessor::run()
         {
             rec.sourceBytes = fileBytes;
             rec.sourceModifiedMs = modifiedMs;
-#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
-            if (ensureNativeClap())
-            {
-                rec.clapEmbeddingValid = nativeClap->embed(
-                    file, formatManager, rec.clapEmbedding);
-                if (!rec.clapEmbeddingValid)
-                    nativeInferenceFailed = true;
-            }
-#endif
             newRecords.push_back(std::move(rec));
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+            pendingIndices.push_back(newRecords.size() - 1);
+            pendingFiles.push_back(file);
+            if (pendingFiles.size() == 16)
+                flushClapBatch();
+#endif
             scannedCount.store((int)newRecords.size());
         }
     }
+
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    if (!threadShouldExit())
+        flushClapBatch();
+#endif
 
     if (!threadShouldExit() && !newRecords.empty())
     {
