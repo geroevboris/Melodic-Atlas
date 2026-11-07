@@ -168,6 +168,8 @@ namespace Atlas
         int64_t sourceModifiedMs = -1;
         bool isLoop = false;
         bool isPolyChord = false;
+        // 0 means legacy duration-based classification; 1 means structural scan.
+        int loopAnalysisVersion = 0;
         double durationSec = 0.0;
         double detectedBpm = 120.0;
         int rootMidiNote = 60;
