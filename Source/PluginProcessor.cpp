@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "NeuralMapImport.h"
 #include "ClapAudioFeatures.h"
+#include "ClapColourClusters.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #include "ClapOnnxEncoder.h"
 #include "NativeClapProjection.h"
@@ -318,6 +319,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("mx", rec.mapX, nullptr);
         item.setProperty("my", rec.mapY, nullptr);
         item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
+        item.setProperty("colourGroup", rec.colourGroup, nullptr);
         if (rec.clapEmbeddingValid)
         {
             juce::MemoryBlock bytes(rec.clapEmbedding.data(),
@@ -431,6 +433,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.mapY = (float)item.getProperty("my", 0.5f);
         // This is the scanner's native CLAP vector cache, independent of
         // the old offline Python UMAP manifest.
+        rec.colourGroup = (int)item.getProperty("colourGroup", -1);
+        rec.cachedColourGroup = rec.colourGroup;
         rec.clapEmbeddingValid = false;
         if ((bool)item.getProperty("clapEmbeddingValid", false))
         {
@@ -536,6 +540,10 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         return false;
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
+    // Recolour from saved embeddings without requiring an audio rescan.
+    Atlas::ClapColourClusters::apply(loaded);
+    for (auto& record : loaded)
+        record.cachedColourGroup = record.colourGroup;
     // The projected map may be published independently of the legacy cache.
     // This allows updating an existing library without re-decoding its audio.
     // A missing/stale/incomplete manifest leaves the legacy map intact.
@@ -773,6 +781,10 @@ void MelodicAtlasAudioProcessor::run()
 #endif
         if (!projectedByNativeClap)
             Atlas::NeuralMapImport::apply(folderToScan, newRecords);
+        // CLAP clusters are independent of map coordinates and filters.
+        Atlas::ClapColourClusters::apply(newRecords);
+        for (auto& record : newRecords)
+            record.cachedColourGroup = record.colourGroup;
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
