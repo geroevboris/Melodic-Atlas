@@ -320,6 +320,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("my", rec.mapY, nullptr);
         item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
         item.setProperty("colourGroup", rec.colourGroup, nullptr);
+        item.setProperty("colourAlgorithmVersion", rec.colourAlgorithmVersion, nullptr);
         if (rec.clapEmbeddingValid)
         {
             juce::MemoryBlock bytes(rec.clapEmbedding.data(),
@@ -435,6 +436,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // the old offline Python UMAP manifest.
         rec.colourGroup = (int)item.getProperty("colourGroup", -1);
         rec.cachedColourGroup = rec.colourGroup;
+        rec.colourAlgorithmVersion = (int)item.getProperty("colourAlgorithmVersion", 0);
         rec.clapEmbeddingValid = false;
         if ((bool)item.getProperty("clapEmbeddingValid", false))
         {
