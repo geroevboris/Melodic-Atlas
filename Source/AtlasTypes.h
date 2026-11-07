@@ -196,6 +196,7 @@ namespace Atlas
         // -1 means not analysed / no valid embedding.
         int colourGroup = -1;
         int cachedColourGroup = -1;
+        int colourAlgorithmVersion = 0;
         std::array<float, 512> clapEmbedding {};
         bool neuralMapValid = false;
         float neuralMapX = 0.5f;
