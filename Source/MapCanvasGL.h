@@ -354,21 +354,28 @@ namespace Atlas
             g.setColour(juce::Colour(0xe60f1319));
             g.fillRect(1.0f, 1.0f, w - 2.0f, 26.0f);
 
+            // Legend describes the colour axis (timbre), not the
+            // independent instrument family filters above the map.
+            const juce::Colour colours[] = {
+                juce::Colour(0xffa789ca), juce::Colour(0xff5b85c8),
+                juce::Colour(0xffe2ad68), juce::Colour(0xffce7b76),
+                juce::Colour(0xff65b7a5), juce::Colour(0xffb4a16e)
+            };
+            const char* names[] = {
+                "TEXTURE", "DEEP", "BRIGHT", "PLUCK",
+                "SOFT", "WARM"
+            };
             float lx = 10.0f;
-            for (int c = 0; c < 7; ++c)
+            for (int c = 0; c < 6; ++c)
             {
-                auto cg = static_cast<ClusterGroup>(c);
-                for (int shade = 0; shade < 3; ++shade)
-                {
-                    g.setColour(MusicMath::getClusterColour(cg, shade));
-                    g.fillEllipse(lx + (float)shade * 4.5f, 11.0f, 4.0f, 4.0f);
-                }
-                lx += 15.0f;
+                g.setColour(colours[c]);
+                g.fillEllipse(lx, 10.0f, 6.0f, 6.0f);
+                lx += 9.0f;
                 g.setColour(juce::Colour(0xff9aa7b8));
                 g.setFont(monoSmall);
-                juce::String cname = MusicMath::getClusterName(cg);
-                float tw = (float)cname.length() * 6.5f + 12.0f;
-                g.drawText(cname, (int)lx, 4, (int)tw, 18,
+                const juce::String name(names[c]);
+                const float tw = (float)name.length() * 6.5f + 8.0f;
+                g.drawText(name, (int)lx, 4, (int)tw, 18,
                            juce::Justification::centredLeft, false);
                 lx += tw;
             }
