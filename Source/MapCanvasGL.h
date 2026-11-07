@@ -123,7 +123,7 @@ namespace Atlas
                     bool isActive = (i == activeSampleIndex);
                     bool isHovered = (i == hoveredSampleIndex);
 
-                    juce::Colour dotCol = MusicMath::getTimbreColour(rec);
+                    juce::Colour dotCol = MusicMath::getClapFamilyColour(rec);
 
                     float radius = isActive ? 3.6f : (isHovered ? 2.8f : 1.9f);
 
@@ -354,30 +354,26 @@ namespace Atlas
             g.setColour(juce::Colour(0xe60f1319));
             g.fillRect(1.0f, 1.0f, w - 2.0f, 26.0f);
 
-            // Legend describes the colour axis (timbre), not the
-            // independent instrument family filters above the map.
+            // CLAP neighbourhood labels are intentionally neutral.
+            // A colour stands for a group of similar sounds in this library,
+            // not for a hardcoded instrument or brightness band.
             const juce::Colour colours[] = {
-                juce::Colour(0xffa789ca), juce::Colour(0xff5b85c8),
-                juce::Colour(0xffe2ad68), juce::Colour(0xffce7b76),
-                juce::Colour(0xff65b7a5), juce::Colour(0xffb4a16e)
+                juce::Colour(0xff68b8d9), juce::Colour(0xffd6a566),
+                juce::Colour(0xffad91da), juce::Colour(0xff69b99a),
+                juce::Colour(0xffdc8292), juce::Colour(0xff91a6df)
             };
-            const char* names[] = {
-                "TEXTURE", "DEEP", "BRIGHT", "PLUCK",
-                "SOFT", "WARM"
-            };
-            float lx = 10.0f;
+            float lx = 12.0f;
+            g.setFont(monoSmall);
             for (int c = 0; c < 6; ++c)
             {
                 g.setColour(colours[c]);
-                g.fillEllipse(lx, 10.0f, 6.0f, 6.0f);
-                lx += 9.0f;
+                g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
+                lx += 11.0f;
                 g.setColour(juce::Colour(0xff9aa7b8));
-                g.setFont(monoSmall);
-                const juce::String name(names[c]);
-                const float tw = (float)name.length() * 6.5f + 8.0f;
-                g.drawText(name, (int)lx, 4, (int)tw, 18,
+                g.drawText("GROUP " + juce::String(c + 1),
+                           (int)lx, 4, 57, 18,
                            juce::Justification::centredLeft, false);
-                lx += tw;
+                lx += 63.0f;
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
@@ -429,7 +425,7 @@ namespace Atlas
                     juce::Rectangle<float> nodeRect(hx - 4.5f, hy - 4.5f, 9.0f, 9.0f);
                     historyNodeRects.push_back(nodeRect.expanded(4.0f));
 
-                    juce::Colour c = MusicMath::getTimbreColour(rec);
+                    juce::Colour c = MusicMath::getClapFamilyColour(rec);
                     g.setColour(c);
                     g.fillEllipse(nodeRect);
 
