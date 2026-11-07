@@ -305,6 +305,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("sourceBytes", (juce::int64)rec.sourceBytes, nullptr);
         item.setProperty("sourceModifiedMs", (juce::int64)rec.sourceModifiedMs, nullptr);
         item.setProperty("isLoop", rec.isLoop, nullptr);
+        item.setProperty("loopAnalysisVersion", rec.loopAnalysisVersion, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
         item.setProperty("bpm", rec.detectedBpm, nullptr);
         item.setProperty("midi", rec.rootMidiNote, nullptr);
@@ -411,7 +412,12 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.name = item.getProperty("name", f.getFileNameWithoutExtension()).toString();
         rec.sourceBytes = (int64_t)(juce::int64)item.getProperty("sourceBytes", (juce::int64)-1);
         rec.sourceModifiedMs = (int64_t)(juce::int64)item.getProperty("sourceModifiedMs", (juce::int64)-1);
-        rec.isLoop = (bool)item.getProperty("isLoop", false);
+        rec.loopAnalysisVersion =
+            (int)item.getProperty("loopAnalysisVersion", 0);
+        // Old caches used a duration threshold; never present that guess
+        // as a verified loop before the new scan runs.
+        rec.isLoop = rec.loopAnalysisVersion >= 1
+            && (bool)item.getProperty("isLoop", false);
         rec.durationSec = (double)item.getProperty("dur", 1.0);
         rec.detectedBpm = (double)item.getProperty("bpm", 120.0);
         rec.rootMidiNote = (int)item.getProperty("midi", 60);
@@ -688,6 +694,7 @@ void MelodicAtlasAudioProcessor::run()
         if (old != unchangedCandidates.end()
             && old->second.sourceBytes == fileBytes
             && old->second.sourceModifiedMs == modifiedMs
+            && old->second.loopAnalysisVersion >= 1
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
             && old->second.clapEmbeddingValid
 #endif
