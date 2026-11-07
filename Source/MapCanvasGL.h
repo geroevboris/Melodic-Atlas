@@ -123,8 +123,7 @@ namespace Atlas
                     bool isActive = (i == activeSampleIndex);
                     bool isHovered = (i == hoveredSampleIndex);
 
-                    juce::Colour dotCol = MusicMath::getClusterColour(
-                        displayCluster(rec), rec.toneShadeBucket);
+                    juce::Colour dotCol = MusicMath::getTimbreColour(rec);
 
                     float radius = isActive ? 3.6f : (isHovered ? 2.8f : 1.9f);
 
@@ -423,8 +422,7 @@ namespace Atlas
                     juce::Rectangle<float> nodeRect(hx - 4.5f, hy - 4.5f, 9.0f, 9.0f);
                     historyNodeRects.push_back(nodeRect.expanded(4.0f));
 
-                    juce::Colour c = MusicMath::getClusterColour(
-                        displayCluster(rec), rec.toneShadeBucket);
+                    juce::Colour c = MusicMath::getTimbreColour(rec);
                     g.setColour(c);
                     g.fillEllipse(nodeRect);
 
