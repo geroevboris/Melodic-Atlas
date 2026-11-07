@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <limits>
 #include <vector>
+#include <utility>
 
 namespace Atlas
 {
