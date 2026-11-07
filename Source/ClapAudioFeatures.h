@@ -81,12 +81,35 @@ namespace Atlas
                     + source[(size_t)next] * frac;
             }
 
-            const auto melFilters = makeMelFilters();
-            std::array<float, fftSize> hann {};
-            for (int n = 0; n < fftSize; ++n)
-                hann[(size_t)n] = 0.5f -
-                    0.5f * std::cos(juce::MathConstants<float>::twoPi
-                                    * (float)n / (float)fftSize);
+            // These filter coefficients and window values depend only on
+            // fixed CLAP configuration, not on the audio file.
+            static const auto melFilters = makeMelFilters();
+            static const auto hann = [] {
+                std::array<float, fftSize> result {};
+                for (int n = 0; n < fftSize; ++n)
+                    result[(size_t)n] = 0.5f -
+                        0.5f * std::cos(juce::MathConstants<float>::twoPi
+                                        * (float)n / (float)fftSize);
+                return result;
+            }();
+            // Iterate only bins with non-zero mel weights. The non-zero
+            // products remain in the original ascending bin order.
+            static const auto melBinRanges = [] {
+                std::array<std::pair<int, int>, bands> result {};
+                for (int m = 0; m < bands; ++m)
+                {
+                    int begin = 0;
+                    while (begin <= fftSize / 2 &&
+                           melFilters[(size_t)m][(size_t)begin] == 0.0f)
+                        ++begin;
+                    int end = fftSize / 2 + 1;
+                    while (end > begin &&
+                           melFilters[(size_t)m][(size_t)(end - 1)] == 0.0f)
+                        --end;
+                    result[(size_t)m] = { begin, end };
+                }
+                return result;
+            }();
 
             juce::dsp::FFT fft(10);
             std::array<float, fftSize * 2> fftBuffer {};
@@ -117,7 +140,8 @@ namespace Atlas
                 for (int m = 0; m < bands; ++m)
                 {
                     double energy = 0.0;
-                    for (int k = 0; k <= fftSize / 2; ++k)
+                    const auto range = melBinRanges[(size_t)m];
+                    for (int k = range.first; k < range.second; ++k)
                         energy += (double)power[(size_t)k] *
                                   melFilters[(size_t)m][(size_t)k];
                     output[(size_t)t * bands + (size_t)m] =
