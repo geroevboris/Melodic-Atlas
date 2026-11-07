@@ -112,6 +112,7 @@ namespace Atlas
             outRecord.durationSec = duration;
             outRecord.isLoop = LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
+            outRecord.loopAnalysisVersion = 1;
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
