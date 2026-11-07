@@ -95,8 +95,16 @@ namespace Atlas
             const bool stablePitch = t.validWindowCount >= 2
                                   && t.periodicity >= 0.68f
                                   && t.pitchStability >= 0.65f;
+            // A single apparent pitch estimate is not enough to save a
+            // very noisy, short and dry percussive hit.
+            const bool exceptionallyDryHit =
+                t.validWindowCount <= 1
+                && a.spectralFlatness >= 0.48f
+                && a.onsetActivity >= 0.11f
+                && a.sustainRatio <= 0.17f;
             const bool clearPitchedTransient = t.validWindowCount >= 1
-                                            && t.periodicity >= 0.84f;
+                                            && t.periodicity >= 0.84f
+                                            && !exceptionallyDryHit;
             if (stablePitch || clearPitchedTransient)
             {
                 rec.percussionState = PercussionState::Melodic;
@@ -123,7 +131,7 @@ namespace Atlas
                 && (t.validWindowCount == 0 || t.periodicity < 0.43f);
 
             if ((noisy && impulsive && decaying && weakPitch)
-                || drySharpTransient)
+                || drySharpTransient || exceptionallyDryHit)
             {
                 rec.percussionState = PercussionState::Percussive;
                 // This is rule evidence strength, not calibrated probability.
