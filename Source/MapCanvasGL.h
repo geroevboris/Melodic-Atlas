@@ -485,11 +485,18 @@ namespace Atlas
             if (PercussionGate::shouldExcludeFromAtlas(rec))
                 return false;
 
-            int cIdx = juce::jlimit(0, 6, (int)rec.cluster);
+            // Only a validated instrument identity can satisfy instrument
+            // filters. Unidentified/legacy samples are still available under
+            // ALL as neutral points, not falsely labelled as synthesizers.
+            const bool identified =
+                rec.identityState == IdentityState::Identified
+                && (int)rec.identityCluster >= 0
+                && (int)rec.identityCluster < 7;
+            const int cIdx = identified ? (int)rec.identityCluster : 7;
 
             if (activeClustersMask != 0)
             {
-                if ((activeClustersMask & (1u << cIdx)) == 0)
+                if (cIdx == 7 || (activeClustersMask & (1u << cIdx)) == 0)
                     return false;
 
                 uint32_t reqClusterSub = clusterSubMasks[(size_t)cIdx];
