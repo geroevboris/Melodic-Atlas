@@ -192,6 +192,10 @@ namespace Atlas
         // CLAP features stored locally for incremental native UMAP refresh.
         // Never read or write these arrays from the audio callback.
         bool clapEmbeddingValid = false;
+        // Per-library CLAP colour family, independent from instrument filters.
+        // -1 means not analysed / no valid embedding.
+        int colourGroup = -1;
+        int cachedColourGroup = -1;
         std::array<float, 512> clapEmbedding {};
         bool neuralMapValid = false;
         float neuralMapX = 0.5f;
@@ -473,6 +477,23 @@ namespace Atlas
             if (bucket == 0) return base.darker(0.24f);
             if (bucket == 2) return base.brighter(0.26f);
             return base;
+        }
+
+        // Palette labels have no fixed instrument/timbre semantics: each
+        // library forms its own six CLAP semantic-audio neighbourhoods.
+        static juce::Colour getClapFamilyColour(const SampleRecord& rec)
+        {
+            static const juce::Colour palette[] = {
+                juce::Colour(0xff68b8d9), // cyan
+                juce::Colour(0xffd6a566), // amber
+                juce::Colour(0xffad91da), // lavender
+                juce::Colour(0xff69b99a), // mint
+                juce::Colour(0xffdc8292), // coral
+                juce::Colour(0xff91a6df)  // periwinkle
+            };
+            if (rec.colourGroup < 0 || rec.colourGroup >= 6)
+                return juce::Colour(0xff82919e);
+            return palette[(size_t)rec.colourGroup];
         }
 
         // Six globally stable timbre colours. Position is determined by
