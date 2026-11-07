@@ -119,11 +119,22 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/dev/8b-')
         run: python Tools/verify_native_bundle_8b.py
 
+      - name: Package macOS plugin bundles without losing executable permissions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/dist
+          cd build/MelodicAtlas_artefacts/Release
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent VST3/Melodic-Atlas.vst3 "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-VST3-macOS.zip"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent AU/Melodic-Atlas.component "$GITHUB_WORKSPACE/build/dist/Melodic-Atlas-AU-macOS.zip"
+
       - name: Upload Built Plugins
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
+            build/dist/*.zip
             build/MelodicAtlas_artefacts/Release/VST3/**
             build/MelodicAtlas_artefacts/Release/AU/**
             build/MelodicAtlas_artefacts/Release/Standalone/**
