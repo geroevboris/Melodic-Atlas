@@ -140,7 +140,7 @@ namespace Atlas
                         }
                     }
 
-                    g.setColour(isActive ? juce::Colours::white : dotCol.brighter(0.18f));
+                    g.setColour(isActive ? juce::Colours::white : dotCol);
                     g.fillEllipse(pt.x - radius, pt.y - radius, radius * 2.0f, radius * 2.0f);
                 }
             }
@@ -358,9 +358,9 @@ namespace Atlas
             // A colour stands for a group of similar sounds in this library,
             // not for a hardcoded instrument or brightness band.
             const juce::Colour colours[] = {
-                juce::Colour(0xff68b8d9), juce::Colour(0xffd6a566),
-                juce::Colour(0xffad91da), juce::Colour(0xff69b99a),
-                juce::Colour(0xffdc8292), juce::Colour(0xff91a6df)
+                juce::Colour(0xff00c8ff), juce::Colour(0xffffad00),
+                juce::Colour(0xffb163ff), juce::Colour(0xff1bda93),
+                juce::Colour(0xffff5475), juce::Colour(0xff5f7cff)
             };
             float lx = 12.0f;
             g.setFont(monoSmall);
