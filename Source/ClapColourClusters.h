@@ -66,8 +66,8 @@ namespace Atlas
             // broad, well-spaced groups without random initialisation.
             // File order is explicitly stabilized for repeatable scans.
             std::sort(valid.begin(), valid.end(), [&](size_t a, size_t b) {
-                return records[a].file.getFullPathName()
-                     < records[b].file.getFullPathName();
+                return records[a].file.getFullPathName().compare(
+                    records[b].file.getFullPathName()) < 0;
             });
             centres[0] = records[valid[0]].clapEmbedding;
             for (int c = 1; c < k; ++c)
