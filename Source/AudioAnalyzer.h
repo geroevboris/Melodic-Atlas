@@ -6,6 +6,7 @@
 #include "PercussionGate.h"
 #include "SoundIdentityAnalyzer.h"
 #include "PitchRhythmEvidence.h"
+#include "LoopStructureAnalyzer.h"
 
 namespace Atlas
 {
@@ -109,10 +110,8 @@ namespace Atlas
             outRecord.file = file;
             outRecord.name = file.getFileNameWithoutExtension();
             outRecord.durationSec = duration;
-            outRecord.isLoop = (duration > 2.4)
-                            || lowerName.contains("loop")
-                            || lowerName.contains("bpm")
-                            || lowerName.contains("arp");
+            outRecord.isLoop = LoopStructureAnalyzer::isLoop(
+                file, downmix.data(), maxSamplesToRead, sr, duration);
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
