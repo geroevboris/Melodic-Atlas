@@ -385,6 +385,8 @@ void MelodicAtlasAudioProcessor::applyAtlasOverrides(
         rec.identityConfidence = 1.0f;
         Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
         rec.subMask |= it->second.instrumentSubtype;
+        if (it->second.instrumentSubtype == Atlas::Sub_Violin)
+            rec.subMask |= Atlas::Sub_StringsSection;
     }
     else if (it->second.instrumentCluster == -2
              && rec.identityOrigin == 2)
@@ -491,6 +493,8 @@ void MelodicAtlasAudioProcessor::setSampleInstrumentOverride(
             rec.identityConfidence = 1.0f;
             Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
             rec.subMask |= subtype;
+            if (subtype == Atlas::Sub_Violin)
+                rec.subMask |= Atlas::Sub_StringsSection;
         }
         else
         {
