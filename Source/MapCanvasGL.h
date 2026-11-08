@@ -76,6 +76,7 @@ namespace Atlas
         }
 
         std::function<void(int sampleIdx)> onSampleRightClicked;
+        std::function<void()> onEmptyMapRightClicked;
 
         void resized() override
         {
@@ -244,19 +245,21 @@ namespace Atlas
 
             int hit = findNearestSample(pt, 12.0f);
 
-            // Правый клик отправляет в пэд БЕЗ звука предпрослушки
-            if (e.mods.isPopupMenu() || e.mods.isMiddleButtonDown())
+            if (e.mods.isPopupMenu())
             {
-                if (hit >= 0 && onSampleRightClicked && e.mods.isPopupMenu())
+                if (hit >= 0 && onSampleRightClicked)
                 {
                     activeSampleIndex = hit;
                     onSampleRightClicked(hit);
-                    repaint();
                 }
-                else
-                {
-                    isPanningMap = true;
-                }
+                else if (onEmptyMapRightClicked)
+                    onEmptyMapRightClicked();
+                repaint();
+                return;
+            }
+            if (e.mods.isMiddleButtonDown())
+            {
+                isPanningMap = true;
                 return;
             }
 
@@ -643,7 +646,7 @@ namespace Atlas
         {
             // A cached legacy entry may be present in the database for old
             // projects/pad history, but must not appear on the melodic map.
-            if (PercussionGate::shouldExcludeFromAtlas(rec))
+            if (rec.hiddenFromAtlas || PercussionGate::shouldExcludeFromAtlas(rec))
                 return false;
 
             // Only a validated instrument identity can satisfy instrument
