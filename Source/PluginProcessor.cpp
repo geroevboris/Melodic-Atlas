@@ -533,7 +533,10 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             ? juce::jlimit(0.0f, 1.0f, savedTempoStrength) : 0.0f;
         // Legacy cache records have no independently evaluated identity.
         // Reuse existing measurements without rescanning the audio.
-        if (rec.identityState == Atlas::IdentityState::NotEvaluated &&
+        // Re-check metadata identities when opening old caches, including
+        // exact named family folders such as Brass and Woodwinds. Preserve
+        // labels propagated by CLAP instead of using them as fresh seeds.
+        if (rec.identityOrigin == 0 &&
             (rec.acoustic.valid || rec.tonal.valid))
             Atlas::SoundIdentityAnalyzer::evaluate(rec.file, rec);
         // When upgrading from a previous v4 cache, compute the gate from
