@@ -1527,6 +1527,7 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
         for (const auto& rec : *db)
         {
             if (rec.isLoop != audioProcessor.showLoopsTab.load()
+                || rec.hiddenFromAtlas
                 || Atlas::PercussionGate::shouldExcludeFromAtlas(rec)
                 || rec.identityState != Atlas::IdentityState::Identified
                 || rec.identityCluster != cg)
