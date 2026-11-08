@@ -3,27 +3,76 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <vector>
 
 namespace Atlas
 {
-    // Scanner-only layout pass. Uses genuine UMAP neighbour geometry as the
-    // initial arrangement, then separates fine CLAP clusters into islands.
-    // Does not change instrument classification, audio data or playback.
+    // Four fixed spectral zones on X; logarithmic effective duration on Y
+    // (long sounds at the top). CLAP defines island membership and relative
+    // neighbour geometry, NOT the global axis positions.
     struct SoundIslandLayout
     {
         static constexpr int maxIslands = 18;
-        static constexpr int geometryVersion = 3;
+        static constexpr int geometryVersion = 4;
+
+        static float frequencyPosition(const SampleRecord& rec)
+        {
+            if (rec.acoustic.valid
+                && std::isfinite(rec.acoustic.spectralCentroidHz)
+                && rec.acoustic.spectralCentroidHz > 0.0f)
+            {
+                // Log frequency and energy-weighting, not MIDI pitch:
+                // a harmonic bass can therefore be perceptually brighter
+                // than its fundamental note would suggest.
+                const float hz = juce::jlimit(90.0f, 9000.0f,
+                                               rec.acoustic.spectralCentroidHz);
+                const float logFreq = std::log(hz / 90.0f)
+                                    / std::log(9000.0f / 90.0f);
+                const float energyCorrection = 0.09f *
+                    (rec.acoustic.highBandRatio - rec.acoustic.lowBandRatio);
+                return juce::jlimit(0.04f, 0.96f,
+                                     logFreq + energyCorrection);
+            }
+            return juce::jlimit(0.04f, 0.96f, rec.spectralCentroidNorm);
+        }
+
+        static float durationPosition(const SampleRecord& rec)
+        {
+            const double measured = rec.effectiveDurationSec > 0.0
+                ? rec.effectiveDurationSec : rec.durationSec;
+            const float secs = juce::jlimit(
+                0.08f, 60.0f, (float)(std::isfinite(measured) ? measured : 1.0));
+            const float progress = std::log(secs / 0.08f)
+                                  / std::log(60.0f / 0.08f);
+            // Screen Y is downward: high Y values mean SHORT duration.
+            return juce::jlimit(0.05f, 0.95f, 1.0f - progress);
+        }
+
+        static int spectralRegion(float x)
+        {
+            return juce::jlimit(0, 3, (int)std::floor(
+                juce::jlimit(0.0f, 0.99999f, x) * 4.0f));
+        }
 
         struct Island
         {
             std::vector<size_t> members;
-            float originalX = 0.5f, originalY = 0.5f;
-            float x = 0.5f, y = 0.5f;
-            float radius = 0.06f;
-            float maximumDeviation = 0.0f;
+            float anchorX = 0.5f, anchorY = 0.5f;
+            float centreX = 0.5f, centreY = 0.5f;
+            float sourceX = 0.5f, sourceY = 0.5f;
+            float maxDistance = 0.0f;
+            float radius = 0.045f;
+            int region = 0;
         };
+
+        static float median(std::vector<float>& v)
+        {
+            if (v.empty())
+                return 0.5f;
+            auto mid = v.begin() + (std::ptrdiff_t)(v.size() / 2);
+            std::nth_element(v.begin(), mid, v.end());
+            return *mid;
+        }
 
         static bool apply(std::vector<SampleRecord>& records)
         {
@@ -31,63 +80,75 @@ namespace Atlas
             size_t eligible = 0;
             for (size_t i = 0; i < records.size(); ++i)
             {
-                const auto& rec = records[i];
+                auto& rec = records[i];
                 if (rec.islandGroup < 0 || rec.islandGroup >= maxIslands
-                    || !rec.neuralMapValid || !rec.clapEmbeddingValid)
+                    || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
-                auto& island = islands[(size_t)rec.islandGroup];
-                island.members.push_back(i);
-                island.originalX += rec.neuralMapX;
-                island.originalY += rec.neuralMapY;
+                // First upgrade from old caches has only rendered positions.
+                // Subsequent reflows always use the saved source projection.
+                if (rec.projectionX < 0.0f || rec.projectionY < 0.0f)
+                {
+                    rec.projectionX = rec.neuralMapX;
+                    rec.projectionY = rec.neuralMapY;
+                }
+                islands[(size_t)rec.islandGroup].members.push_back(i);
                 ++eligible;
             }
+            if (eligible == 0)
+                return false;
+
             int active = 0;
+            for (auto& island : islands)
+                if (!island.members.empty())
+                    ++active;
+
             for (auto& island : islands)
             {
                 if (island.members.empty())
                     continue;
-                ++active;
-                // Initial offsets are removed from the sums.
-                const float count = (float)island.members.size();
-                island.originalX =
-                    (island.originalX - 0.5f) / count;
-                island.originalY =
-                    (island.originalY - 0.5f) / count;
-                island.x = juce::jlimit(0.10f, 0.90f, island.originalX);
-                island.y = juce::jlimit(0.10f, 0.90f, island.originalY);
-                const float relativeSize = (float)island.members.size()
-                    * (float)active / (float)std::max<size_t>(1, eligible);
-                // Calibrated after active count is known below.
-                island.radius = relativeSize;
+                std::vector<float> x, y;
+                x.reserve(island.members.size());
+                y.reserve(island.members.size());
+                island.sourceX = 0.0f;
+                island.sourceY = 0.0f;
                 for (size_t index : island.members)
                 {
                     const auto& rec = records[index];
-                    const float dx = rec.neuralMapX - island.originalX;
-                    const float dy = rec.neuralMapY - island.originalY;
-                    island.maximumDeviation = std::max(
-                        island.maximumDeviation,
+                    x.push_back(frequencyPosition(rec));
+                    y.push_back(durationPosition(rec));
+                    island.sourceX += rec.projectionX;
+                    island.sourceY += rec.projectionY;
+                }
+                const float count = (float)island.members.size();
+                island.sourceX /= count;
+                island.sourceY /= count;
+                island.anchorX = median(x);
+                island.anchorY = median(y);
+                island.centreX = island.anchorX;
+                island.centreY = island.anchorY;
+                island.region = spectralRegion(island.anchorX);
+
+                const float expected = (float)eligible / (float)active;
+                const float relative = count / std::max(1.0f, expected);
+                island.radius = juce::jlimit(0.022f, 0.075f,
+                    0.043f * std::sqrt(std::max(0.08f, relative)));
+                for (size_t index : island.members)
+                {
+                    const auto& rec = records[index];
+                    const float dx = rec.projectionX - island.sourceX;
+                    const float dy = rec.projectionY - island.sourceY;
+                    island.maxDistance = std::max(island.maxDistance,
                         std::sqrt(dx * dx + dy * dy));
                 }
             }
-            if (active < 2)
-                return false;
 
-            for (auto& island : islands)
-                if (!island.members.empty())
-                {
-                    const float normalizedSize = (float)island.members.size()
-                        * (float)active / (float)std::max<size_t>(1, eligible);
-                    island.radius = juce::jlimit(0.04f, 0.10f,
-                        0.062f * std::sqrt(std::max(0.02f, normalizedSize)));
-                }
-
-            // Separation in the 2-D display only: the original CLAP/UMAP
-            // neighbourhoods define the initial relative island positions.
-            // Collision resolution only acts between islands, never randomly
-            // shuffles individual sounds.
-            for (int iteration = 0; iteration < 150; ++iteration)
+            // Layout repulsion is deliberately subordinate to the axes:
+            // X may move at most ~3.5% and Y at most ~4% from an island's
+            // measured median. Groups with identical measurements can overlap
+            // slightly rather than falsely move into distant spectral bands.
+            for (int iteration = 0; iteration < 120 && active > 1; ++iteration)
             {
-                std::array<juce::Point<float>, maxIslands> forces {};
+                std::array<juce::Point<float>, maxIslands> force {};
                 for (int a = 0; a < maxIslands; ++a)
                 {
                     if (islands[(size_t)a].members.empty())
@@ -96,41 +157,42 @@ namespace Atlas
                     {
                         if (islands[(size_t)b].members.empty())
                             continue;
-                        const float dx = islands[(size_t)b].x
-                                       - islands[(size_t)a].x;
-                        const float dy = islands[(size_t)b].y
-                                       - islands[(size_t)a].y;
-                        const float minDist = islands[(size_t)a].radius
-                            + islands[(size_t)b].radius + 0.025f;
+                        const auto& left = islands[(size_t)a];
+                        const auto& right = islands[(size_t)b];
+                        const float dx = right.centreX - left.centreX;
+                        const float dy = right.centreY - left.centreY;
                         const float dist = std::sqrt(dx * dx + dy * dy);
-                        if (dist >= minDist)
+                        const float required =
+                            left.radius + right.radius + 0.014f;
+                        if (dist >= required)
                             continue;
                         const float angle = (float)(a * 17 + b * 29) * 1.173f;
-                        const float nx = dist > 1.e-5f
+                        const float nx = dist > 0.0001f
                             ? dx / dist : std::cos(angle);
-                        const float ny = dist > 1.e-5f
+                        const float ny = dist > 0.0001f
                             ? dy / dist : std::sin(angle);
-                        const float penetration = (minDist - dist) * 0.43f;
-                        forces[(size_t)a].x -= nx * penetration;
-                        forces[(size_t)a].y -= ny * penetration;
-                        forces[(size_t)b].x += nx * penetration;
-                        forces[(size_t)b].y += ny * penetration;
+                        const float push = (required - dist) * 0.36f;
+                        force[(size_t)a].x -= nx * push;
+                        force[(size_t)a].y -= ny * push;
+                        force[(size_t)b].x += nx * push;
+                        force[(size_t)b].y += ny * push;
                     }
                 }
-                for (int a = 0; a < maxIslands; ++a)
+                for (int i = 0; i < maxIslands; ++i)
                 {
-                    auto& island = islands[(size_t)a];
+                    auto& island = islands[(size_t)i];
                     if (island.members.empty())
                         continue;
-                    // Weak spring preserves the overall CLAP/UMAP structure.
-                    const float spring = 0.007f;
-                    island.x += forces[(size_t)a].x
-                        + spring * (island.originalX - island.x);
-                    island.y += forces[(size_t)a].y
-                        + spring * (island.originalY - island.y);
-                    const float margin = island.radius + 0.025f;
-                    island.x = juce::jlimit(margin, 1.0f - margin, island.x);
-                    island.y = juce::jlimit(margin, 1.0f - margin, island.y);
+                    const float x = island.centreX + force[(size_t)i].x
+                        + 0.06f * (island.anchorX - island.centreX);
+                    const float y = island.centreY + force[(size_t)i].y
+                        + 0.06f * (island.anchorY - island.centreY);
+                    island.centreX = juce::jlimit(
+                        juce::jmax(0.025f, island.anchorX - 0.035f),
+                        juce::jmin(0.975f, island.anchorX + 0.035f), x);
+                    island.centreY = juce::jlimit(
+                        juce::jmax(0.025f, island.anchorY - 0.04f),
+                        juce::jmin(0.975f, island.anchorY + 0.04f), y);
                 }
             }
 
@@ -138,31 +200,45 @@ namespace Atlas
             {
                 if (island.members.empty())
                     continue;
-                const float scale = island.maximumDeviation > 0.00001f
-                    ? island.radius * 0.86f / island.maximumDeviation
-                    : 0.0f;
+                const float scale = island.maxDistance > 0.00001f
+                    ? island.radius * 0.72f / island.maxDistance : 0.0f;
                 for (size_t order = 0; order < island.members.size(); ++order)
                 {
                     auto& rec = records[island.members[order]];
-                    float dx = rec.neuralMapX - island.originalX;
-                    float dy = rec.neuralMapY - island.originalY;
-                    if (scale == 0.0f)
+                    float dx, dy;
+                    if (scale > 0.0f)
                     {
-                        // Deterministic, minuscule spread for coincident data.
-                        const float angle = (float)order * 2.399963f;
-                        const float r = island.radius * 0.32f
-                            * std::sqrt((float)(order + 1)
-                            / (float)island.members.size());
-                        dx = std::cos(angle) * r;
-                        dy = std::sin(angle) * r;
+                        dx = (rec.projectionX - island.sourceX) * scale;
+                        dy = (rec.projectionY - island.sourceY) * scale;
                     }
                     else
                     {
-                        dx *= scale;
-                        dy *= scale;
+                        const float angle = 2.399963f * (float)order;
+                        const float r = island.radius * 0.28f *
+                            std::sqrt((float)(order + 1)
+                                / (float)island.members.size());
+                        dx = std::cos(angle) * r;
+                        dy = std::sin(angle) * r;
                     }
-                    rec.neuralMapX = juce::jlimit(0.0f, 1.0f, island.x + dx);
-                    rec.neuralMapY = juce::jlimit(0.0f, 1.0f, island.y + dy);
+                    // Soft intra-island acoustic ordering: similar sounds
+                    // stay close in CLAP, bright ones lean slightly right and
+                    // long ones slightly upward, without splitting the island.
+                    dx += juce::jlimit(-0.015f, 0.015f,
+                        0.15f * (frequencyPosition(rec) - island.anchorX));
+                    dy += juce::jlimit(-0.015f, 0.015f,
+                        0.15f * (durationPosition(rec) - island.anchorY));
+                    const float len = std::sqrt(dx * dx + dy * dy);
+                    const float maxR = island.radius * 0.93f;
+                    if (len > maxR)
+                    {
+                        dx *= maxR / len;
+                        dy *= maxR / len;
+                    }
+                    rec.neuralMapX = juce::jlimit(0.0f, 1.0f,
+                                                 island.centreX + dx);
+                    rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
+                                                 island.centreY + dy);
+                    rec.colourGroup = island.region; // fixed colour for island
                 }
             }
             return true;
