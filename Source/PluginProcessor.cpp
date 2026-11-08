@@ -317,6 +317,10 @@ void MelodicAtlasAudioProcessor::loadAtlasOverrides()
         item.hidden = (bool)node.getProperty("hidden", false);
         item.loopMode = juce::jlimit(-1, 1,
             (int)node.getProperty("loopMode", -1));
+        item.instrumentCluster = juce::jlimit(-1, 6,
+            (int)node.getProperty("instrumentCluster", -1));
+        item.instrumentSubtype = (uint32_t)(int)
+            node.getProperty("instrumentSubtype", 0);
         atlasOverrides[path.toStdString()] = item;
     }
 }
@@ -328,12 +332,16 @@ void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
         const juce::ScopedLock lock(dbLock);
         for (const auto& [path, item] : atlasOverrides)
         {
-            if (!item.hidden && item.loopMode < 0)
+            if (!item.hidden && item.loopMode < 0
+                && item.instrumentCluster < 0)
                 continue;
             juce::ValueTree node("File");
             node.setProperty("path", juce::String(path), nullptr);
             node.setProperty("hidden", item.hidden, nullptr);
             node.setProperty("loopMode", item.loopMode, nullptr);
+            node.setProperty("instrumentCluster", item.instrumentCluster, nullptr);
+            node.setProperty("instrumentSubtype",
+                             (int)item.instrumentSubtype, nullptr);
             root.appendChild(node, nullptr);
         }
     }
@@ -362,6 +370,22 @@ void MelodicAtlasAudioProcessor::applyAtlasOverrides(
     rec.loopUserOverride = it->second.loopMode;
     if (rec.loopUserOverride >= 0)
         rec.isLoop = rec.loopUserOverride == 1;
+    // Manual corrections are hard labels, not a statistical prediction.
+    // Apply them AFTER classification, including on cached reload and
+    // after every asynchronous scanner refresh.
+    if (it->second.instrumentCluster >= 0
+        && it->second.instrumentCluster < 7)
+    {
+        const auto family = static_cast<Atlas::ClusterGroup>(
+            it->second.instrumentCluster);
+        rec.identityState = Atlas::IdentityState::Identified;
+        rec.identityCluster = family;
+        rec.cluster = family;
+        rec.identityOrigin = 2; // explicit user correction
+        rec.identityConfidence = 1.0f;
+        Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
+        rec.subMask |= it->second.instrumentSubtype;
+    }
 }
 
 void MelodicAtlasAudioProcessor::hideAtlasSamples(
@@ -429,6 +453,50 @@ void MelodicAtlasAudioProcessor::setSampleLoopOverride(int index, int mode)
                 rec.file, nullptr, 0, 0.0, rec.durationSec);
         publishedDatabase =
             std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    saveAtlasOverrides();
+}
+
+void MelodicAtlasAudioProcessor::setSampleInstrumentOverride(
+    int index, int cluster, uint32_t subtype)
+{
+    {
+        const juce::ScopedLock lock(dbLock);
+        if (index < 0 || index >= (int)sampleDatabase.size())
+            return;
+        auto& rec = sampleDatabase[(size_t)index];
+        auto& manual = atlasOverrides[
+            rec.file.getFullPathName().toStdString()];
+        if (cluster >= 0 && cluster < 7)
+        {
+            manual.instrumentCluster = cluster;
+            manual.instrumentSubtype = subtype;
+            rec.identityState = Atlas::IdentityState::Identified;
+            rec.identityCluster = (Atlas::ClusterGroup)cluster;
+            rec.cluster = (Atlas::ClusterGroup)cluster;
+            rec.identityOrigin = 2;
+            rec.identityConfidence = 1.0f;
+            Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
+            rec.subMask |= subtype;
+        }
+        else
+        {
+            manual.instrumentCluster = -1;
+            manual.instrumentSubtype = 0;
+            // Undo a manual tag by returning to metadata evidence, not by
+            // retaining an out-of-date manually classified cache label.
+            // CLAP propagation can refine it on the next Refresh.
+            Atlas::SoundIdentityAnalyzer::evaluate(rec.file, rec);
+            rec.identityOrigin = 0;
+            rec.cluster = rec.identityState == Atlas::IdentityState::Identified
+                ? rec.identityCluster : Atlas::ClusterGroup::Other;
+            Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
+        }
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(
+                sampleDatabase);
         samplerEngine.setSampleDatabase(publishedDatabase);
         databaseVersion.fetch_add(1);
     }
