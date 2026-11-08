@@ -472,6 +472,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("my", rec.mapY, nullptr);
         item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
         item.setProperty("colourGroup", rec.colourGroup, nullptr);
+        item.setProperty("attackShadeLevel", rec.attackShadeLevel, nullptr);
         item.setProperty("clapFamilyGroup", rec.clapFamilyGroup, nullptr);
         item.setProperty("projectionX", rec.projectionX, nullptr);
         item.setProperty("projectionY", rec.projectionY, nullptr);
@@ -606,6 +607,8 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // This is the scanner's native CLAP vector cache, independent of
         // the old offline Python UMAP manifest.
         rec.colourGroup = (int)item.getProperty("colourGroup", -1);
+        rec.attackShadeLevel = juce::jlimit(0, 2,
+            (int)item.getProperty("attackShadeLevel", 1));
         rec.clapFamilyGroup = (int)item.getProperty("clapFamilyGroup",
                                                    rec.colourGroup);
         rec.projectionX = (float)item.getProperty("projectionX", -1.0f);
