@@ -315,6 +315,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("loopAnalysisVersion", rec.loopAnalysisVersion, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
         item.setProperty("activeDur", rec.effectiveDurationSec, nullptr);
+        item.setProperty("durationAnalysisVersion", rec.durationAnalysisVersion, nullptr);
         item.setProperty("bpm", rec.detectedBpm, nullptr);
         item.setProperty("midi", rec.rootMidiNote, nullptr);
         item.setProperty("pc", rec.pitchClass, nullptr);
@@ -437,6 +438,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             && (bool)item.getProperty("isLoop", false);
         rec.durationSec = (double)item.getProperty("dur", 1.0);
         rec.effectiveDurationSec = (double)item.getProperty("activeDur", rec.durationSec);
+        rec.durationAnalysisVersion = (int)item.getProperty("durationAnalysisVersion", 0);
         rec.detectedBpm = (double)item.getProperty("bpm", 120.0);
         rec.rootMidiNote = (int)item.getProperty("midi", 60);
         rec.pitchClass = (int)item.getProperty("pc", 0);
@@ -803,7 +805,14 @@ void MelodicAtlasAudioProcessor::run()
             )
         {
             if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
-                newRecords.push_back(old->second);
+            {
+                auto reused = old->second;
+                if (reused.durationAnalysisVersion < 1
+                    && Atlas::AudioAnalyzer::refreshEffectiveDuration(
+                        file, formatManager, reused))
+                    hasChangedRecords = true;
+                newRecords.push_back(std::move(reused));
+            }
             scannedCount.store((int)newRecords.size());
             continue;
         }
