@@ -26,7 +26,7 @@ namespace Atlas
 
             Ort::SessionOptions options;
             // Conservative on Apple Silicon: avoid oversubscribing the DAW.
-            options.SetIntraOpNumThreads(4);
+            options.SetIntraOpNumThreads(2);
             options.SetInterOpNumThreads(1);
             options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
 
