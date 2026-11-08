@@ -316,6 +316,25 @@ namespace Atlas
             }
 
             int hit = findNearestSample(pt, 12.0f);
+            // A selected sound that no longer matches a filter is drawn as
+            // a dim crossed ring. Shift+right-clicking that exact marker
+            // must still offer instrument-tag correction without making
+            // the sound count as a matching search result.
+            if (hit < 0 && e.mods.isPopupMenu()
+                && e.mods.isShiftDown() && database
+                && activeSampleIndex >= 0
+                && activeSampleIndex < (int)database->size())
+            {
+                const auto& selected =
+                    (*database)[(size_t)activeSampleIndex];
+                if (!selected.hiddenFromAtlas
+                    && selected.isLoop == showLoopsOnly
+                    && !PercussionGate::shouldExcludeFromAtlas(selected)
+                    && !matchesCurrentFilter(selected)
+                    && pt.getDistanceFrom(
+                        mapToScreen(selected)) <= 12.0f)
+                    hit = activeSampleIndex;
+            }
 
             if (e.mods.isPopupMenu())
             {
