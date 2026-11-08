@@ -812,6 +812,15 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
                 0.0f, 1.0f,
                 (float)item.getProperty("char" + juce::String((int)feature), 0.0f));
 
+        // New instrument subtype vocabulary (including violin) can be
+        // inferred cheaply from existing file/folder metadata. Do this on
+        // cached libraries without rerunning CLAP audio inference.
+        if (rec.identityState == Atlas::IdentityState::Identified
+            && rec.identityOrigin != 2)
+        {
+            rec.cluster = rec.identityCluster;
+            Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
+        }
         applyAtlasOverrides(rec);
         loaded.push_back(std::move(rec));
     }
