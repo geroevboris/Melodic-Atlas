@@ -37,23 +37,72 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     mapCanvas.setSampleDatabase(audioProcessor.getSampleDatabaseSnapshot());
     applyCurrentFiltersToMap();
 
-    // Правый клик по точке назначает звук в пэд тихо (без воспроизведения)
+    // Right-click a real sound to correct automatic decisions or hide
+    // it/the containing CLAP island. Source audio is never deleted.
     mapCanvas.onSampleRightClicked = [this](int sampleIdx)
     {
         const auto db = audioProcessor.getSampleDatabaseSnapshot();
-        if (sampleIdx < 0 || sampleIdx >= (int)db->size())
+        if (!db || sampleIdx < 0 || sampleIdx >= (int)db->size())
             return;
+        const auto& selected = (*db)[(size_t)sampleIdx];
+        const int islandId = selected.islandGroup;
+        std::vector<int> islandIndices;
+        if (islandId >= 0)
+            for (int i = 0; i < (int)db->size(); ++i)
+                if ((*db)[(size_t)i].islandGroup == islandId
+                    && (*db)[(size_t)i].isLoop == selected.isLoop
+                    && !(*db)[(size_t)i].hiddenFromAtlas)
+                    islandIndices.push_back(i);
 
-        if (selectedPads.empty())
-            selectedPads.insert(primarySelectedPad);
-
-        for (int pIdx : selectedPads)
-        {
-            audioProcessor.assignSampleToPadWithPreviewSettings(pIdx, sampleIdx, true);
-            primarySelectedPad = pIdx;
-            audioProcessor.primarySelectedPad = pIdx;
-        }
-        repaint();
+        juce::PopupMenu menu;
+        menu.addItem(1, "Assign to selected pad");
+        menu.addSeparator();
+        menu.addItem(2, "Hide this sound from map");
+        menu.addItem(3, "Hide this island (" +
+            juce::String((int)islandIndices.size()) + " sounds)",
+            !islandIndices.empty());
+        menu.addSeparator();
+        menu.addItem(4, "Move to One-shots", selected.isLoop);
+        menu.addItem(5, "Move to Loops", !selected.isLoop);
+        menu.showMenuAsync(
+            juce::PopupMenu::Options().withTargetComponent(&mapCanvas),
+            [this, sampleIdx, islandIndices](int choice)
+            {
+                if (choice == 1)
+                {
+                    if (selectedPads.empty())
+                        selectedPads.insert(primarySelectedPad);
+                    for (int pIdx : selectedPads)
+                    {
+                        audioProcessor.assignSampleToPadWithPreviewSettings(
+                            pIdx, sampleIdx, true);
+                        primarySelectedPad = pIdx;
+                        audioProcessor.primarySelectedPad = pIdx;
+                    }
+                }
+                else if (choice == 2)
+                    audioProcessor.hideAtlasSamples({sampleIdx});
+                else if (choice == 3)
+                    audioProcessor.hideAtlasSamples(islandIndices);
+                else if (choice == 4 || choice == 5)
+                    audioProcessor.setSampleLoopOverride(
+                        sampleIdx, choice == 5 ? 1 : 0);
+                repaint();
+            });
+    };
+    mapCanvas.onEmptyMapRightClicked = [this]()
+    {
+        const int hidden = audioProcessor.getHiddenAtlasSampleCount();
+        juce::PopupMenu menu;
+        menu.addItem(1, "Restore all hidden sounds (" +
+            juce::String(hidden) + ")", hidden > 0);
+        menu.showMenuAsync(
+            juce::PopupMenu::Options().withTargetComponent(&mapCanvas),
+            [this](int choice)
+            {
+                if (choice == 1)
+                    audioProcessor.restoreHiddenAtlasSamples();
+            });
     };
 
     auto setupEncoder = [this](juce::Slider& s, const juce::String& n,
