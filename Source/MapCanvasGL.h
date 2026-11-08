@@ -901,7 +901,13 @@ namespace Atlas
             if (!identified)
             {
                 if (rec.identityState == IdentityState::Ambiguous)
+                {
+                    if ((int)rec.identityCluster >= 0
+                        && (int)rec.identityCluster < 7)
+                        return "UNCONFIRMED "
+                            + MusicMath::getClusterName(rec.identityCluster);
                     return "UNCONFIRMED INSTRUMENT";
+                }
                 return "NO INSTRUMENT TAG";
             }
             juce::String text = MusicMath::getClusterName(rec.identityCluster);
