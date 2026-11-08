@@ -153,6 +153,45 @@ namespace Atlas
             return true;
         }
 
+        // Refresh only the attack envelope of unchanged cached audio. The
+        // original CLAP embeddings and spectral analysis stay untouched.
+        static bool refreshInitialAttack(const juce::File& file,
+                                         juce::AudioFormatManager& formats,
+                                         SampleRecord& record)
+        {
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                formats.createReaderFor(file));
+            if (reader == nullptr || reader->lengthInSamples <= 0
+                || reader->sampleRate < 8000.0)
+                return false;
+            const double rate = reader->sampleRate;
+            const int count = (int)std::min<juce::int64>(
+                reader->lengthInSamples, (juce::int64)(rate * 4.0));
+            const bool stereo = reader->numChannels > 1;
+            juce::AudioBuffer<float> data(stereo ? 2 : 1, count);
+            data.clear();
+            if (!reader->read(&data, 0, count, 0, true, stereo))
+                return false;
+            std::vector<float> mono((size_t)count);
+            const float* left = data.getReadPointer(0);
+            const float* right = stereo ? data.getReadPointer(1) : nullptr;
+            for (int i = 0; i < count; ++i)
+            {
+                const float l = std::isfinite(left[i]) ? left[i] : 0.0f;
+                const float r = right && std::isfinite(right[i]) ? right[i] : l;
+                mono[(size_t)i] = 0.5f * (l + r);
+            }
+            float seconds = 0.0f;
+            const bool measured = AcousticFeatureExtractor::measureInitialAttack(
+                mono.data(), count, rate, seconds);
+            record.acoustic.attackMeasured = measured;
+            record.acoustic.attackTimeSec = measured ? seconds : 0.0f;
+            // A silent/invalid envelope still receives a cached 'unknown'
+            // result, preventing repeated re-decoding on every Refresh.
+            record.attackAnalysisVersion = 1;
+            return true;
+        }
+
         // Re-evaluate loop structure on cached audio without touching the
         // previously computed CLAP embedding or spatial descriptors.
         static bool refreshLoopStructure(const juce::File& file,
