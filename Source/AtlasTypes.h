@@ -189,6 +189,7 @@ namespace Atlas
         // 0 means legacy duration-based classification; 1 means structural scan.
         int loopAnalysisVersion = 0;
         double durationSec = 0.0;
+        double effectiveDurationSec = 0.0; // energy-based active duration when measured
         double detectedBpm = 120.0;
         int rootMidiNote = 60;
         int pitchClass = 0;
@@ -497,21 +498,34 @@ namespace Atlas
             return base;
         }
 
-        // Palette labels have no fixed instrument/timbre semantics: each
-        // library forms its own six CLAP semantic-audio neighbourhoods.
+        // Four fixed spectral regions: a colour encodes measured brightness,
+        // NOT CLAP/instrument identity. One colour per island, with a gentle
+        // reproducible tone shift separating islands of the same region.
+        static juce::Colour getSpectralRegionColour(int region, int island)
+        {
+            static constexpr uint32_t colours[] = {
+                0xff4f83ffu, // low: blue
+                0xffab70eeu, // low-mid: violet
+                0xff16cabbu, // upper-mid: teal
+                0xffffb54eu  // high: amber
+            };
+            const int r = juce::jlimit(0, 3, region);
+            juce::Colour base(colours[(size_t)r]);
+            if (island < 0)
+                return base;
+            switch (island % 3)
+            {
+                case 1: return base.brighter(0.10f);
+                case 2: return base.darker(0.10f);
+                default: return base;
+            }
+        }
+
         static juce::Colour getClapFamilyColour(const SampleRecord& rec)
         {
-            static const juce::Colour palette[] = {
-                juce::Colour(0xff00c8ff), // cyan
-                juce::Colour(0xffffad00), // amber
-                juce::Colour(0xffb163ff), // lavender
-                juce::Colour(0xff1bda93), // mint
-                juce::Colour(0xffff5475), // coral
-                juce::Colour(0xff5f7cff)  // periwinkle
-            };
-            if (rec.colourGroup < 0 || rec.colourGroup >= 6)
-                return juce::Colour(0xff82919e);
-            return palette[(size_t)rec.colourGroup];
+            if (rec.colourGroup < 0 || rec.colourGroup > 3)
+                return juce::Colour(0xff8392a4);
+            return getSpectralRegionColour(rec.colourGroup, rec.islandGroup);
         }
 
         // Six globally stable timbre colours. Position is determined by
