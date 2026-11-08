@@ -124,6 +124,23 @@ namespace Atlas
             const bool clearPitchedTransient = t.validWindowCount >= 1
                                             && t.periodicity >= 0.84f
                                             && !exceptionallyDryHit;
+            // Drum loops can sustain continuously and contain a pitched
+            // kick. The short-hit envelope gate below will miss them.
+            // Require clear multi-transient noise and weak tonal evidence
+            // before suppressing a whole rhythmic loop.
+            const bool noisyRhythmicLoop =
+                rec.isLoop
+                && a.spectralFlatness >= 0.42f
+                && a.onsetActivity >= 0.15f
+                && (t.validWindowCount == 0
+                    || (t.periodicity < 0.54f
+                        && t.pitchStability < 0.58f));
+            if (noisyRhythmicLoop)
+            {
+                rec.percussionState = PercussionState::Percussive;
+                rec.percussionConfidence = 0.71f;
+                return;
+            }
             if (stablePitch || clearPitchedTransient)
             {
                 rec.percussionState = PercussionState::Melodic;
