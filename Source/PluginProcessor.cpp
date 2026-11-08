@@ -3,6 +3,7 @@
 #include "NeuralMapImport.h"
 #include "ClapAudioFeatures.h"
 #include "ClapColourClusters.h"
+#include "SoundIslandLayout.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #include "ClapOnnxEncoder.h"
 #include "NativeClapProjection.h"
@@ -297,7 +298,10 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 
     juce::ValueTree root("MelodicAtlasDatabaseCache");
     root.setProperty("scannedFolder", folderToScan.getFullPathName(), nullptr);
-    root.setProperty("mapGeometryVersion", geometryVersionCurrent.load() ? 2 : 0, nullptr);
+    root.setProperty("mapGeometryVersion",
+                     geometryVersionCurrent.load()
+                         ? Atlas::SoundIslandLayout::geometryVersion : 0,
+                     nullptr);
 
     for (const auto& rec : sampleDatabase)
     {
@@ -321,6 +325,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("my", rec.mapY, nullptr);
         item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
         item.setProperty("colourGroup", rec.colourGroup, nullptr);
+        item.setProperty("islandGroup", rec.islandGroup, nullptr);
         item.setProperty("colourAlgorithmVersion", rec.colourAlgorithmVersion, nullptr);
         if (rec.clapEmbeddingValid)
         {
@@ -438,6 +443,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // This is the scanner's native CLAP vector cache, independent of
         // the old offline Python UMAP manifest.
         rec.colourGroup = (int)item.getProperty("colourGroup", -1);
+        rec.islandGroup = (int)item.getProperty("islandGroup", -1);
         rec.cachedColourGroup = rec.colourGroup;
         rec.colourAlgorithmVersion = (int)item.getProperty("colourAlgorithmVersion", 0);
         rec.clapEmbeddingValid = false;
@@ -566,13 +572,16 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             [](const Atlas::SampleRecord& rec) {
                 return rec.clapEmbeddingValid;
             });
-    if (savedMapVersion < 2 && allNativeEmbeddings)
+    if (savedMapVersion < Atlas::SoundIslandLayout::geometryVersion
+        && allNativeEmbeddings)
     {
         try
         {
             // One-time full fit; empty old-anchor set deliberately avoids
             // retaining the previous, scattered UMAP coordinates.
             migratedGeometry = Atlas::NativeClapProjection::apply(loaded, {});
+            if (migratedGeometry)
+                Atlas::SoundIslandLayout::apply(loaded);
         }
         catch (const std::exception& error)
         {
@@ -584,7 +593,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     if (!completeNativeMap && !migratedGeometry)
         Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
-    geometryVersionCurrent.store(savedMapVersion >= 2 || migratedGeometry);
+    geometryVersionCurrent.store(
+        savedMapVersion >= Atlas::SoundIslandLayout::geometryVersion
+        || migratedGeometry);
     {
         const juce::ScopedLock sl(dbLock);
         sampleDatabase = std::move(loaded);
@@ -815,9 +826,15 @@ void MelodicAtlasAudioProcessor::run()
 #endif
         if (!projectedByNativeClap)
             Atlas::NeuralMapImport::apply(folderToScan, newRecords);
-        geometryVersionCurrent.store(projectedByNativeClap);
-        // CLAP clusters are independent of map coordinates and filters.
+        // The fine CLAP families give each island a stable identity.
         Atlas::ClapColourClusters::apply(newRecords);
+        bool islandsReady = projectedByNativeClap;
+        if (projectedByNativeClap &&
+            (!incrementalRefresh.load() || !geometryVersionCurrent.load()))
+            islandsReady = Atlas::SoundIslandLayout::apply(newRecords);
+        // An incremental refresh reuses old island coordinates and places
+        // newcomers near their existing CLAP neighbours without reshuffling.
+        geometryVersionCurrent.store(islandsReady);
         for (auto& record : newRecords)
             record.cachedColourGroup = record.colourGroup;
         {
