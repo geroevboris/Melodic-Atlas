@@ -558,9 +558,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         return false;
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
-    // Expand sparse metadata-backed instrument filters using only strong
-    // nearest-neighbour evidence from labelled sounds in this library.
-    Atlas::ClapLibraryClassifier::apply(loaded);
+    // CLAP cross-library exemplars are inferred on the scanner worker only.
+    // Never perform a potentially O(library size x exemplars) classification
+    // pass synchronously while the DAW instantiates this plugin.
     // Recolour from saved embeddings without requiring an audio rescan.
     Atlas::ClapColourClusters::apply(loaded);
     for (auto& record : loaded)
