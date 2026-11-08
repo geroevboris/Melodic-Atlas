@@ -252,7 +252,7 @@ namespace Atlas
                 if (reason != FilterReason::Match
                     && reason != FilterReason::OtherTab)
                 {
-                    juce::String message = "FILTERED OUT: "
+                    juce::String message = juce::String("FILTERED OUT: ")
                         + explainFilterReason(reason).toUpperCase();
                     if (reason == FilterReason::NoTag
                         || reason == FilterReason::NoSubtype
@@ -904,7 +904,7 @@ namespace Atlas
                 {
                     if ((int)rec.identityCluster >= 0
                         && (int)rec.identityCluster < 7)
-                        return "UNCONFIRMED "
+                        return juce::String("UNCONFIRMED ")
                             + MusicMath::getClusterName(rec.identityCluster);
                     return "UNCONFIRMED INSTRUMENT";
                 }
