@@ -118,7 +118,7 @@ namespace Atlas
             outRecord.durationAnalysisVersion = 1;
             outRecord.isLoop = LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
-            outRecord.loopAnalysisVersion = 2;
+            outRecord.loopAnalysisVersion = 3;
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
@@ -184,7 +184,7 @@ namespace Atlas
             }
             record.isLoop = LoopStructureAnalyzer::isLoop(
                 file, mono.data(), frames, sr, seconds);
-            record.loopAnalysisVersion = 2;
+            record.loopAnalysisVersion = 3;
             if (record.loopUserOverride >= 0)
                 record.isLoop = record.loopUserOverride == 1;
             return true;
