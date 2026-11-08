@@ -222,6 +222,7 @@ namespace Atlas
         // Per-library CLAP colour family, independent from instrument filters.
         // -1 means not analysed / no valid embedding.
         int colourGroup = -1; // fixed 0..3 acoustic spectral region
+        int attackShadeLevel = 1; // 0 = sharp/darker, 1 = medium, 2 = soft/lighter
         int clapFamilyGroup = -1; // 0..5 CLAP super-family, NOT a colour
         // Preserve unmodified UMAP coordinates for future layout revisions.
         float projectionX = -1.0f, projectionY = -1.0f;
@@ -510,10 +511,11 @@ namespace Atlas
             return base;
         }
 
-        // Four fixed spectral regions: a colour encodes measured brightness,
-        // NOT CLAP/instrument identity. One colour per island, with a gentle
-        // reproducible tone shift separating islands of the same region.
-        static juce::Colour getSpectralRegionColour(int region, int island)
+        // Independent visual dimensions:
+        // hue = measured spectral region (X), lightness = median initial
+        // attack of this sound island (Y). No arbitrary island-ID tinting.
+        // Passing shade = -1 returns the neutral/base hue for the legend.
+        static juce::Colour getSpectralRegionColour(int region, int shade)
         {
             static constexpr uint32_t colours[] = {
                 0xff4f83ffu, // low: blue
@@ -521,23 +523,19 @@ namespace Atlas
                 0xff16cabbu, // upper-mid: teal
                 0xffffb54eu  // high: amber
             };
-            const int r = juce::jlimit(0, 3, region);
-            juce::Colour base(colours[(size_t)r]);
-            if (island < 0)
-                return base;
-            switch (island % 3)
-            {
-                case 1: return base.brighter(0.10f);
-                case 2: return base.darker(0.10f);
-                default: return base;
-            }
+            const auto base = juce::Colour(colours[(size_t)
+                juce::jlimit(0, 3, region)]);
+            if (shade == 0) return base.darker(0.18f); // sharp attack
+            if (shade == 2) return base.brighter(0.20f); // soft attack
+            return base;
         }
 
         static juce::Colour getClapFamilyColour(const SampleRecord& rec)
         {
             if (rec.colourGroup < 0 || rec.colourGroup > 3)
                 return juce::Colour(0xff8392a4);
-            return getSpectralRegionColour(rec.colourGroup, rec.islandGroup);
+            return getSpectralRegionColour(
+                rec.colourGroup, rec.attackShadeLevel);
         }
 
         // Six globally stable timbre colours. Position is determined by
