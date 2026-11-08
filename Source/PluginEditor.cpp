@@ -82,10 +82,48 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         menu.addSeparator();
         menu.addItem(4, "Move to One-shots", selected.isLoop);
         menu.addItem(5, "Move to Loops", !selected.isLoop);
+        menu.addSeparator();
+
+        // CLAP audio embeddings do not provide named instrument labels.
+        // Offer an explicit, durable correction rather than misrepresenting
+        // a guessed timbre as certain instrument recognition.
+        const bool tagged = selected.identityState
+            == Atlas::IdentityState::Identified
+            && (int)selected.identityCluster >= 0
+            && (int)selected.identityCluster < 7;
+        juce::String tagDescription = tagged
+            ? Atlas::MusicMath::getClusterName(selected.identityCluster)
+            : "UNCLASSIFIED";
+        if (tagged)
+            tagDescription += selected.identityOrigin == 2 ? " (your tag)"
+                : selected.identityOrigin == 1 ? " (CLAP similarity)"
+                : " (filename / folder)";
+        menu.addSectionHeader("Instrument: " + tagDescription);
+
+        struct TagAction { int family; uint32_t subtype; };
+        std::vector<TagAction> tagActions;
+        juce::PopupMenu instrumentMenu;
+        for (int family = 0; family < 7; ++family)
+        {
+            const auto cluster = (Atlas::ClusterGroup)family;
+            const auto options = Atlas::MusicMath::getSubgroupsForCluster(cluster);
+            juce::PopupMenu familyMenu;
+            for (const auto& option : options)
+            {
+                tagActions.push_back({family, option.flagBit});
+                const int resultId = 100 + (int)tagActions.size() - 1;
+                familyMenu.addItem(resultId, option.fullName);
+            }
+            instrumentMenu.addSubMenu(
+                Atlas::MusicMath::getClusterName(cluster), familyMenu);
+        }
+        menu.addSubMenu("Set instrument tag...", instrumentMenu);
+        menu.addItem(9, "Reset to automatic tagging",
+            selected.identityOrigin == 2);
         menu.showMenuAsync(
             juce::PopupMenu::Options().withTargetScreenArea(
                 juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
-            [this, sampleIdx, islandIndices](int choice)
+            [this, sampleIdx, islandIndices, tagActions](int choice)
             {
                 if (choice == 1)
                 {
@@ -106,6 +144,16 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
                 else if (choice == 4 || choice == 5)
                     audioProcessor.setSampleLoopOverride(
                         sampleIdx, choice == 5 ? 1 : 0);
+                else if (choice >= 100
+                         && choice < 100 + (int)tagActions.size())
+                {
+                    const auto& tag = tagActions[(size_t)(choice - 100)];
+                    audioProcessor.setSampleInstrumentOverride(
+                        sampleIdx, tag.family, tag.subtype);
+                }
+                else if (choice == 9)
+                    audioProcessor.setSampleInstrumentOverride(
+                        sampleIdx, -1, 0);
                 repaint();
             });
     };
