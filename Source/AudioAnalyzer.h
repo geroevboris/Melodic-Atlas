@@ -134,6 +134,7 @@ namespace Atlas
             outRecord.harmonicRoughness = juce::jlimit(0.0f, 1.0f, 1.0f - confidence);
             outRecord.acoustic = AcousticFeatureExtractor::analyze(
                 downmix.data(), maxSamplesToRead, sr);
+            outRecord.attackAnalysisVersion = 1;
             outRecord.tonal = TonalFeatureExtractor::analyze(
                 downmix.data(), maxSamplesToRead, sr);
 
