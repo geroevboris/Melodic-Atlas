@@ -32,13 +32,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Python for native 8B packaging
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-')))))
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-'))))))
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Fetch pinned local CLAP and ONNX Runtime (build-time only)
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-')))))
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-'))))))
         shell: bash
         run: |
           python Tools/fetch_clap_onnx_8b.py build/assets/clap_audio.onnx
@@ -49,7 +49,7 @@ jobs:
           fi
 
       - name: Configure Native CLAP CMake (8B)
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-')))))
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-'))))))
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -62,14 +62,14 @@ jobs:
             "-DATLAS_CLAP_MODEL_PATH=$GITHUB_WORKSPACE/build/assets/clap_audio.onnx"
 
       - name: Configure CMake (legacy/other branches)
-        if: "!(startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-')))))"
+        if: "!(startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-'))))))"
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Plugin (Release)
         run: cmake --build build --config Release --parallel 4
 
       - name: Diagnose macOS plugin loading and dynamic linkage (8B)
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-'))))) && runner.os == 'macOS'
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-')))))) && runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +101,7 @@ jobs:
           sw_vers
 
       - name: Validate AU in macOS AudioComponentRegistrar (8B)
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-'))))) && runner.os == 'macOS'
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-')))))) && runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -116,7 +116,7 @@ jobs:
           auval -v aumu MlAt BrAu
 
       - name: Verify bundled native CLAP weights and runtime (8B)
-        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || startsWith(github.ref, 'refs/heads/dev/8g-')))))
+        if: (startsWith(github.ref, 'refs/heads/dev/8b-') || startsWith(github.ref, 'refs/heads/dev/8c-') || (startsWith(github.ref, 'refs/heads/dev/8d-') || (startsWith(github.ref, 'refs/heads/dev/8e-') || (startsWith(github.ref, 'refs/heads/dev/8f-') || (startsWith(github.ref, 'refs/heads/dev/8g-') || startsWith(github.ref, 'refs/heads/dev/8h-'))))))
         run: python Tools/verify_native_bundle_8b.py
 
       - name: Package macOS plugin bundles without losing executable permissions
