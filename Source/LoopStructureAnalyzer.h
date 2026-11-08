@@ -68,9 +68,6 @@ namespace Atlas
                     && contains(parentTokens, "shots"))
                 || (contains(grandparentTokens, "one")
                     && contains(grandparentTokens, "shots"));
-            if (taggedOneShotFolder)
-                return false;
-
             const bool taggedLoopFolder =
                 folderHas(parentTokens, "loop", "loops")
                 || folderHas(grandparentTokens, "loop", "loops")
@@ -123,8 +120,14 @@ namespace Atlas
                 return false;
             }();
 
-            // Without structural repetition, length and a BPM label alone
-            // must never convert a one-shot pad/chord into a loop.
+            // An explicit BPM filename plus a musical beat-grid length is
+            // stronger evidence than a generic 'One Shots' parent folder.
+            // Otherwise the folder tag protects sustained individual notes.
+            if (taggedOneShotFolder && !durationOnGrid)
+                return false;
+
+            // Without structural repetition, a time label alone must not
+            // convert an arbitrary long note into a loop.
             if (!mono || sampleRate < 8000.0 || duration < 1.0
                 || samples < 4096)
                 return durationOnGrid;
