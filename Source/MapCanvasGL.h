@@ -27,8 +27,38 @@ namespace Atlas
 
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
+            // A metadata correction publishes a new database snapshot but
+            // must not clear the active audition or its context. Re-link by
+            // stable file path, since rescanning may reorder the records.
+            const auto previous = database;
+            const int previousActive = activeSampleIndex;
+            const auto previousHistory = auditionHistory;
             database = std::move(dbSnapshot);
-            rebuildIslandOverlays();
+            auto restoreIndex = [&](int oldIndex) -> int
+            {
+                if (!previous || !database || oldIndex < 0
+                    || oldIndex >= (int)previous->size())
+                    return -1;
+                const auto path = (*previous)[(size_t)oldIndex]
+                    .file.getFullPathName();
+                if (oldIndex < (int)database->size()
+                    && (*database)[(size_t)oldIndex]
+                        .file.getFullPathName() == path)
+                    return oldIndex;
+                for (int i = 0; i < (int)database->size(); ++i)
+                    if ((*database)[(size_t)i]
+                        .file.getFullPathName() == path)
+                        return i;
+                return -1;
+            };
+            activeSampleIndex = restoreIndex(previousActive);
+            auditionHistory.clear();
+            for (int oldIndex : previousHistory)
+            {
+                const int index = restoreIndex(oldIndex);
+                if (index >= 0)
+                    auditionHistory.push_back(index);
+            }
             // Require complete coverage: a partial imported projection must
             // not mix neural and legacy coordinates on the same map.
             neuralMapActive = database != nullptr && !database->empty();
@@ -39,11 +69,10 @@ namespace Atlas
                         neuralMapActive = false;
                         break;
                     }
+            rebuildIslandOverlays();
             candidateOrderDirty = true;
             visibleSamplesDirty = true;
-            activeSampleIndex = -1;
             hoveredSampleIndex = -1;
-            auditionHistory.clear();
             repaint();
         }
 
