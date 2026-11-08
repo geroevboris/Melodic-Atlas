@@ -133,13 +133,28 @@ namespace Atlas
                     records[b].file.getFullPathName()) < 0;
             });
             const int k = std::min((int)valid.size(), fineGroups);
+            // Learn centroids from a representative subset. Full-library
+            // assignment still includes every file, but 16 costly k-means
+            // passes no longer scale linearly with enormous collections.
+            constexpr size_t maxTraining = 2400;
+            std::vector<size_t> training;
+            if (valid.size() > maxTraining)
+            {
+                training.reserve(maxTraining);
+                for (size_t i = 0; i < maxTraining; ++i)
+                    training.push_back(valid[
+                        i * (valid.size() - 1) / (maxTraining - 1)]);
+            }
+            else
+                training = valid;
+
             std::vector<Centre> fine((size_t)k);
-            fine[0] = records[valid[0]].clapEmbedding;
+            fine[0] = records[training[0]].clapEmbedding;
             for (int c = 1; c < k; ++c)
             {
                 float farthestScore = std::numeric_limits<float>::infinity();
-                size_t farthest = valid[0];
-                for (size_t index : valid)
+                size_t farthest = training[0];
+                for (size_t index : training)
                 {
                     float best = -std::numeric_limits<float>::infinity();
                     for (int j = 0; j < c; ++j)
@@ -161,7 +176,7 @@ namespace Atlas
                 std::vector<Centre> sums((size_t)k);
                 std::fill(sizes.begin(), sizes.end(), 0);
                 bool changed = false;
-                for (size_t index : valid)
+                for (size_t index : training)
                 {
                     const int c = nearest(records[index].clapEmbedding, fine, k);
                     if (assignment[index] != c)
@@ -180,6 +195,29 @@ namespace Atlas
                     }
                 if (!changed)
                     break;
+            }
+
+            if (training.size() != valid.size())
+            {
+                // One full pass maps every sample into the learned fine
+                // groups, then recomputes their representative centroids.
+                std::vector<Centre> sums((size_t)k);
+                std::fill(sizes.begin(), sizes.end(), 0);
+                for (size_t index : valid)
+                {
+                    const int c = nearest(records[index].clapEmbedding, fine, k);
+                    assignment[index] = c;
+                    ++sizes[(size_t)c];
+                    for (int d = 0; d < dimensions; ++d)
+                        sums[(size_t)c][(size_t)d] +=
+                            records[index].clapEmbedding[(size_t)d];
+                }
+                for (int c = 0; c < k; ++c)
+                    if (sizes[(size_t)c] > 0)
+                    {
+                        normalize(sums[(size_t)c]);
+                        fine[(size_t)c] = sums[(size_t)c];
+                    }
             }
 
             struct Family
