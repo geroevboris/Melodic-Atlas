@@ -7,6 +7,7 @@
 #include "SoundIdentityAnalyzer.h"
 #include "PitchRhythmEvidence.h"
 #include "LoopStructureAnalyzer.h"
+#include "InstrumentSubgroupTags.h"
 
 namespace Atlas
 {
@@ -143,6 +144,7 @@ namespace Atlas
                 outRecord.cluster = outRecord.identityCluster;
             else
                 outRecord.cluster = ClusterGroup::Other;
+            InstrumentSubgroupTags::evaluate(file, outRecord);
             return true;
         }
 
@@ -394,6 +396,7 @@ namespace Atlas
                 r.cluster = r.identityCluster;
             else if (r.identityState != IdentityState::NotEvaluated)
                 r.cluster = ClusterGroup::Other;
+            InstrumentSubgroupTags::evaluate(file, r);
         }
 
     private:
