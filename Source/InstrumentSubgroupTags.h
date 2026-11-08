@@ -97,7 +97,9 @@ namespace Atlas
                     if (contains({"woodwind", "woodwinds", "wind", "winds",
                                   "sax", "saxophone", "clarinet", "oboe",
                                   "bassoon", "flute", "piccolo",
-                                  "duduk", "recorder"}))
+                                  "duduk", "recorder",
+                                  "accordion", "harmonica", "concertina",
+                                  "melodica", "bagpipe"}))
                         rec.subMask |= Sub_Woodwind;
                     break;
                 case ClusterGroup::Guitar:
