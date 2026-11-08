@@ -90,7 +90,8 @@ namespace Atlas
         Sub_VocalChops = 1u << 26,
         Sub_Choir = 1u << 27,
         Sub_VocalSinging = 1u << 28,
-        Sub_Atmos = 1u << 29
+        Sub_Atmos = 1u << 29,
+        Sub_Violin = 1u << 30
     };
 
     // Character flags form an independent axis from instrument subtypes.
@@ -442,6 +443,7 @@ namespace Atlas
                     return {
                         { "All Strings & Winds", "", Sub_None },
                         { "Strings", "STR", Sub_StringsSection },
+                        { "Violin / Fiddle", "VLN", Sub_Violin },
                         { "Brass", "BRASS", Sub_Brass },
                         { "Woodwinds / Reeds", "WIND", Sub_Woodwind }
                     };
