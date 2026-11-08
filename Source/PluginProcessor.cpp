@@ -314,6 +314,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("isLoop", rec.isLoop, nullptr);
         item.setProperty("loopAnalysisVersion", rec.loopAnalysisVersion, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
+        item.setProperty("activeDur", rec.effectiveDurationSec, nullptr);
         item.setProperty("bpm", rec.detectedBpm, nullptr);
         item.setProperty("midi", rec.rootMidiNote, nullptr);
         item.setProperty("pc", rec.pitchClass, nullptr);
@@ -326,6 +327,9 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("my", rec.mapY, nullptr);
         item.setProperty("clapEmbeddingValid", rec.clapEmbeddingValid, nullptr);
         item.setProperty("colourGroup", rec.colourGroup, nullptr);
+        item.setProperty("clapFamilyGroup", rec.clapFamilyGroup, nullptr);
+        item.setProperty("projectionX", rec.projectionX, nullptr);
+        item.setProperty("projectionY", rec.projectionY, nullptr);
         item.setProperty("islandGroup", rec.islandGroup, nullptr);
         item.setProperty("colourAlgorithmVersion", rec.colourAlgorithmVersion, nullptr);
         if (rec.clapEmbeddingValid)
@@ -432,6 +436,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.isLoop = rec.loopAnalysisVersion >= 1
             && (bool)item.getProperty("isLoop", false);
         rec.durationSec = (double)item.getProperty("dur", 1.0);
+        rec.effectiveDurationSec = (double)item.getProperty("activeDur", rec.durationSec);
         rec.detectedBpm = (double)item.getProperty("bpm", 120.0);
         rec.rootMidiNote = (int)item.getProperty("midi", 60);
         rec.pitchClass = (int)item.getProperty("pc", 0);
@@ -445,8 +450,12 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // This is the scanner's native CLAP vector cache, independent of
         // the old offline Python UMAP manifest.
         rec.colourGroup = (int)item.getProperty("colourGroup", -1);
+        rec.clapFamilyGroup = (int)item.getProperty("clapFamilyGroup",
+                                                   rec.colourGroup);
+        rec.projectionX = (float)item.getProperty("projectionX", -1.0f);
+        rec.projectionY = (float)item.getProperty("projectionY", -1.0f);
         rec.islandGroup = (int)item.getProperty("islandGroup", -1);
-        rec.cachedColourGroup = rec.colourGroup;
+        rec.cachedColourGroup = rec.clapFamilyGroup;
         rec.colourAlgorithmVersion = (int)item.getProperty("colourAlgorithmVersion", 0);
         rec.clapEmbeddingValid = false;
         if ((bool)item.getProperty("clapEmbeddingValid", false))
@@ -564,7 +573,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
     // Recolour from saved embeddings without requiring an audio rescan.
     Atlas::ClapColourClusters::apply(loaded);
     for (auto& record : loaded)
-        record.cachedColourGroup = record.colourGroup;
+        record.cachedColourGroup = record.clapFamilyGroup;
     // The projected map may be published independently of the legacy cache.
     // This allows updating an existing library without re-decoding its audio.
     // A missing/stale/incomplete manifest leaves the legacy map intact.
@@ -881,15 +890,16 @@ void MelodicAtlasAudioProcessor::run()
             Atlas::NeuralMapImport::apply(folderToScan, newRecords);
         // The fine CLAP families give each island a stable identity.
         Atlas::ClapColourClusters::apply(newRecords);
-        bool islandsReady = projectedByNativeClap;
-        if (projectedByNativeClap &&
-            (!incrementalRefresh.load() || !geometryVersionCurrent.load()))
+        // Layout is recomputed from persistent SOURCE projections, never
+        // from already transformed acoustic coordinates. Refresh therefore
+        // remains consistent with frequency and time axes. On a previous
+        // cache migration, the source is the best available saved UMAP.
+        bool islandsReady = false;
+        if (projectedByNativeClap)
             islandsReady = Atlas::SoundIslandLayout::apply(newRecords);
-        // An incremental refresh reuses old island coordinates and places
-        // newcomers near their existing CLAP neighbours without reshuffling.
         geometryVersionCurrent.store(islandsReady);
         for (auto& record : newRecords)
-            record.cachedColourGroup = record.colourGroup;
+            record.cachedColourGroup = record.clapFamilyGroup;
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
