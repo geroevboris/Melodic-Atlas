@@ -341,7 +341,11 @@ void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
     const auto tmp = dest.getSiblingFile("AtlasMapOverrides.tmp.xml");
     std::unique_ptr<juce::XmlElement> xml(root.createXml());
     if (xml != nullptr && xml->writeTo(tmp))
-        tmp.moveFileTo(dest);
+    {
+        if (!tmp.replaceFileIn(dest))
+            juce::Logger::writeToLog(
+                "Melodic Atlas: could not persist map overrides");
+    }
 }
 
 void MelodicAtlasAudioProcessor::applyAtlasOverrides(
