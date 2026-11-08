@@ -18,46 +18,121 @@ namespace Atlas
             const auto grandparent =
                 file.getParentDirectory().getParentDirectory().getFileName().toLowerCase();
 
-            auto word = [](const juce::String& input, const juce::String& target)
+            auto words = [](const juce::String& input)
             {
-                juce::StringArray tokens;
-                tokens.addTokens(input, " _-.()[]{}0123456789", "");
-                return tokens.contains(target);
+                juce::StringArray result;
+                result.addTokens(input, " _-.()[]{}\\/+", "");
+                result.removeEmptyStrings();
+                return result;
             };
-            const bool taggedOneShot =
-                word(name, "oneshot") || word(name, "oneshots")
-                || (word(name, "one") && word(name, "shot"))
-                || word(parent, "oneshots") || word(parent, "oneshot")
-                || (word(parent, "one") && word(parent, "shots"))
-                || word(grandparent, "oneshots")
-                || (word(grandparent, "one") && word(grandparent, "shots"));
-            if (taggedOneShot)
+            const auto filenameTokens = words(name);
+            const auto parentTokens = words(parent);
+            const auto grandparentTokens = words(grandparent);
+            const auto contains = [](const juce::StringArray& tokens,
+                                     const juce::String& needle)
+            {
+                return tokens.contains(needle);
+            };
+            const auto folderHas = [&](const juce::StringArray& tokens,
+                                       const char* first, const char* second)
+            {
+                return contains(tokens, first) || contains(tokens, second);
+            };
+
+            // Filename-level evidence ALWAYS outranks the parent folder:
+            // "One Shots/123bpm_MelodicLoop.wav" is still a loop.
+            const bool explicitLoopFile =
+                name.contains("loop") || name.contains("breakbeat")
+                || contains(filenameTokens, "groove")
+                || contains(filenameTokens, "pattern")
+                || contains(filenameTokens, "sequence")
+                || contains(filenameTokens, "phrase")
+                || contains(filenameTokens, "riff");
+            if (explicitLoopFile)
+                return true;
+
+            const bool explicitOneShotFile =
+                name.contains("oneshot") || name.contains("one-shot")
+                || name.contains("one_shot")
+                || (contains(filenameTokens, "one")
+                    && contains(filenameTokens, "shot"))
+                || contains(filenameTokens, "hit")
+                || contains(filenameTokens, "stab");
+            if (explicitOneShotFile)
                 return false;
 
-            const bool taggedLoop =
-                word(name, "loop") || word(name, "loops")
-                || word(name, "looped") || word(name, "drumloop")
-                || word(name, "beatloop") || word(name, "breakbeat")
-                || word(name, "groove") || word(name, "pattern")
-                || word(name, "sequence") || word(name, "phrase")
-                || word(name, "riff") || word(name, "arpeggio")
-                || word(parent, "loops") || word(parent, "loop")
-                || word(parent, "drumloops") || word(parent, "drum loops")
-                || word(parent, "melodic loops") || word(parent, "phrases")
-                || word(grandparent, "loops");
-            if (taggedLoop)
+            const bool taggedOneShotFolder =
+                folderHas(parentTokens, "oneshot", "oneshots")
+                || folderHas(grandparentTokens, "oneshot", "oneshots")
+                || (contains(parentTokens, "one")
+                    && contains(parentTokens, "shots"))
+                || (contains(grandparentTokens, "one")
+                    && contains(grandparentTokens, "shots"));
+            if (taggedOneShotFolder)
+                return false;
+
+            const bool taggedLoopFolder =
+                folderHas(parentTokens, "loop", "loops")
+                || folderHas(grandparentTokens, "loop", "loops")
+                || parent.contains("loops") || parent.contains("looped");
+            if (taggedLoopFolder)
                 return true;
+
+            // BPM in a name is evidence, but not by itself proof: audio with
+            // a stable tone can be a long one-shot regardless of its BPM tag.
+            // Support '120BPM', 'BPM120' and '120_BPM' without stripping
+            // the digits from the filename.
+            int labelledBpm = 0;
+            for (int i = 0; i < filenameTokens.size(); ++i)
+            {
+                const auto token = filenameTokens[i];
+                juce::String number;
+                if (token.endsWith("bpm"))
+                    number = token.dropLastCharacters(3);
+                else if (token.startsWith("bpm"))
+                    number = token.substring(3);
+                else if (token == "bpm")
+                {
+                    if (i > 0)
+                        number = filenameTokens[i - 1];
+                    if (number.isEmpty() && i + 1 < filenameTokens.size())
+                        number = filenameTokens[i + 1];
+                }
+                if (number.isNotEmpty()
+                    && number.containsOnly("0123456789"))
+                {
+                    const int candidate = number.getIntValue();
+                    if (candidate >= 50 && candidate <= 240)
+                    {
+                        labelledBpm = candidate;
+                        break;
+                    }
+                }
+            }
+            const bool durationOnGrid = [&]()
+            {
+                if (labelledBpm == 0 || duration < 1.25)
+                    return false;
+                const double beat = 60.0 / (double)labelledBpm;
+                for (int beats : {2, 4, 8, 16, 32})
+                {
+                    const double bar = beat * (double)beats;
+                    if (std::abs(duration - bar) / bar <= 0.065)
+                        return true;
+                }
+                return false;
+            }();
 
             // Without structural repetition, length and a BPM label alone
             // must never convert a one-shot pad/chord into a loop.
             if (!mono || sampleRate < 8000.0 || duration < 1.0
                 || samples < 4096)
-                return false;
+                return durationOnGrid;
 
             const int hop = std::max(64, (int)std::lround(sampleRate * 0.02));
             const int count = samples / hop;
             if (count < 65)
-                return false;
+                return durationOnGrid;
             std::vector<float> envelope((size_t)count);
             float maximum = 0.0f;
             for (int i = 0; i < count; ++i)
@@ -90,7 +165,7 @@ namespace Atlas
                     onsets.push_back(i);
             }
             if (onsets.size() < 3)
-                return false;
+                return durationOnGrid;
 
             // Regularly spaced events are a conservative rhythm cue, not
             // a BPM estimate. Require several intervals to match one period.
@@ -112,10 +187,11 @@ namespace Atlas
             }
             // Two repeated intervals imply a phrase; avoid promoting a
             // decaying one-shot with a few incidental transient tails.
-            const bool strongSequence = bestMatches >= 2
+            const bool strongSequence = onsets.size() >= 4
+                && bestMatches >= 3
                 && bestMatches >= (int)(onsets.size() - 1) * 2 / 3;
             const bool enoughDuration = duration >= 1.4;
-            return strongSequence && enoughDuration;
+            return durationOnGrid || (strongSequence && enoughDuration);
         }
     };
 }
