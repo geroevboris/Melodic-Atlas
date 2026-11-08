@@ -907,7 +907,9 @@ namespace Atlas
             juce::String text = MusicMath::getClusterName(rec.identityCluster);
             const auto options = MusicMath::getSubgroupsForCluster(
                 rec.identityCluster);
-            for (size_t i = 1; i < options.size(); ++i)
+            // Prefer a specific subtype (e.g. VIOLIN) over its parent
+            // Strings tag when both are present.
+            for (size_t i = options.size(); i-- > 1;)
                 if ((rec.subMask & options[i].flagBit) != 0)
                 {
                     text += "/" + options[i].shortName;
