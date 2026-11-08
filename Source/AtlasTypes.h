@@ -221,7 +221,8 @@ namespace Atlas
         // Preserve unmodified UMAP coordinates for future layout revisions.
         float projectionX = -1.0f, projectionY = -1.0f;
         // Fine-grained CLAP neighbourhood; several islands can share a colour.
-        int islandGroup = -1;
+        int islandGroup = -1; // fine CLAP similarity group: 0..17
+        int visualIslandGroup = -1; // CLAP group x four acoustic zones: 0..71
         int cachedColourGroup = -1;
         int colourAlgorithmVersion = 0;
         std::array<float, 512> clapEmbedding {};
