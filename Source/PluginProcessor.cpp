@@ -961,7 +961,10 @@ void MelodicAtlasAudioProcessor::run()
                     && Atlas::AudioAnalyzer::refreshLoopStructure(
                         file, formatManager, reused))
                     hasChangedRecords = true;
-                newRecords.push_back(std::move(reused));
+                if (reused.acoustic.valid && reused.tonal.valid)
+                    Atlas::PercussionGate::evaluate(reused);
+                if (!Atlas::PercussionGate::shouldExcludeFromAtlas(reused))
+                    newRecords.push_back(std::move(reused));
             }
             scannedCount.store((int)newRecords.size());
             continue;
