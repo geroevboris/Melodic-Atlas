@@ -525,8 +525,13 @@ namespace Atlas
             };
             const auto base = juce::Colour(colours[(size_t)
                 juce::jlimit(0, 3, region)]);
-            if (shade == 0) return base.darker(0.18f); // sharp attack
-            if (shade == 2) return base.brighter(0.20f); // soft attack
+            // Do not use brighter() here: fully saturated blue and
+            // amber already have a 1.0 HSV value, so brightness can clamp
+            // and the "soft" shade may look identical to the base colour.
+            if (shade == 0) return base.interpolatedWith(
+                juce::Colour(0xff121821), 0.24f); // sharp / darker
+            if (shade == 2) return base.interpolatedWith(
+                juce::Colours::white, 0.23f); // soft / lighter
             return base;
         }
 
