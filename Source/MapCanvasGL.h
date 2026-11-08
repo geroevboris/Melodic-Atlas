@@ -490,8 +490,8 @@ namespace Atlas
                 const float area = juce::MathConstants<float>::pi * meanSq;
                 const float density = (float)island.count
                     / std::max(1.0f, area * 9500.0f);
-                island.fillAlpha = juce::jlimit(0.065f, 0.25f,
-                    0.065f + 0.185f * (1.0f - std::exp(-density)));
+                island.fillAlpha = juce::jlimit(0.095f, 0.30f,
+                    0.095f + 0.205f * (1.0f - std::exp(-density)));
                 island.points.clear();
             }
         }
@@ -502,6 +502,17 @@ namespace Atlas
                 return;
             constexpr int angles = 48;
             constexpr float tau = juce::MathConstants<float>::twoPi;
+            int highlightedIslandId = -1;
+            if (activeSampleIndex >= 0
+                && activeSampleIndex < (int)database->size())
+            {
+                const auto& active = (*database)[(size_t)activeSampleIndex];
+                if (matchesCurrentFilter(active))
+                    highlightedIslandId = active.visualIslandGroup;
+            }
+            juce::Path highlightOutline;
+            juce::Colour highlightColour;
+            bool hasHighlight = false;
             for (const auto& island : islandOverlays)
             {
                 if (island.count < 2)
@@ -542,8 +553,26 @@ namespace Atlas
                 // even when semantic zoom hides almost all marker dots.
                 g.setColour(colour.withAlpha(island.fillAlpha));
                 g.fillPath(outline);
-                g.setColour(colour.withAlpha(0.27f));
+                g.setColour(colour.withAlpha(0.43f));
                 g.strokePath(outline, juce::PathStrokeType(1.05f));
+                if (island.islandId == highlightedIslandId)
+                {
+                    highlightOutline = outline;
+                    highlightColour = colour;
+                    hasHighlight = true;
+                }
+            }
+            if (hasHighlight)
+            {
+                // Paint after ALL islands so a nearby island cannot cover
+                // the focused contour. No pulsing/timer cost.
+                g.setColour(highlightColour.withAlpha(0.16f));
+                g.strokePath(highlightOutline,
+                             juce::PathStrokeType(7.0f));
+                g.setColour(highlightColour.interpolatedWith(
+                    juce::Colours::white, 0.40f).withAlpha(0.93f));
+                g.strokePath(highlightOutline,
+                             juce::PathStrokeType(2.0f));
             }
         }
 
