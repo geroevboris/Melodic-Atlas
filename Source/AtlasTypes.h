@@ -213,7 +213,10 @@ namespace Atlas
         bool clapEmbeddingValid = false;
         // Per-library CLAP colour family, independent from instrument filters.
         // -1 means not analysed / no valid embedding.
-        int colourGroup = -1;
+        int colourGroup = -1; // fixed 0..3 acoustic spectral region
+        int clapFamilyGroup = -1; // 0..5 CLAP super-family, NOT a colour
+        // Preserve unmodified UMAP coordinates for future layout revisions.
+        float projectionX = -1.0f, projectionY = -1.0f;
         // Fine-grained CLAP neighbourhood; several islands can share a colour.
         int islandGroup = -1;
         int cachedColourGroup = -1;
