@@ -78,6 +78,8 @@ public:
     void hideAtlasSamples(const std::vector<int>& indices);
     void restoreHiddenAtlasSamples();
     void setSampleLoopOverride(int index, int mode); // -1 auto, 0 shot, 1 loop
+    // Persistent, explicit user instrument tags; -1 resets to automatic.
+    void setSampleInstrumentOverride(int index, int cluster, uint32_t subtype);
     int getHiddenAtlasSampleCount() const;
 
     std::atomic<bool> showLoopsTab { false };
@@ -132,6 +134,8 @@ private:
     {
         bool hidden = false;
         int loopMode = -1;
+        int instrumentCluster = -1;
+        uint32_t instrumentSubtype = 0;
     };
     std::unordered_map<std::string, AtlasOverride> atlasOverrides;
     juce::File folderToScan;
