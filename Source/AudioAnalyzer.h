@@ -108,9 +108,45 @@ namespace Atlas
             juce::String lowerName = file.getFileNameWithoutExtension().toLowerCase();
             parsePitchAndBpmFromFilename(lowerName, detectedMidi, outRecord.detectedBpm);
 
+            // Approximate active duration using short RMS windows rather
+            // than treating trailing silence as musical length. For files
+            // longer than the six seconds analysed here, an energetic final
+            // window keeps the original file duration as a safe upper bound.
+            // Measurements are cached; no extra file read is required.
+            const int window = std::max(1, (int)(sr * 0.025));
+            float maxWindowRms = 0.0f;
+            std::vector<float> rmsWindows;
+            rmsWindows.reserve((size_t)(maxSamplesToRead / window + 1));
+            for (int start = 0; start < maxSamplesToRead; start += window)
+            {
+                double power = 0.0;
+                const int count = std::min(window, maxSamplesToRead - start);
+                for (int j = 0; j < count; ++j)
+                {
+                    const float value = downmix[(size_t)(start + j)];
+                    power += (double)value * value;
+                }
+                const float value = (float)std::sqrt(power / count);
+                rmsWindows.push_back(value);
+                maxWindowRms = std::max(maxWindowRms, value);
+            }
+            const float activeThreshold = std::max(
+                0.0005f, maxWindowRms * 0.032f);
+            int lastActiveWindow = -1;
+            for (int i = 0; i < (int)rmsWindows.size(); ++i)
+                if (rmsWindows[(size_t)i] >= activeThreshold)
+                    lastActiveWindow = i;
+            double activeSeconds = lastActiveWindow < 0
+                ? duration : std::min(duration,
+                    (double)(lastActiveWindow + 1) * (double)window / sr);
+            if (duration > (double)maxSamplesToRead / sr + 0.02
+                && lastActiveWindow >= (int)rmsWindows.size() - 2)
+                activeSeconds = duration;
+
             outRecord.file = file;
             outRecord.name = file.getFileNameWithoutExtension();
             outRecord.durationSec = duration;
+            outRecord.effectiveDurationSec = activeSeconds;
             outRecord.isLoop = LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
             outRecord.loopAnalysisVersion = 1;
