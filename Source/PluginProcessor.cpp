@@ -582,21 +582,12 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
                 return rec.clapEmbeddingValid;
             });
     if (savedMapVersion < Atlas::SoundIslandLayout::geometryVersion
-        && allNativeEmbeddings)
+        && allNativeEmbeddings && completeNativeMap)
     {
-        try
-        {
-            // One-time full fit; empty old-anchor set deliberately avoids
-            // retaining the previous, scattered UMAP coordinates.
-            migratedGeometry = Atlas::NativeClapProjection::apply(loaded, {});
-            if (migratedGeometry)
-                Atlas::SoundIslandLayout::apply(loaded);
-        }
-        catch (const std::exception& error)
-        {
-            juce::Logger::writeToLog(
-                "CLAP map migration failed: " + juce::String(error.what()));
-        }
+        // Never refit expensive UMAP in the plugin constructor. Reuse
+        // cached native coordinates and perform only the bounded island
+        // separation; a full scan still fits fresh native geometry.
+        migratedGeometry = Atlas::SoundIslandLayout::apply(loaded);
     }
 #endif
     if (!completeNativeMap && !migratedGeometry)
@@ -613,8 +604,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         samplerEngine.setSampleDatabase(publishedDatabase);
         databaseVersion.fetch_add(1);
     }
-    if (migratedGeometry)
-        saveDatabaseCacheToDisk();
+    // Do not synchronously rewrite a potentially huge XML embedding cache
+    // while Ableton instantiates the plugin. Next normal Refresh persists
+    // the migrated island geometry as version 3.
     return true;
 }
 
