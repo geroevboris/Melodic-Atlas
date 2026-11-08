@@ -147,6 +147,10 @@ namespace Atlas
         float highBandRatio = 0.0f;
         float onsetActivity = 0.0f;
         float sustainRatio = 0.0f;
+        // First meaningful onset: time for smoothed RMS to rise 10% -> 80%.
+        // This is intentionally distinct from global transient activity.
+        float attackTimeSec = 0.0f;
+        bool attackMeasured = false;
     };
 
     struct TonalFeatures
