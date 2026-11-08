@@ -229,6 +229,8 @@ namespace Atlas
         PercussionState percussionState = PercussionState::NotEvaluated;
         float percussionConfidence = 0.0f;
         float identityConfidence = 0.0f;
+        // 0 = explicit sample metadata, 1 = inferred by same-library CLAP.
+        int identityOrigin = 0;
         AcousticFeatures acoustic;
         TonalFeatures tonal;
         PitchStructure pitchStructure = PitchStructure::NotEvaluated;
