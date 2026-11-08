@@ -31,7 +31,7 @@ namespace Atlas
             valid.reserve(records.size());
             for (size_t i = 0; i < records.size(); ++i)
             {
-                records[i].colourGroup = -1;
+                records[i].clapFamilyGroup = -1;
                 if (records[i].clapEmbeddingValid)
                     valid.push_back(i);
             }
@@ -92,7 +92,7 @@ namespace Atlas
                         && rec.islandGroup >= 0
                         && rec.islandGroup < fineGroups;
                     if (existingRecord)
-                        rec.colourGroup = rec.cachedColourGroup;
+                        rec.clapFamilyGroup = rec.cachedColourGroup;
                     else
                     {
                         int bestIsland = activeOldIslands[0];
@@ -115,12 +115,12 @@ namespace Atlas
                                 && records[oldIndex].islandGroup == bestIsland
                                 && records[oldIndex].cachedColourGroup >= 0)
                             {
-                                rec.colourGroup =
+                                rec.clapFamilyGroup =
                                     records[oldIndex].cachedColourGroup;
                                 break;
                             }
-                        if (rec.colourGroup < 0)
-                            rec.colourGroup = nearest(rec.clapEmbedding,
+                        if (rec.clapFamilyGroup < 0)
+                            rec.clapFamilyGroup = nearest(rec.clapEmbedding,
                                                       existing, groups);
                     }
                     rec.colourAlgorithmVersion = algorithmVersion;
@@ -286,7 +286,7 @@ namespace Atlas
             {
                 auto& rec = records[index];
                 rec.islandGroup = assignment[index];
-                rec.colourGroup = fineToBroad[(size_t)assignment[index]];
+                rec.clapFamilyGroup = fineToBroad[(size_t)assignment[index]];
                 rec.colourAlgorithmVersion = algorithmVersion;
             }
         }
