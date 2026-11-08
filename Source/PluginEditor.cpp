@@ -63,11 +63,11 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         if (!db || sampleIdx < 0 || sampleIdx >= (int)db->size())
             return;
         const auto& selected = (*db)[(size_t)sampleIdx];
-        const int islandId = selected.islandGroup;
+        const int islandId = selected.visualIslandGroup;
         std::vector<int> islandIndices;
         if (islandId >= 0)
             for (int i = 0; i < (int)db->size(); ++i)
-                if ((*db)[(size_t)i].islandGroup == islandId
+                if ((*db)[(size_t)i].visualIslandGroup == islandId
                     && (*db)[(size_t)i].isLoop == selected.isLoop
                     && !(*db)[(size_t)i].hiddenFromAtlas)
                     islandIndices.push_back(i);
