@@ -1,6 +1,7 @@
 #pragma once
 #include "SamplerEngine.h"
 #include "PercussionGate.h"
+#include "SoundIslandLayout.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -385,12 +386,12 @@ namespace Atlas
                 return;
             for (const auto& rec : *database)
             {
-                if (rec.islandGroup < 0 || rec.islandGroup >= 18
+                if (rec.visualIslandGroup < 0 || rec.visualIslandGroup >= SoundIslandLayout::maxIslands
                     || !rec.neuralMapValid || rec.isLoop != showLoopsOnly
                     || !matchesCurrentFilter(rec))
                     continue;
-                auto& island = islandOverlays[(size_t)rec.islandGroup];
-                island.islandId = rec.islandGroup;
+                auto& island = islandOverlays[(size_t)rec.visualIslandGroup];
+                island.islandId = rec.visualIslandGroup;
                 island.points.push_back({rec.neuralMapX, rec.neuralMapY});
                 ++island.count;
                 island.centreX += rec.neuralMapX;
@@ -897,7 +898,7 @@ namespace Atlas
             float fillAlpha = 0.065f;
             int count = 0, colourGroup = -1, islandId = -1;
         };
-        std::array<IslandOverlay, 18> islandOverlays {};
+        std::array<IslandOverlay, SoundIslandLayout::maxIslands> islandOverlays {};
         bool neuralMapActive = false;
         mutable bool candidateOrderDirty = true;
         mutable std::vector<int> sortedCandidateIndices;
