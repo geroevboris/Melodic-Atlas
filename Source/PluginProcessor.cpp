@@ -476,6 +476,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("projectionX", rec.projectionX, nullptr);
         item.setProperty("projectionY", rec.projectionY, nullptr);
         item.setProperty("islandGroup", rec.islandGroup, nullptr);
+        item.setProperty("visualIslandGroup", rec.visualIslandGroup, nullptr);
         item.setProperty("colourAlgorithmVersion", rec.colourAlgorithmVersion, nullptr);
         if (rec.clapEmbeddingValid)
         {
@@ -580,6 +581,12 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // as a verified loop before the new scan runs.
         rec.isLoop = rec.loopAnalysisVersion >= 1
             && (bool)item.getProperty("isLoop", false);
+        // Explicit LOOP filenames are recognized at load, without waiting
+        // for expensive audio decoding or neural inference on Refresh.
+        if (Atlas::LoopStructureAnalyzer::isLoop(
+                f, nullptr, 0, 0.0,
+                (double)item.getProperty("dur", 0.0)))
+            rec.isLoop = true;
         rec.durationSec = (double)item.getProperty("dur", 1.0);
         rec.effectiveDurationSec = (double)item.getProperty("activeDur", rec.durationSec);
         rec.durationAnalysisVersion = (int)item.getProperty("durationAnalysisVersion", 0);
@@ -601,6 +608,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.projectionX = (float)item.getProperty("projectionX", -1.0f);
         rec.projectionY = (float)item.getProperty("projectionY", -1.0f);
         rec.islandGroup = (int)item.getProperty("islandGroup", -1);
+        rec.visualIslandGroup = (int)item.getProperty("visualIslandGroup", -1);
         rec.cachedColourGroup = rec.clapFamilyGroup;
         rec.colourAlgorithmVersion = (int)item.getProperty("colourAlgorithmVersion", 0);
         rec.clapEmbeddingValid = false;
