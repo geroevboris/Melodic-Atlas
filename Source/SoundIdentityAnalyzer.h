@@ -70,11 +70,42 @@ namespace Atlas
             const float separation = bestScore - runnerUp;
             // Independent file-level tokens with no meaningful competition
             // may be considered identified, but a folder hint alone never is.
+            const auto exactDirectory = parent.getFileName().trim().toLowerCase();
+            // A folder with an exact, unambiguous instrument-family name is
+            // stronger evidence than a generic sample-pack parent directory.
+            int namedFolder = -1;
+            if (exactDirectory == "brass" || exactDirectory == "woodwinds"
+                || exactDirectory == "winds" || exactDirectory == "strings"
+                || exactDirectory == "orchestra" || exactDirectory == "violins"
+                || exactDirectory == "saxes")
+                namedFolder = (int)ClusterGroup::Strings;
+            else if (exactDirectory == "synth" || exactDirectory == "synths"
+                     || exactDirectory == "synthesizers" || exactDirectory == "pads")
+                namedFolder = (int)ClusterGroup::Synth;
+            else if (exactDirectory == "keys" || exactDirectory == "keyboards"
+                     || exactDirectory == "piano" || exactDirectory == "pianos"
+                     || exactDirectory == "electric pianos")
+                namedFolder = (int)ClusterGroup::Keys;
+            else if (exactDirectory == "bass" || exactDirectory == "basses")
+                namedFolder = (int)ClusterGroup::Bass;
+            else if (exactDirectory == "guitar" || exactDirectory == "guitars")
+                namedFolder = (int)ClusterGroup::Guitar;
+            else if (exactDirectory == "vocal" || exactDirectory == "vocals"
+                     || exactDirectory == "voices")
+                namedFolder = (int)ClusterGroup::Vocal;
+            else if (exactDirectory == "fx" || exactDirectory == "effects"
+                     || exactDirectory == "sound effects")
+                namedFolder = (int)ClusterGroup::FX;
             if (bestScore >= 2.8f && separation >= 2.0f)
             {
                 rec.identityState = IdentityState::Identified;
                 rec.identityConfidence = juce::jlimit(
                     0.0f, 0.92f, 0.78f + 0.025f * (separation - 2.0f));
+            }
+            else if (namedFolder == best && separation >= 0.8f)
+            {
+                rec.identityState = IdentityState::Identified;
+                rec.identityConfidence = 0.74f;
             }
             else
             {
