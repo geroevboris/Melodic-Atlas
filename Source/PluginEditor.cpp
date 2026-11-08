@@ -10,6 +10,19 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
 
     selectedClustersMask = audioProcessor.savedClustersMask;
     selectedClusterSubgroupBit = audioProcessor.savedClusterSubs;
+    // Previous versions used different subcategory meanings. A removed
+    // selection must not silently hide every sample in the new taxonomy.
+    for (int c = 0; c < 7; ++c)
+    {
+        const auto options = Atlas::MusicMath::getSubgroupsForCluster(
+            (Atlas::ClusterGroup)c);
+        bool known = selectedClusterSubgroupBit[(size_t)c] == 0;
+        for (const auto& option : options)
+            known = known
+                || option.flagBit == selectedClusterSubgroupBit[(size_t)c];
+        if (!known)
+            selectedClusterSubgroupBit[(size_t)c] = 0;
+    }
     selectedMoodMask = audioProcessor.savedMoodMask;
     primarySelectedPad = audioProcessor.primarySelectedPad;
 
@@ -1387,22 +1400,49 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
     auto options = Atlas::MusicMath::getSubgroupsForCluster(cg);
     uint32_t currentBit = selectedClusterSubgroupBit[(size_t)clusterIndex];
 
+    // Build available subgroups from the actual library, not a fixed menu.
+    // Evidence comes from explicit sample metadata and documented DSP tags;
+    // CLAP audio embeddings do not contain named instrument tags.
+    const auto db = audioProcessor.getSampleDatabaseSnapshot();
+    std::vector<int> counts(options.size(), 0);
+    int familyTotal = 0;
+    if (db != nullptr)
+        for (const auto& rec : *db)
+        {
+            if (rec.isLoop != audioProcessor.showLoopsTab.load()
+                || Atlas::PercussionGate::shouldExcludeFromAtlas(rec)
+                || rec.identityState != Atlas::IdentityState::Identified
+                || rec.identityCluster != cg)
+                continue;
+            ++familyTotal;
+            for (size_t i = 1; i < options.size(); ++i)
+                if ((rec.subMask & options[i].flagBit) != 0)
+                    ++counts[i];
+        }
+    const int minimum = familyTotal > 200 ? 2 : 1;
+    std::vector<size_t> displayed;
     juce::PopupMenu menu;
     for (size_t i = 0; i < options.size(); ++i)
     {
-        menu.addItem((int)i + 1, options[i].fullName,
-                     true, (options[i].flagBit == currentBit));
+        if (i != 0 && counts[i] < minimum
+            && options[i].flagBit != currentBit)
+            continue;
+        displayed.push_back(i);
+        const int count = i == 0 ? familyTotal : counts[i];
+        menu.addItem((int)displayed.size(),
+            options[i].fullName + " (" + juce::String(count) + ")",
+            true, options[i].flagBit == currentBit);
     }
 
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetScreenArea(
             localAreaToGlobal(targetBtn.toNearestInt())),
-        [this, clusterIndex, options](int res)
+        [this, clusterIndex, options, displayed](int res)
         {
-            if (res >= 1 && res <= (int)options.size())
+            if (res >= 1 && res <= (int)displayed.size())
             {
                 selectedClusterSubgroupBit[(size_t)clusterIndex] =
-                    options[(size_t)(res - 1)].flagBit;
+                    options[displayed[(size_t)(res - 1)]].flagBit;
                 selectedClustersMask |= (1u << clusterIndex);
                 updateDynamicLayoutRects();
                 applyCurrentFiltersToMap();
