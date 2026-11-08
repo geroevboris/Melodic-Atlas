@@ -407,8 +407,14 @@ namespace Atlas
                     const float ux = std::cos(angle);
                     const float uy = std::sin(angle);
                     float extent = 0.0f;
-                    for (const auto& pt : island.points)
+                    // The outline samples at most 1200 points per island.
+                    // Density still counts every matching file; moving the
+                    // filter remains responsive with very large libraries.
+                    const size_t stride = std::max<size_t>(
+                        1, (island.points.size() + 1199) / 1200);
+                    for (size_t p = 0; p < island.points.size(); p += stride)
                     {
+                        const auto& pt = island.points[p];
                         const float dx = pt.x - island.centreX;
                         const float dy = pt.y - island.centreY;
                         const float along = dx * ux + dy * uy;
