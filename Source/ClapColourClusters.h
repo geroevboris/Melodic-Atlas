@@ -23,7 +23,7 @@ namespace Atlas
         // the closest ones into six broad, colour-coded families.
         // Both levels use cosine similarity in original CLAP space.
         static constexpr int fineGroups = 18;
-        static constexpr int algorithmVersion = 2;
+        static constexpr int algorithmVersion = 3;
 
         static void apply(std::vector<SampleRecord>& records)
         {
@@ -38,10 +38,12 @@ namespace Atlas
             if (valid.empty())
                 return;
 
-            // Preserve colour families from THIS algorithm when refreshing.
-            // Old six-way k-means assignments do not qualify.
+            // Preserve already-established islands and broad families when
+            // refreshing. Version 2 only knew broad colours and is rebuilt.
             std::array<Centre, groups> existing {};
             std::array<int, groups> existingCount {};
+            std::array<Centre, fineGroups> oldIslands {};
+            std::array<int, fineGroups> oldIslandCounts {};
             int established = 0;
             for (size_t i : valid)
             {
@@ -52,6 +54,13 @@ namespace Atlas
                     continue;
                 const int g = rec.cachedColourGroup;
                 ++existingCount[(size_t)g];
+                if (rec.islandGroup >= 0 && rec.islandGroup < fineGroups)
+                {
+                    ++oldIslandCounts[(size_t)rec.islandGroup];
+                    for (int d = 0; d < dimensions; ++d)
+                        oldIslands[(size_t)rec.islandGroup][(size_t)d] +=
+                            rec.clapEmbedding[(size_t)d];
+                }
                 for (int d = 0; d < dimensions; ++d)
                     existing[(size_t)g][(size_t)d] +=
                         rec.clapEmbedding[(size_t)d];
@@ -62,18 +71,58 @@ namespace Atlas
                     normalize(existing[(size_t)g]);
                     ++established;
                 }
-            if (established == groups)
+            int islandCount = 0;
+            std::vector<int> activeOldIslands;
+            for (int j = 0; j < fineGroups; ++j)
+                if (oldIslandCounts[(size_t)j] > 0)
+                {
+                    normalize(oldIslands[(size_t)j]);
+                    activeOldIslands.push_back(j);
+                    ++islandCount;
+                }
+            if (established == groups && islandCount >= groups)
             {
                 for (size_t i : valid)
                 {
                     auto& rec = records[i];
-                    // Keep previously assigned samples stable; use nearest
-                    // established family for genuinely new embeddings.
-                    rec.colourGroup = rec.colourAlgorithmVersion == algorithmVersion
+                    const bool existingRecord =
+                        rec.colourAlgorithmVersion == algorithmVersion
                         && rec.cachedColourGroup >= 0
                         && rec.cachedColourGroup < groups
-                            ? rec.cachedColourGroup
-                            : nearest(rec.clapEmbedding, existing, groups);
+                        && rec.islandGroup >= 0
+                        && rec.islandGroup < fineGroups;
+                    if (existingRecord)
+                        rec.colourGroup = rec.cachedColourGroup;
+                    else
+                    {
+                        int bestIsland = activeOldIslands[0];
+                        float best = -std::numeric_limits<float>::infinity();
+                        for (int j : activeOldIslands)
+                        {
+                            const float sim = dot(rec.clapEmbedding,
+                                                  oldIslands[(size_t)j]);
+                            if (sim > best)
+                            {
+                                best = sim;
+                                bestIsland = j;
+                            }
+                        }
+                        rec.islandGroup = bestIsland;
+                        // Find a known parent colour of this island.
+                        for (size_t oldIndex : valid)
+                            if (records[oldIndex].colourAlgorithmVersion ==
+                                    algorithmVersion
+                                && records[oldIndex].islandGroup == bestIsland
+                                && records[oldIndex].cachedColourGroup >= 0)
+                            {
+                                rec.colourGroup =
+                                    records[oldIndex].cachedColourGroup;
+                                break;
+                            }
+                        if (rec.colourGroup < 0)
+                            rec.colourGroup = nearest(rec.clapEmbedding,
+                                                      existing, groups);
+                    }
                     rec.colourAlgorithmVersion = algorithmVersion;
                 }
                 return;
@@ -165,7 +214,15 @@ namespace Atlas
                         Centre cb = families[b].sum;
                         normalize(ca);
                         normalize(cb);
-                        const float similarity = dot(ca, cb);
+                        // Avoid a single broad colour swallowing most of
+                        // the atlas when different merges are similarly good.
+                        const float mergedFraction = (float)(
+                            families[a].size + families[b].size)
+                            / (float)std::max<size_t>(1, valid.size());
+                        const float excess = std::max(0.0f,
+                            mergedFraction - 0.36f);
+                        const float similarity =
+                            dot(ca, cb) - 0.55f * excess;
                         if (similarity > best)
                         {
                             best = similarity;
@@ -190,6 +247,7 @@ namespace Atlas
             for (size_t index : valid)
             {
                 auto& rec = records[index];
+                rec.islandGroup = assignment[index];
                 rec.colourGroup = fineToBroad[(size_t)assignment[index]];
                 rec.colourAlgorithmVersion = algorithmVersion;
             }
