@@ -965,7 +965,7 @@ void MelodicAtlasAudioProcessor::run()
                     && Atlas::AudioAnalyzer::refreshEffectiveDuration(
                         file, formatManager, reused))
                     hasChangedRecords = true;
-                if (reused.loopAnalysisVersion < 2
+                if (reused.loopAnalysisVersion < 3
                     && Atlas::AudioAnalyzer::refreshLoopStructure(
                         file, formatManager, reused))
                     hasChangedRecords = true;
