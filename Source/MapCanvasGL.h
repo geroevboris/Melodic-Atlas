@@ -76,6 +76,7 @@ namespace Atlas
         }
 
         std::function<void(int sampleIdx)> onSampleRightClicked;
+        std::function<void(int sampleIdx)> onSampleManageRequested;
         std::function<void()> onEmptyMapRightClicked;
 
         void resized() override
@@ -247,13 +248,20 @@ namespace Atlas
 
             if (e.mods.isPopupMenu())
             {
-                if (hit >= 0 && onSampleRightClicked)
+                if (hit >= 0)
                 {
                     activeSampleIndex = hit;
-                    onSampleRightClicked(hit);
+                    // Normal right-click ALWAYS assigns the sound to a pad.
+                    // Shift + right-click is the separate management menu.
+                    if (e.mods.isShiftDown() && onSampleManageRequested)
+                        onSampleManageRequested(hit);
+                    else if (onSampleRightClicked)
+                        onSampleRightClicked(hit);
                 }
-                else if (onEmptyMapRightClicked)
+                else if (e.mods.isShiftDown() && onEmptyMapRightClicked)
                     onEmptyMapRightClicked();
+                else
+                    isPanningMap = true;
                 repaint();
                 return;
             }
