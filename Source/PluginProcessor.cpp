@@ -23,6 +23,7 @@ MelodicAtlasAudioProcessor::MelodicAtlasAudioProcessor()
     formatManager.registerBasicFormats();
     publishedDatabase = std::make_shared<const std::vector<Atlas::SampleRecord>>();
     samplerEngine.setSampleDatabase(publishedDatabase);
+    loadAtlasOverrides();
 
     if (!loadDatabaseCacheFromDisk())
     {
@@ -289,6 +290,143 @@ juce::File MelodicAtlasAudioProcessor::getDatabaseCacheFile() const
         juce::File::userApplicationDataDirectory).getChildFile("MelodicAtlas");
     dir.createDirectory();
     return dir.getChildFile("ScannedDatabaseCache_v4.xml");
+}
+
+juce::File MelodicAtlasAudioProcessor::getAtlasOverridesFile() const
+{
+    return getDatabaseCacheFile().getSiblingFile("AtlasMapOverrides.xml");
+}
+
+void MelodicAtlasAudioProcessor::loadAtlasOverrides()
+{
+    auto xml = juce::XmlDocument::parse(getAtlasOverridesFile());
+    if (xml == nullptr)
+        return;
+    auto tree = juce::ValueTree::fromXml(*xml);
+    if (!tree.isValid() || tree.getType() != juce::Identifier("AtlasOverrides"))
+        return;
+    const juce::ScopedLock lock(dbLock);
+    atlasOverrides.clear();
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        auto node = tree.getChild(i);
+        const auto path = node.getProperty("path", "").toString();
+        if (path.isEmpty())
+            continue;
+        AtlasOverride item;
+        item.hidden = (bool)node.getProperty("hidden", false);
+        item.loopMode = juce::jlimit(-1, 1,
+            (int)node.getProperty("loopMode", -1));
+        atlasOverrides[path.toStdString()] = item;
+    }
+}
+
+void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
+{
+    juce::ValueTree root("AtlasOverrides");
+    {
+        const juce::ScopedLock lock(dbLock);
+        for (const auto& [path, item] : atlasOverrides)
+        {
+            if (!item.hidden && item.loopMode < 0)
+                continue;
+            juce::ValueTree node("File");
+            node.setProperty("path", juce::String(path), nullptr);
+            node.setProperty("hidden", item.hidden, nullptr);
+            node.setProperty("loopMode", item.loopMode, nullptr);
+            root.appendChild(node, nullptr);
+        }
+    }
+    const auto dest = getAtlasOverridesFile();
+    const auto tmp = dest.getSiblingFile("AtlasMapOverrides.tmp.xml");
+    std::unique_ptr<juce::XmlElement> xml(root.createXml());
+    if (xml != nullptr && xml->writeTo(tmp))
+        tmp.moveFileTo(dest);
+}
+
+void MelodicAtlasAudioProcessor::applyAtlasOverrides(
+    Atlas::SampleRecord& rec) const
+{
+    // Called under dbLock, or from the scanner while controls are inactive.
+    const auto it = atlasOverrides.find(
+        rec.file.getFullPathName().toStdString());
+    if (it == atlasOverrides.end())
+        return;
+    rec.hiddenFromAtlas = it->second.hidden;
+    rec.loopUserOverride = it->second.loopMode;
+    if (rec.loopUserOverride >= 0)
+        rec.isLoop = rec.loopUserOverride == 1;
+}
+
+void MelodicAtlasAudioProcessor::hideAtlasSamples(
+    const std::vector<int>& indices)
+{
+    {
+        const juce::ScopedLock lock(dbLock);
+        for (int index : indices)
+        {
+            if (index < 0 || index >= (int)sampleDatabase.size())
+                continue;
+            auto& rec = sampleDatabase[(size_t)index];
+            rec.hiddenFromAtlas = true;
+            atlasOverrides[rec.file.getFullPathName().toStdString()].hidden = true;
+        }
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    saveAtlasOverrides();
+}
+
+void MelodicAtlasAudioProcessor::restoreHiddenAtlasSamples()
+{
+    {
+        const juce::ScopedLock lock(dbLock);
+        for (auto& rec : sampleDatabase)
+            rec.hiddenFromAtlas = false;
+        for (auto& [path, item] : atlasOverrides)
+            item.hidden = false;
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    saveAtlasOverrides();
+}
+
+int MelodicAtlasAudioProcessor::getHiddenAtlasSampleCount() const
+{
+    const juce::ScopedLock lock(dbLock);
+    int count = 0;
+    for (const auto& rec : sampleDatabase)
+        if (rec.hiddenFromAtlas)
+            ++count;
+    return count;
+}
+
+void MelodicAtlasAudioProcessor::setSampleLoopOverride(int index, int mode)
+{
+    {
+        const juce::ScopedLock lock(dbLock);
+        if (index < 0 || index >= (int)sampleDatabase.size())
+            return;
+        auto& rec = sampleDatabase[(size_t)index];
+        rec.loopUserOverride = juce::jlimit(-1, 1, mode);
+        auto& override = atlasOverrides[
+            rec.file.getFullPathName().toStdString()];
+        override.loopMode = rec.loopUserOverride;
+        if (rec.loopUserOverride >= 0)
+            rec.isLoop = rec.loopUserOverride == 1;
+        else
+            rec.isLoop = Atlas::LoopStructureAnalyzer::isLoop(
+                rec.file, nullptr, 0, 0.0, rec.durationSec);
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    saveAtlasOverrides();
 }
 
 void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
@@ -562,6 +700,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
                 0.0f, 1.0f,
                 (float)item.getProperty("char" + juce::String((int)feature), 0.0f));
 
+        applyAtlasOverrides(rec);
         loaded.push_back(std::move(rec));
     }
 
@@ -807,6 +946,7 @@ void MelodicAtlasAudioProcessor::run()
             if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
             {
                 auto reused = old->second;
+                applyAtlasOverrides(reused);
                 if (reused.durationAnalysisVersion < 1
                     && Atlas::AudioAnalyzer::refreshEffectiveDuration(
                         file, formatManager, reused))
@@ -824,6 +964,7 @@ void MelodicAtlasAudioProcessor::run()
         {
             rec.sourceBytes = fileBytes;
             rec.sourceModifiedMs = modifiedMs;
+            applyAtlasOverrides(rec);
             newRecords.push_back(std::move(rec));
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
             pendingIndices.push_back(newRecords.size() - 1);
