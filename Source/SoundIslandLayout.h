@@ -77,12 +77,23 @@ namespace Atlas
 
         static bool apply(std::vector<SampleRecord>& records)
         {
+            // One-shots and loops have separate visible atlases; their
+            // positions and cluster medians must be fitted independently.
+            const bool oneShots = applySubset(records, false);
+            const bool loops = applySubset(records, true);
+            return oneShots || loops;
+        }
+
+    private:
+        static bool applySubset(std::vector<SampleRecord>& records, bool loopMode)
+        {
             std::array<Island, maxIslands> islands {};
             size_t eligible = 0;
             for (size_t i = 0; i < records.size(); ++i)
             {
                 auto& rec = records[i];
-                if (rec.islandGroup < 0 || rec.islandGroup >= maxIslands
+                if (rec.isLoop != loopMode
+                    || rec.islandGroup < 0 || rec.islandGroup >= maxIslands
                     || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
                 // First upgrade from old caches has only rendered positions.
