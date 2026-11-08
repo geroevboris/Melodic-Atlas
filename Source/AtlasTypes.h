@@ -197,6 +197,7 @@ namespace Atlas
         double durationSec = 0.0;
         double effectiveDurationSec = 0.0; // energy-based active duration when measured
         int durationAnalysisVersion = 0;
+        int attackAnalysisVersion = 0; // 1 means initial RMS onset has been checked
         double detectedBpm = 120.0;
         int rootMidiNote = 60;
         int pitchClass = 0;
