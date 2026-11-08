@@ -72,7 +72,25 @@ namespace Atlas
         Sub_Lead         = 1 << 8,
         Sub_ImpactHit    = 1 << 9,
         Sub_SubBass      = 1 << 10,
-        Sub_BellMetallic = 1 << 11
+        Sub_BellMetallic = 1 << 11,
+        Sub_StringsSection = 1u << 12,
+        Sub_Brass = 1u << 13,
+        Sub_Woodwind = 1u << 14,
+        Sub_Piano = 1u << 15,
+        Sub_ElectricPiano = 1u << 16,
+        Sub_Organ = 1u << 17,
+        Sub_Mallet = 1u << 18,
+        Sub_Arp = 1u << 19,
+        Sub_ElectricBass = 1u << 20,
+        Sub_SynthBass = 1u << 21,
+        Sub_AcousticBass = 1u << 22,
+        Sub_AcousticGuitar = 1u << 23,
+        Sub_ElectricGuitar = 1u << 24,
+        Sub_ProcessedGuitar = 1u << 25,
+        Sub_VocalChops = 1u << 26,
+        Sub_Choir = 1u << 27,
+        Sub_VocalSinging = 1u << 28,
+        Sub_Atmos = 1u << 29
     };
 
     // Character flags form an independent axis from instrument subtypes.
@@ -195,6 +213,8 @@ namespace Atlas
         // Per-library CLAP colour family, independent from instrument filters.
         // -1 means not analysed / no valid embedding.
         int colourGroup = -1;
+        // Fine-grained CLAP neighbourhood; several islands can share a colour.
+        int islandGroup = -1;
         int cachedColourGroup = -1;
         int colourAlgorithmVersion = 0;
         std::array<float, 512> clapEmbedding {};
@@ -359,7 +379,7 @@ namespace Atlas
                 case ClusterGroup::Synth:   return "SYNTH";
                 case ClusterGroup::Bass:    return "BASS";
                 case ClusterGroup::Vocal:   return "VOX";
-                case ClusterGroup::Strings: return "STRINGS";
+                case ClusterGroup::Strings: return "STR/WIND";
                 case ClusterGroup::Guitar:  return "GUITAR";
                 case ClusterGroup::FX:      return "FX";
                 case ClusterGroup::Other:   return "UNKNOWN";
@@ -374,60 +394,55 @@ namespace Atlas
                 case ClusterGroup::Keys:
                     return {
                         { "All Keys", "", Sub_None },
-                        { "Warm / Electric", "WARM", Sub_Warm },
-                        { "Clean / Acoustic", "CLEAN", Sub_Clean },
-                        { "Pluck / Mallet", "PLUCK", Sub_Pluck },
-                        { "Sustained", "SUST", Sub_Sustain }
+                        { "Piano", "PIANO", Sub_Piano },
+                        { "Electric Piano / Rhodes", "E.PNO", Sub_ElectricPiano },
+                        { "Organ", "ORGAN", Sub_Organ },
+                        { "Mallets / Bells", "MALLET", Sub_Mallet }
                     };
                 case ClusterGroup::Synth:
                     return {
                         { "All Synths", "", Sub_None },
                         { "Pads", "PAD", Sub_Pad },
                         { "Leads", "LEAD", Sub_Lead },
-                        { "Plucks & Arps", "PLUCK", Sub_Pluck },
-                        { "Warm Analog", "WARM", Sub_Warm },
-                        { "Noisy / Textured", "NOISY", Sub_Noisy }
+                        { "Plucks", "PLUCK", Sub_Pluck },
+                        { "Arpeggios", "ARP", Sub_Arp }
                     };
                 case ClusterGroup::Bass:
                     return {
                         { "All Bass", "", Sub_None },
-                        { "Deep Sub", "SUB", Sub_SubBass },
-                        { "Warm / Round", "WARM", Sub_Warm },
-                        { "Pluck / Short", "PLUCK", Sub_Pluck },
-                        { "Reese / Sustain", "SUST", Sub_Sustain },
-                        { "Distorted", "GRIT", Sub_Noisy }
+                        { "Sub Bass", "SUB", Sub_SubBass },
+                        { "Synth Bass", "SYNTH", Sub_SynthBass },
+                        { "Electric Bass", "ELEC", Sub_ElectricBass },
+                        { "Acoustic Bass", "ACOUS", Sub_AcousticBass }
                     };
                 case ClusterGroup::Vocal:
                     return {
                         { "All Vocals", "", Sub_None },
-                        { "Airy / Clean", "CLEAN", Sub_Clean },
-                        { "Choir / Sustain", "CHOIR", Sub_Sustain },
-                        { "Chops / Short", "CHOP", Sub_Pluck },
-                        { "Textural", "TEXT", Sub_Textural }
+                        { "Singing / Voice", "VOICE", Sub_VocalSinging },
+                        { "Chops", "CHOP", Sub_VocalChops },
+                        { "Choir", "CHOIR", Sub_Choir }
                     };
                 case ClusterGroup::Strings:
                     return {
                         { "All Strings & Winds", "", Sub_None },
-                        { "Ensemble Sustain", "SUST", Sub_Sustain },
-                        { "Pizzicato / Short", "PIZZ", Sub_Pluck },
-                        { "Warm / Brass & Solo", "WARM", Sub_Warm },
-                        { "Textural", "TEXT", Sub_Textural }
+                        { "Strings", "STR", Sub_StringsSection },
+                        { "Brass", "BRASS", Sub_Brass },
+                        { "Woodwinds / Reeds", "WIND", Sub_Woodwind }
                     };
                 case ClusterGroup::Guitar:
                     return {
                         { "All Guitars", "", Sub_None },
-                        { "Acoustic / Pluck", "PLUCK", Sub_Pluck },
-                        { "Warm / Clean", "WARM", Sub_Warm },
-                        { "Swells", "SWELL", Sub_Sustain },
-                        { "Textural", "TEXT", Sub_Textural }
+                        { "Acoustic Guitar", "ACOUS", Sub_AcousticGuitar },
+                        { "Electric Guitar", "ELEC", Sub_ElectricGuitar },
+                        { "Processed Guitar", "PROC", Sub_ProcessedGuitar }
                     };
                 case ClusterGroup::FX:
                     return {
                         { "All FX", "", Sub_None },
+                        { "Atmospheres / Textures", "ATMOS", Sub_Atmos },
                         { "Risers & Sweeps", "RISER", Sub_RiserSweep },
-                        { "Impacts & Hits", "IMPACT", Sub_ImpactHit },
-                        { "Bells & Metallic", "BELL", Sub_BellMetallic },
-                        { "Noisy", "NOISE", Sub_Noisy }
+                        { "Impacts & Hits", "HIT", Sub_ImpactHit },
+                        { "Bells & Metallic", "BELL", Sub_BellMetallic }
                     };
                 case ClusterGroup::Other:
                     return {
