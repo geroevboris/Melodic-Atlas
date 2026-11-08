@@ -529,9 +529,9 @@ namespace Atlas
             // amber already have a 1.0 HSV value, so brightness can clamp
             // and the "soft" shade may look identical to the base colour.
             if (shade == 0) return base.interpolatedWith(
-                juce::Colour(0xff121821), 0.24f); // sharp / darker
+                juce::Colour(0xff121821), 0.41f); // sharp / darker
             if (shade == 2) return base.interpolatedWith(
-                juce::Colours::white, 0.23f); // soft / lighter
+                juce::Colours::white, 0.42f); // soft / lighter
             return base;
         }
 
