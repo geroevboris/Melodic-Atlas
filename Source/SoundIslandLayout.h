@@ -31,8 +31,27 @@ namespace Atlas
                                     / std::log(9000.0f / 90.0f);
                 const float energyCorrection = 0.09f *
                     (rec.acoustic.highBandRatio - rec.acoustic.lowBandRatio);
-                return juce::jlimit(0.04f, 0.96f,
-                                     logFreq + energyCorrection);
+                float acousticX = juce::jlimit(0.04f, 0.96f,
+                                              logFreq + energyCorrection);
+                // Spectral centroid alone pushes harmonically rich basses
+                // into HIGH-MID. Incorporate the measured fundamental only
+                // when multiple independent tonal windows agree.
+                if (rec.tonal.valid
+                    && rec.tonal.validWindowCount >= 2
+                    && rec.tonal.periodicity >= 0.65f
+                    && rec.tonal.pitchStability >= 0.58f
+                    && rec.tonal.estimatedMidi >= 24.0f
+                    && rec.tonal.estimatedMidi <= 96.0f)
+                {
+                    const float fundamental = 440.0f *
+                        std::pow(2.0f,
+                            (rec.tonal.estimatedMidi - 69.0f) / 12.0f);
+                    const float f0x = juce::jlimit(0.04f, 0.96f,
+                        std::log(std::max(45.0f, fundamental) / 90.0f)
+                            / std::log(9000.0f / 90.0f));
+                    acousticX = 0.50f * acousticX + 0.50f * f0x;
+                }
+                return acousticX;
             }
             return juce::jlimit(0.04f, 0.96f, rec.spectralCentroidNorm);
         }
