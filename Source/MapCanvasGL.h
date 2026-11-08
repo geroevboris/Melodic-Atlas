@@ -162,6 +162,7 @@ namespace Atlas
             {
                 ensureVisibleSamples();
                 drawSoundIslands(g);
+                bool selectedSampleDrawn = false;
                 for (int i : visibleSampleIndices)
                 {
                     const auto& rec = (*database)[(size_t)i];
@@ -173,6 +174,8 @@ namespace Atlas
                     }
 
                     bool isActive = (i == activeSampleIndex);
+                    if (isActive)
+                        selectedSampleDrawn = true;
                     bool isHovered = (i == hoveredSampleIndex);
 
                     juce::Colour dotCol = MusicMath::getClapFamilyColour(rec);
@@ -194,6 +197,44 @@ namespace Atlas
 
                     g.setColour(isActive ? juce::Colours::white : dotCol);
                     g.fillEllipse(pt.x - radius, pt.y - radius, radius * 2.0f, radius * 2.0f);
+                }
+
+                // An actively selected sound remains identifiable when a
+                // filter hides it. The translucent crossed ring is NOT a
+                // matching search result and cannot be clicked through LOD.
+                if (!selectedSampleDrawn && activeSampleIndex >= 0
+                    && activeSampleIndex < (int)database->size())
+                {
+                    const auto& selected = (*database)[(size_t)activeSampleIndex];
+                    if (selected.isLoop == showLoopsOnly
+                        && !selected.hiddenFromAtlas
+                        && !PercussionGate::shouldExcludeFromAtlas(selected))
+                    {
+                        const auto p = mapToScreen(selected);
+                        if (p.x >= 0.0f && p.x <= w && p.y > 26.0f
+                            && p.y < mapBottomY)
+                        {
+                            const bool filteredOut = !matchesCurrentFilter(selected);
+                            const auto ring = juce::Colours::white.withAlpha(
+                                filteredOut ? 0.50f : 0.90f);
+                            g.setColour(ring);
+                            g.drawEllipse(p.x - 6.5f, p.y - 6.5f,
+                                          13.0f, 13.0f, 1.2f);
+                            if (filteredOut)
+                            {
+                                g.drawLine(p.x - 3.0f, p.y - 3.0f,
+                                           p.x + 3.0f, p.y + 3.0f, 1.0f);
+                                g.drawLine(p.x + 3.0f, p.y - 3.0f,
+                                           p.x - 3.0f, p.y + 3.0f, 1.0f);
+                            }
+                            else
+                            {
+                                g.setColour(juce::Colours::white);
+                                g.fillEllipse(p.x - 2.7f, p.y - 2.7f,
+                                              5.4f, 5.4f);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -689,8 +730,13 @@ namespace Atlas
             {
                 const auto& rec = (*database)[(size_t)activeSampleIndex];
                 juce::String info = rec.name + " [" +
-                                    MusicMath::getNoteName(rec.pitchClass) + " | " +
-                                    MusicMath::getClusterName(displayCluster(rec)) + "]";
+                    MusicMath::getNoteName(rec.pitchClass) + " | " +
+                    instrumentTagDescription(rec) + "]";
+                const auto reason = getFilterReason(rec);
+                if (reason != FilterReason::Match)
+                    info = "FILTERED OUT: "
+                        + explainFilterReason(reason).toUpperCase()
+                        + " | " + info;
                 g.setColour(juce::Colour(0xffb8c4d4));
                 g.drawText(info,
                            (int)(w * 0.45f), (int)mapBottomY,
