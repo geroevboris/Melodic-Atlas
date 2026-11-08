@@ -241,6 +241,37 @@ namespace Atlas
             drawTopOverlayAndZoomControls(g, w);
             drawBottomHistoryBar(g, w, h, mapBottomY);
 
+            // Persistent explanation when a selected sound vanishes under a
+            // filter: the marker is still shown crossed-out, never counted
+            // as a filtered result, and can be tagged via Shift+right-click.
+            if (database != nullptr && activeSampleIndex >= 0
+                && activeSampleIndex < (int)database->size())
+            {
+                const auto& rec = (*database)[(size_t)activeSampleIndex];
+                const auto reason = getFilterReason(rec);
+                if (reason != FilterReason::Match
+                    && reason != FilterReason::OtherTab)
+                {
+                    juce::String message = "FILTERED OUT: "
+                        + explainFilterReason(reason).toUpperCase();
+                    if (reason == FilterReason::NoTag
+                        || reason == FilterReason::NoSubtype
+                        || reason == FilterReason::OtherFamily)
+                        message += "  |  SHIFT+RIGHT-CLICK RING TO SET TAG";
+                    const float width = juce::jmin(w - 24.0f, 660.0f);
+                    const float x = (w - width) * 0.5f;
+                    g.setColour(juce::Colour(0xed141c27));
+                    g.fillRoundedRectangle(x, 32.0f, width, 25.0f, 5.0f);
+                    g.setColour(juce::Colour(0xffd3dee9));
+                    g.setFont(juce::Font(
+                        juce::Font::getDefaultMonospacedFontName(),
+                        10.0f, juce::Font::plain));
+                    g.drawText(message, (int)(x + 9.0f), 35,
+                               (int)(width - 18.0f), 18,
+                               juce::Justification::centredLeft, true);
+                }
+            }
+
             g.setColour(juce::Colour(0xff262e3b));
             g.drawRect(0.0f, 0.0f, w, mapBottomY, 1.0f);
         }
