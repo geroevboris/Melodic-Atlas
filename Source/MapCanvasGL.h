@@ -97,6 +97,22 @@ namespace Atlas
             for (int r = 1; r < 8; ++r)
                 g.drawHorizontalLine((int)((mapBottomY / 8.0f) * (float)r), 0.0f, w);
 
+            // Quiet axis hints remain fixed while the star map zooms.
+            // Screen Y is inverted: longer sounds appear toward the top.
+            g.setColour(juce::Colour(0xff637384).withAlpha(0.65f));
+            g.setFont(juce::Font(
+                juce::Font::getDefaultMonospacedFontName(),
+                9.0f, juce::Font::plain));
+            g.drawText("LONG", 5, 29, 56, 14,
+                       juce::Justification::centredLeft, false);
+            g.drawText("SHORT", 5, (int)mapBottomY - 21, 56, 14,
+                       juce::Justification::centredLeft, false);
+            g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
+                       juce::Justification::centredLeft, false);
+            g.drawText("HIGH FREQ", (int)w - 94,
+                       (int)mapBottomY - 21, 86, 14,
+                       juce::Justification::centredRight, false);
+
             if (crosshairAlpha > 0.01f)
             {
                 g.setColour(juce::Colour(0xff7ec8a3).withAlpha(crosshairAlpha * 0.35f));
@@ -488,26 +504,21 @@ namespace Atlas
             g.setColour(juce::Colour(0xe60f1319));
             g.fillRect(1.0f, 1.0f, w - 2.0f, 26.0f);
 
-            // CLAP neighbourhood labels are intentionally neutral.
-            // A colour stands for a group of similar sounds in this library,
-            // not for a hardcoded instrument or brightness band.
-            const juce::Colour colours[] = {
-                juce::Colour(0xff00c8ff), juce::Colour(0xffffad00),
-                juce::Colour(0xffb163ff), juce::Colour(0xff1bda93),
-                juce::Colour(0xffff5475), juce::Colour(0xff5f7cff)
+            // Stable acoustic spectrum, low to high from left to right.
+            static constexpr const char* names[] = {
+                "LOW", "LOW-MID", "HIGH-MID", "HIGH"
             };
-            float lx = 12.0f;
             g.setFont(monoSmall);
-            for (int c = 0; c < 6; ++c)
+            float lx = 12.0f;
+            for (int c = 0; c < 4; ++c)
             {
-                g.setColour(colours[c]);
+                g.setColour(MusicMath::getSpectralRegionColour(c, -1));
                 g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
                 lx += 11.0f;
                 g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText("FAMILY " + juce::String(c + 1),
-                           (int)lx, 4, 57, 18,
+                g.drawText(names[c], (int)lx, 4, 59, 18,
                            juce::Justification::centredLeft, false);
-                lx += 63.0f;
+                lx += 72.0f;
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
@@ -737,7 +748,11 @@ namespace Atlas
 
             // Increase separation for click/drag audition. This is display-
             // only LOD; the persistent semantic coordinates never move.
-            constexpr float minSpacingPx = 15.0f;
+            // More markers at overview zoom, with density also encoded
+            // in the underlying organic regions. No enlarged sample dots.
+            const float minSpacingPx = juce::jmap(
+                juce::jlimit(1.0f, 18.0f, zoomFactor),
+                1.0f, 18.0f, 10.5f, 14.5f);
             const float width = (float)getWidth();
             const float height = (float)getHeight() - 26.0f;
             const float cellSize = minSpacingPx;
