@@ -8,14 +8,15 @@
 
 namespace Atlas
 {
-    // Four fixed spectral zones on X; logarithmic effective duration on Y
-    // (long sounds at the top). CLAP defines island membership and relative
+    // Four fixed spectral zones on X; measured initial attack on Y
+    // (soft/slow attack at the top, sharp/fast at the bottom).
+    // CLAP defines island membership and relative
     // neighbour geometry, NOT the global axis positions.
     struct SoundIslandLayout
     {
         static constexpr int similarityIslands = 18;
         static constexpr int maxIslands = similarityIslands * 4;
-        static constexpr int geometryVersion = 5;
+        static constexpr int geometryVersion = 6;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
@@ -77,16 +78,18 @@ namespace Atlas
             return juce::jlimit(0.04f, 0.96f, rec.spectralCentroidNorm);
         }
 
-        static float durationPosition(const SampleRecord& rec)
+        static float attackPosition(const SampleRecord& rec)
         {
-            const double measured = rec.effectiveDurationSec > 0.0
-                ? rec.effectiveDurationSec : rec.durationSec;
-            const float secs = juce::jlimit(
-                0.08f, 60.0f, (float)(std::isfinite(measured) ? measured : 1.0));
-            const float progress = std::log(secs / 0.08f)
-                                  / std::log(60.0f / 0.08f);
-            // Screen Y is downward: high Y values mean SHORT duration.
-            return juce::jlimit(0.05f, 0.95f, 1.0f - progress);
+            if (!rec.acoustic.attackMeasured
+                || !std::isfinite(rec.acoustic.attackTimeSec))
+                return 0.5f; // no reliable attack evidence
+            // 5 ms -> bottom, 2 seconds -> top; log scale gives useful
+            // separation among short attacks without crushing slow pads.
+            const float seconds = juce::jlimit(
+                0.005f, 2.0f, rec.acoustic.attackTimeSec);
+            const float progress = std::log(seconds / 0.005f)
+                                 / std::log(2.0f / 0.005f);
+            return juce::jlimit(0.05f, 0.95f, 0.95f - 0.90f * progress);
         }
 
         static int spectralRegion(float x)
@@ -173,7 +176,7 @@ namespace Atlas
                 {
                     const auto& rec = records[index];
                     x.push_back(frequencyPosition(rec));
-                    y.push_back(durationPosition(rec));
+                    y.push_back(attackPosition(rec));
                     island.sourceX += rec.projectionX;
                     island.sourceY += rec.projectionY;
                 }
@@ -283,12 +286,12 @@ namespace Atlas
                         dy = std::sin(angle) * r;
                     }
                     // Soft intra-island acoustic ordering: similar sounds
-                    // stay close in CLAP, bright ones lean slightly right and
-                    // long ones slightly upward, without splitting the island.
+                    // stay close in CLAP; bright sounds lean right and
+                    // slow-attack sounds upward without splitting the island.
                     dx += juce::jlimit(-0.045f, 0.045f,
                         0.45f * (frequencyPosition(rec) - island.anchorX));
                     dy += juce::jlimit(-0.015f, 0.015f,
-                        0.15f * (durationPosition(rec) - island.anchorY));
+                        0.15f * (attackPosition(rec) - island.anchorY));
                     const float len = std::sqrt(dx * dx + dy * dy);
                     const float maxR = island.radius * 0.93f;
                     if (len > maxR)
