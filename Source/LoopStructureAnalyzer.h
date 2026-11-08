@@ -28,7 +28,9 @@ namespace Atlas
                 word(name, "oneshot") || word(name, "oneshots")
                 || (word(name, "one") && word(name, "shot"))
                 || word(parent, "oneshots") || word(parent, "oneshot")
-                || word(parent, "one shots") || word(grandparent, "oneshots");
+                || (word(parent, "one") && word(parent, "shots"))
+                || word(grandparent, "oneshots")
+                || (word(grandparent, "one") && word(grandparent, "shots"));
             if (taggedOneShot)
                 return false;
 
