@@ -185,6 +185,8 @@ namespace Atlas
         int64_t sourceBytes = -1;
         int64_t sourceModifiedMs = -1;
         bool isLoop = false;
+        bool hiddenFromAtlas = false; // user override; source file preserved
+        int loopUserOverride = -1; // -1 automatic, 0 one-shot, 1 loop
         bool isPolyChord = false;
         // 0 means legacy duration-based classification; 1 means structural scan.
         int loopAnalysisVersion = 0;
