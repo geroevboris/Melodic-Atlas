@@ -700,15 +700,20 @@ namespace Atlas
                 g.drawText("ATTACK", (int)hintX, 4, 56, 18,
                            juce::Justification::centredLeft, false);
                 hintX += 52.0f;
+                static constexpr const char* shadeNames[] = {
+                    "SHARP", "MID", "SOFT"
+                };
                 for (int shade = 0; shade < 3; ++shade)
                 {
                     g.setColour(MusicMath::getSpectralRegionColour(2, shade));
-                    g.fillEllipse(hintX, 10.0f, 7.0f, 7.0f);
-                    hintX += 11.0f;
+                    g.fillRoundedRectangle(hintX, 8.5f, 11.0f, 10.0f, 2.0f);
+                    hintX += 14.0f;
+                    g.setColour(juce::Colour(0xffb5c1cf));
+                    g.drawText(shadeNames[shade], (int)hintX, 4,
+                               40, 18,
+                               juce::Justification::centredLeft, false);
+                    hintX += 43.0f;
                 }
-                g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText("FAST  >  SOFT", (int)hintX, 4, 102, 18,
-                           juce::Justification::centredLeft, false);
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
