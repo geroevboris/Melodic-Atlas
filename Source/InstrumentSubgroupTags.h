@@ -13,7 +13,7 @@ namespace Atlas
             // Reruns after identity refinement must discard subtype guesses
             // belonging to the previous instrument family.
             constexpr uint32_t instrumentMask =
-                Sub_StringsSection | Sub_Brass | Sub_Woodwind
+                Sub_StringsSection | Sub_Violin | Sub_Brass | Sub_Woodwind
                 | Sub_Piano | Sub_ElectricPiano | Sub_Organ | Sub_Mallet
                 | Sub_Arp | Sub_ElectricBass | Sub_SynthBass
                 | Sub_AcousticBass | Sub_AcousticGuitar
@@ -90,6 +90,9 @@ namespace Atlas
                                   "cello", "fiddle", "harp", "pizzicato",
                                   "pizz", "quartet"}))
                         rec.subMask |= Sub_StringsSection;
+                    if (contains({"violin", "violins", "fiddle",
+                                  "vln", "fiddles"}))
+                        rec.subMask |= Sub_Violin | Sub_StringsSection;
                     if (contains({"brass", "trumpet", "trombone", "tuba",
                                   "flugelhorn", "flugel", "euphonium",
                                   "frenchhorn", "horns"}))
