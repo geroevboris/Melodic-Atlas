@@ -165,6 +165,9 @@ namespace Atlas
                 token == "woodwind" || token == "woodwinds" ||
                 token == "bassoon" || token == "piccolo" ||
                 token == "recorder" || token == "duduk" ||
+                token == "accordion" || token == "harmonica" ||
+                token == "concertina" || token == "melodica" ||
+                token == "bagpipe" ||
                 token == "winds")
                 return (int)ClusterGroup::Strings;
 
