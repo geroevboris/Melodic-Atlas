@@ -37,9 +37,27 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     mapCanvas.setSampleDatabase(audioProcessor.getSampleDatabaseSnapshot());
     applyCurrentFiltersToMap();
 
-    // Right-click a real sound to correct automatic decisions or hide
-    // it/the containing CLAP island. Source audio is never deleted.
+    // Preserve the established XO-style workflow: plain right-click
+    // immediately places the sound in selected pads, no menu, no preview.
     mapCanvas.onSampleRightClicked = [this](int sampleIdx)
+    {
+        const auto db = audioProcessor.getSampleDatabaseSnapshot();
+        if (!db || sampleIdx < 0 || sampleIdx >= (int)db->size())
+            return;
+        if (selectedPads.empty())
+            selectedPads.insert(primarySelectedPad);
+        for (int pIdx : selectedPads)
+        {
+            audioProcessor.assignSampleToPadWithPreviewSettings(
+                pIdx, sampleIdx, true);
+            primarySelectedPad = pIdx;
+            audioProcessor.primarySelectedPad = pIdx;
+        }
+        repaint();
+    };
+
+    // Shift + right-click opens optional non-destructive map management.
+    mapCanvas.onSampleManageRequested = [this](int sampleIdx)
     {
         const auto db = audioProcessor.getSampleDatabaseSnapshot();
         if (!db || sampleIdx < 0 || sampleIdx >= (int)db->size())
