@@ -57,7 +57,7 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     };
 
     // Shift + right-click opens optional non-destructive map management.
-    mapCanvas.onSampleManageRequested = [this](int sampleIdx)
+    mapCanvas.onSampleManageRequested = [this](int sampleIdx, juce::Point<int> screenPoint)
     {
         const auto db = audioProcessor.getSampleDatabaseSnapshot();
         if (!db || sampleIdx < 0 || sampleIdx >= (int)db->size())
@@ -83,7 +83,8 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         menu.addItem(4, "Move to One-shots", selected.isLoop);
         menu.addItem(5, "Move to Loops", !selected.isLoop);
         menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&mapCanvas),
+            juce::PopupMenu::Options().withTargetScreenArea(
+                juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
             [this, sampleIdx, islandIndices](int choice)
             {
                 if (choice == 1)
@@ -108,14 +109,15 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
                 repaint();
             });
     };
-    mapCanvas.onEmptyMapRightClicked = [this]()
+    mapCanvas.onEmptyMapRightClicked = [this](juce::Point<int> screenPoint)
     {
         const int hidden = audioProcessor.getHiddenAtlasSampleCount();
         juce::PopupMenu menu;
         menu.addItem(1, "Restore all hidden sounds (" +
             juce::String(hidden) + ")", hidden > 0);
         menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&mapCanvas),
+            juce::PopupMenu::Options().withTargetScreenArea(
+                juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
             [this](int choice)
             {
                 if (choice == 1)
