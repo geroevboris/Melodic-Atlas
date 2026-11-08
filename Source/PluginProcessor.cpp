@@ -1062,7 +1062,13 @@ void MelodicAtlasAudioProcessor::run()
             islandsReady = Atlas::SoundIslandLayout::apply(newRecords);
         geometryVersionCurrent.store(islandsReady);
         for (auto& record : newRecords)
+        {
             record.cachedColourGroup = record.clapFamilyGroup;
+            // A map correction could have happened while this background
+            // scan was processing other files. Reapply immediately before
+            // publication to avoid silently undoing a user's choice.
+            applyAtlasOverrides(record);
+        }
         {
             const juce::ScopedLock sl(dbLock);
             sampleDatabase = std::move(newRecords);
