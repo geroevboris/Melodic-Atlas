@@ -194,7 +194,14 @@ namespace Atlas
                 && bestMatches >= 3
                 && bestMatches >= (int)(onsets.size() - 1) * 2 / 3;
             const bool enoughDuration = duration >= 1.4;
-            return durationOnGrid || (strongSequence && enoughDuration);
+            // Melodic and vocal loops have irregular accents; a valid BPM
+            // label plus several independent attacks is still strong loop
+            // evidence even when the final rendered tail shifts the length
+            // off the exact beat grid.
+            const bool bpmPhrase = labelledBpm > 0 && duration >= 1.5
+                && onsets.size() >= 3;
+            return durationOnGrid || bpmPhrase
+                || (strongSequence && enoughDuration);
         }
     };
 }
