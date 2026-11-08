@@ -507,6 +507,9 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("acousticMid", rec.acoustic.midBandRatio, nullptr);
         item.setProperty("acousticHigh", rec.acoustic.highBandRatio, nullptr);
         item.setProperty("acousticOnset", rec.acoustic.onsetActivity, nullptr);
+        item.setProperty("attackTimeSec", rec.acoustic.attackTimeSec, nullptr);
+        item.setProperty("attackMeasured", rec.acoustic.attackMeasured, nullptr);
+        item.setProperty("attackAnalysisVersion", rec.attackAnalysisVersion, nullptr);
         item.setProperty("acousticSustain", rec.acoustic.sustainRatio, nullptr);
         item.setProperty("tonalValid", rec.tonal.valid, nullptr);
         item.setProperty("tonalWindows", rec.tonal.validWindowCount, nullptr);
@@ -667,6 +670,15 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             (float)item.getProperty("acousticHigh", 0.0f);
         rec.acoustic.onsetActivity =
             (float)item.getProperty("acousticOnset", 0.0f);
+        rec.attackAnalysisVersion = (int)item.getProperty("attackAnalysisVersion", 0);
+        rec.acoustic.attackMeasured = (bool)item.getProperty("attackMeasured", false);
+        rec.acoustic.attackTimeSec = (float)item.getProperty("attackTimeSec", 0.0f);
+        if (!std::isfinite(rec.acoustic.attackTimeSec))
+        {
+            rec.acoustic.attackMeasured = false;
+            rec.acoustic.attackTimeSec = 0.0f;
+            rec.attackAnalysisVersion = 0;
+        }
         rec.acoustic.sustainRatio =
             (float)item.getProperty("acousticSustain", 0.0f);
         rec.tonal.valid = (bool)item.getProperty("tonalValid", false);
@@ -745,8 +757,15 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             [](const Atlas::SampleRecord& rec) {
                 return rec.clapEmbeddingValid;
             });
+    // An old cache has no measured attack. Do not silently rebuild a
+    // misleading map from unknown Y values during plugin startup.
+    const bool allAttacksChecked = std::all_of(
+        loaded.begin(), loaded.end(),
+        [](const Atlas::SampleRecord& rec) {
+            return rec.attackAnalysisVersion >= 1;
+        });
     if (savedMapVersion < Atlas::SoundIslandLayout::geometryVersion
-        && allNativeEmbeddings && completeNativeMap)
+        && allNativeEmbeddings && completeNativeMap && allAttacksChecked)
     {
         // Never refit expensive UMAP in the plugin constructor. Reuse
         // cached native coordinates and perform only the bounded island
@@ -967,6 +986,10 @@ void MelodicAtlasAudioProcessor::run()
                     hasChangedRecords = true;
                 if (reused.loopAnalysisVersion < 3
                     && Atlas::AudioAnalyzer::refreshLoopStructure(
+                        file, formatManager, reused))
+                    hasChangedRecords = true;
+                if (reused.attackAnalysisVersion < 1
+                    && Atlas::AudioAnalyzer::refreshInitialAttack(
                         file, formatManager, reused))
                     hasChangedRecords = true;
                 if (reused.acoustic.valid && reused.tonal.valid)
