@@ -445,7 +445,7 @@ namespace Atlas
                 g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
                 lx += 11.0f;
                 g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText("GROUP " + juce::String(c + 1),
+                g.drawText("FAMILY " + juce::String(c + 1),
                            (int)lx, 4, 57, 18,
                            juce::Justification::centredLeft, false);
                 lx += 63.0f;
