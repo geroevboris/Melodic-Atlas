@@ -4,6 +4,7 @@
 #include "ClapAudioFeatures.h"
 #include "ClapColourClusters.h"
 #include "SoundIslandLayout.h"
+#include "ClapLibraryClassifier.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #include "ClapOnnxEncoder.h"
 #include "NativeClapProjection.h"
@@ -347,6 +348,7 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("percussionState", (int)rec.percussionState, nullptr);
         item.setProperty("percussionConfidence", rec.percussionConfidence, nullptr);
         item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
+        item.setProperty("identityOrigin", rec.identityOrigin, nullptr);
         item.setProperty("acousticValid", rec.acoustic.valid, nullptr);
         item.setProperty("acousticCentroidHz", rec.acoustic.spectralCentroidHz, nullptr);
         item.setProperty("acousticCentroidNorm", rec.acoustic.spectralCentroidNorm, nullptr);
@@ -486,6 +488,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
             0.0f, 1.0f, (float)item.getProperty("percussionConfidence", 0.0f));
         rec.identityConfidence = juce::jlimit(
             0.0f, 1.0f, (float)item.getProperty("identityConfidence", 0.0f));
+        rec.identityOrigin = (int)item.getProperty("identityOrigin", 0);
         rec.acoustic.valid = (bool)item.getProperty("acousticValid", false);
         rec.acoustic.spectralCentroidHz =
             (float)item.getProperty("acousticCentroidHz", 0.0f);
@@ -552,6 +555,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         return false;
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
+    // Expand sparse metadata-backed instrument filters using only strong
+    // nearest-neighbour evidence from labelled sounds in this library.
+    Atlas::ClapLibraryClassifier::apply(loaded);
     // Recolour from saved embeddings without requiring an audio rescan.
     Atlas::ClapColourClusters::apply(loaded);
     for (auto& record : loaded)
@@ -729,6 +735,45 @@ void MelodicAtlasAudioProcessor::run()
     };
 #endif
 
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    // Explicitly named drum files are excluded from the displayed atlas,
+    // but a few make valuable CLAP rejection exemplars. One percussive pack
+    // cannot monopolize the reference bank.
+    std::vector<std::array<float, 512>> drumExamples;
+    if (ensureNativeClap())
+    {
+        std::array<int, 6> perKind {};
+        std::vector<juce::File> referenceFiles;
+        for (const auto& file : audioFiles)
+        {
+            if (!Atlas::PercussionGate::isExplicitDrumFile(file))
+                continue;
+            const auto name = file.getFileNameWithoutExtension().toLowerCase();
+            const int kind = name.contains("kick") ? 0
+                : name.contains("snare") ? 1
+                : name.contains("clap") ? 2
+                : name.contains("hat") ? 3
+                : name.contains("shaker") ? 4 : 5;
+            if (perKind[(size_t)kind] >= 3)
+                continue;
+            ++perKind[(size_t)kind];
+            referenceFiles.push_back(file);
+            if (referenceFiles.size() >= 18)
+                break;
+        }
+        if (!referenceFiles.empty())
+        {
+            std::vector<std::array<float, 512>> embeddings;
+            std::vector<bool> valid;
+            nativeClap->embedBatch(referenceFiles, formatManager,
+                                   embeddings, valid);
+            for (size_t i = 0; i < valid.size(); ++i)
+                if (valid[i])
+                    drumExamples.push_back(embeddings[i]);
+        }
+    }
+#endif
+
     for (int i = 0; i < total; ++i)
     {
         if (threadShouldExit())
@@ -784,6 +829,19 @@ void MelodicAtlasAudioProcessor::run()
 
     if (!threadShouldExit() && !newRecords.empty())
     {
+#if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+        Atlas::ClapLibraryClassifier::apply(newRecords, drumExamples);
+        newRecords.erase(std::remove_if(newRecords.begin(), newRecords.end(),
+            [](const Atlas::SampleRecord& rec) {
+                return Atlas::PercussionGate::shouldExcludeFromAtlas(rec);
+            }), newRecords.end());
+        scannedCount.store((int)newRecords.size());
+#endif
+        if (newRecords.empty())
+        {
+            scanning.store(false);
+            return;
+        }
         // Cached DSP positions stay fixed if nothing changed. Neural
         // coordinates are refreshed from the manifest when available.
         if (hasChangedRecords || newRecords.size() != unchangedCandidates.size())
