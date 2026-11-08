@@ -317,7 +317,7 @@ void MelodicAtlasAudioProcessor::loadAtlasOverrides()
         item.hidden = (bool)node.getProperty("hidden", false);
         item.loopMode = juce::jlimit(-1, 1,
             (int)node.getProperty("loopMode", -1));
-        item.instrumentCluster = juce::jlimit(-1, 6,
+        item.instrumentCluster = juce::jlimit(-2, 6,
             (int)node.getProperty("instrumentCluster", -1));
         item.instrumentSubtype = (uint32_t)(int)
             node.getProperty("instrumentSubtype", 0);
@@ -333,7 +333,7 @@ void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
         for (const auto& [path, item] : atlasOverrides)
         {
             if (!item.hidden && item.loopMode < 0
-                && item.instrumentCluster < 0)
+                && item.instrumentCluster == -1)
                 continue;
             juce::ValueTree node("File");
             node.setProperty("path", juce::String(path), nullptr);
@@ -385,6 +385,17 @@ void MelodicAtlasAudioProcessor::applyAtlasOverrides(
         rec.identityConfidence = 1.0f;
         Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
         rec.subMask |= it->second.instrumentSubtype;
+    }
+    else if (it->second.instrumentCluster == -2
+             && rec.identityOrigin == 2)
+    {
+        // An explicit reset must also undo a manual tag left in the old
+        // scan cache. Do not downgrade labels already re-inferred by CLAP.
+        Atlas::SoundIdentityAnalyzer::evaluate(rec.file, rec);
+        rec.identityOrigin = 0;
+        rec.cluster = rec.identityState == Atlas::IdentityState::Identified
+            ? rec.identityCluster : Atlas::ClusterGroup::Other;
+        Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
     }
 }
 
@@ -483,7 +494,7 @@ void MelodicAtlasAudioProcessor::setSampleInstrumentOverride(
         }
         else
         {
-            manual.instrumentCluster = -1;
+            manual.instrumentCluster = -2; // reset marker also overrides old caches
             manual.instrumentSubtype = 0;
             // Undo a manual tag by returning to metadata evidence, not by
             // retaining an out-of-date manually classified cache label.
