@@ -397,7 +397,10 @@ namespace Atlas
                 island.centreX += rec.neuralMapX;
                 island.centreY += rec.neuralMapY;
                 if (island.colourGroup < 0)
+                {
                     island.colourGroup = rec.colourGroup;
+                    island.attackShadeLevel = rec.attackShadeLevel;
+                }
             }
             constexpr int angles = 48;
             constexpr float tau = juce::MathConstants<float>::twoPi;
@@ -503,6 +506,7 @@ namespace Atlas
 
                 SampleRecord display;
                 display.colourGroup = island.colourGroup;
+                display.attackShadeLevel = island.attackShadeLevel;
                 display.islandGroup = island.islandId;
                 const auto colour = MusicMath::getClapFamilyColour(display);
                 // Colour intensity represents filtered sample concentration,
@@ -537,6 +541,25 @@ namespace Atlas
                 g.drawText(names[c], (int)lx, 4, 59, 18,
                            juce::Justification::centredLeft, false);
                 lx += 72.0f;
+            }
+            if (w >= 720.0f)
+            {
+                // Three lightness steps of the same spectral colour:
+                // darker = fast/sharp attack, lighter = slow/soft attack.
+                float hintX = lx + 8.0f;
+                g.setColour(juce::Colour(0xff9aa7b8));
+                g.drawText("ATTACK", (int)hintX, 4, 56, 18,
+                           juce::Justification::centredLeft, false);
+                hintX += 52.0f;
+                for (int shade = 0; shade < 3; ++shade)
+                {
+                    g.setColour(MusicMath::getSpectralRegionColour(2, shade));
+                    g.fillEllipse(hintX, 10.0f, 7.0f, 7.0f);
+                    hintX += 11.0f;
+                }
+                g.setColour(juce::Colour(0xff9aa7b8));
+                g.drawText("FAST  >  SOFT", (int)hintX, 4, 102, 18,
+                           juce::Justification::centredLeft, false);
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
@@ -897,6 +920,7 @@ namespace Atlas
             float centreX = 0.0f, centreY = 0.0f;
             float fillAlpha = 0.065f;
             int count = 0, colourGroup = -1, islandId = -1;
+            int attackShadeLevel = 1;
         };
         std::array<IslandOverlay, SoundIslandLayout::maxIslands> islandOverlays {};
         bool neuralMapActive = false;
