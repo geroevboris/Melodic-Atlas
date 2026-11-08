@@ -27,22 +27,7 @@ namespace Atlas
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
             database = std::move(dbSnapshot);
-            for (auto& island : islandOverlays)
-                island = {};
-            if (database != nullptr)
-                for (const auto& rec : *database)
-                    if (rec.islandGroup >= 0 && rec.islandGroup < 18
-                        && rec.neuralMapValid)
-                    {
-                        auto& island = islandOverlays[(size_t)rec.islandGroup];
-                        ++island.count;
-                        island.minX = std::min(island.minX, rec.neuralMapX);
-                        island.minY = std::min(island.minY, rec.neuralMapY);
-                        island.maxX = std::max(island.maxX, rec.neuralMapX);
-                        island.maxY = std::max(island.maxY, rec.neuralMapY);
-                        if (island.colourGroup < 0)
-                            island.colourGroup = rec.colourGroup;
-                    }
+            rebuildIslandOverlays();
             // Require complete coverage: a partial imported projection must
             // not mix neural and legacy coordinates on the same map.
             neuralMapActive = database != nullptr && !database->empty();
@@ -70,6 +55,7 @@ namespace Atlas
             activeClustersMask = clustersMask;
             clusterSubMasks = perClusterSubs;
             activeMoodMask = moodMask;
+            rebuildIslandOverlays();
             candidateOrderDirty = true;
             visibleSamplesDirty = true;
             repaint();
@@ -364,6 +350,29 @@ namespace Atlas
         }
 
     private:
+        void rebuildIslandOverlays()
+        {
+            for (auto& island : islandOverlays)
+                island = {};
+            if (database == nullptr)
+                return;
+            for (const auto& rec : *database)
+            {
+                if (rec.islandGroup < 0 || rec.islandGroup >= 18
+                    || !rec.neuralMapValid || rec.isLoop != showLoopsOnly
+                    || !matchesCurrentFilter(rec))
+                    continue;
+                auto& island = islandOverlays[(size_t)rec.islandGroup];
+                ++island.count;
+                island.minX = std::min(island.minX, rec.neuralMapX);
+                island.minY = std::min(island.minY, rec.neuralMapY);
+                island.maxX = std::max(island.maxX, rec.neuralMapX);
+                island.maxY = std::max(island.maxY, rec.neuralMapY);
+                if (island.colourGroup < 0)
+                    island.colourGroup = rec.colourGroup;
+            }
+        }
+
         void drawSoundIslands(juce::Graphics& g)
         {
             if (!neuralMapActive || database == nullptr)
