@@ -11,6 +11,65 @@ namespace Atlas
     class AcousticFeatureExtractor
     {
     public:
+        // Measure the very first audible onset, not the number or strength
+        // of attacks throughout a loop. Scanner-only, bounded to four seconds.
+        // 5 ms RMS frames with 15 ms smoothing reject isolated sample spikes.
+        static bool measureInitialAttack(const float* mono, int count,
+                                         double sampleRate, float& attackSec)
+        {
+            if (mono == nullptr || count < 128 || sampleRate < 8000.0)
+                return false;
+            const int limit = std::min(count, (int)(sampleRate * 4.0));
+            const int hop = std::max(32, (int)(sampleRate * 0.005));
+            const int n = limit / hop;
+            if (n < 3)
+                return false;
+            std::vector<float> envelope((size_t)n);
+            for (int i = 0; i < n; ++i)
+            {
+                double power = 0.0;
+                const int offset = i * hop;
+                for (int j = 0; j < hop; ++j)
+                {
+                    const float value = mono[offset + j];
+                    if (std::isfinite(value))
+                        power += (double)value * value;
+                }
+                envelope[(size_t)i] = (float)std::sqrt(power / hop);
+            }
+            std::vector<float> smooth((size_t)n);
+            float peak = 0.0f;
+            for (int i = 0; i < n; ++i)
+            {
+                const float before = envelope[(size_t)std::max(0, i - 1)];
+                const float after = envelope[(size_t)std::min(n - 1, i + 1)];
+                smooth[(size_t)i] = (before + envelope[(size_t)i] + after)
+                    / 3.0f;
+                peak = std::max(peak, smooth[(size_t)i]);
+            }
+            if (peak < 0.0005f)
+                return false;
+
+            // Start at 10% of a file's meaningful loudness, avoiding silent
+            // pre-roll. Reach 80% of the same peak for the attack endpoint.
+            int start = -1, reached = -1;
+            for (int i = 0; i < n; ++i)
+            {
+                if (start < 0 && smooth[(size_t)i] >= peak * 0.10f)
+                    start = i;
+                if (start >= 0 && smooth[(size_t)i] >= peak * 0.80f)
+                {
+                    reached = i;
+                    break;
+                }
+            }
+            if (start < 0 || reached < 0)
+                return false;
+            attackSec = juce::jlimit(0.005f, 3.0f,
+                (float)((reached - start) * (double)hop / sampleRate));
+            return true;
+        }
+
         static AcousticFeatures analyze(const float* mono, int count, double sampleRate)
         {
             AcousticFeatures result;
@@ -123,6 +182,8 @@ namespace Atlas
             result.sustainRatio = (float)juce::jlimit(
                 0.0, 1.0, (last / std::max(1, lastCount)) /
                 std::max(1.0e-9, first / std::max(1, firstCount)));
+            result.attackMeasured = measureInitialAttack(
+                mono, count, sampleRate, result.attackTimeSec);
             result.valid = true;
             return result;
         }
