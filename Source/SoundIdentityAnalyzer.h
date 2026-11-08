@@ -155,6 +155,7 @@ namespace Atlas
 
             if (token == "strings" || token == "violins" || token == "string" ||
                 token == "violin" || token == "viola" ||
+                token == "vln" || token == "fiddle" || token == "fiddles" ||
                 token == "cello" || token == "orchestral" ||
                 token == "orchestra" || token == "brass" ||
                 token == "trumpet" || token == "trombone" ||
