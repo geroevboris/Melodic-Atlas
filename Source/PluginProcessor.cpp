@@ -347,7 +347,7 @@ void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
 void MelodicAtlasAudioProcessor::applyAtlasOverrides(
     Atlas::SampleRecord& rec) const
 {
-    // Called under dbLock, or from the scanner while controls are inactive.
+    const juce::ScopedLock lock(dbLock);
     const auto it = atlasOverrides.find(
         rec.file.getFullPathName().toStdString());
     if (it == atlasOverrides.end())
@@ -949,6 +949,10 @@ void MelodicAtlasAudioProcessor::run()
                 applyAtlasOverrides(reused);
                 if (reused.durationAnalysisVersion < 1
                     && Atlas::AudioAnalyzer::refreshEffectiveDuration(
+                        file, formatManager, reused))
+                    hasChangedRecords = true;
+                if (reused.loopAnalysisVersion < 2
+                    && Atlas::AudioAnalyzer::refreshLoopStructure(
                         file, formatManager, reused))
                     hasChangedRecords = true;
                 newRecords.push_back(std::move(reused));
