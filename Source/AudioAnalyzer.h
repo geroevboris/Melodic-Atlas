@@ -118,7 +118,7 @@ namespace Atlas
             outRecord.durationAnalysisVersion = 1;
             outRecord.isLoop = LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
-            outRecord.loopAnalysisVersion = 1;
+            outRecord.loopAnalysisVersion = 2;
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
@@ -150,6 +150,43 @@ namespace Atlas
             else
                 outRecord.cluster = ClusterGroup::Other;
             InstrumentSubgroupTags::evaluate(file, outRecord);
+            return true;
+        }
+
+        // Re-evaluate loop structure on cached audio without touching the
+        // previously computed CLAP embedding or spatial descriptors.
+        static bool refreshLoopStructure(const juce::File& file,
+                                         juce::AudioFormatManager& formats,
+                                         SampleRecord& record)
+        {
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                formats.createReaderFor(file));
+            if (reader == nullptr || reader->lengthInSamples <= 0
+                || reader->sampleRate <= 0.0)
+                return false;
+            const double sr = reader->sampleRate;
+            const double seconds = (double)reader->lengthInSamples / sr;
+            const int frames = (int)std::min<juce::int64>(
+                reader->lengthInSamples, (juce::int64)(sr * 6.0));
+            const bool stereo = reader->numChannels > 1;
+            juce::AudioBuffer<float> buffer(stereo ? 2 : 1, frames);
+            buffer.clear();
+            if (!reader->read(&buffer, 0, frames, 0, true, stereo))
+                return false;
+            std::vector<float> mono((size_t)frames);
+            const float* l = buffer.getReadPointer(0);
+            const float* r = stereo ? buffer.getReadPointer(1) : nullptr;
+            for (int i = 0; i < frames; ++i)
+            {
+                const float left = std::isfinite(l[i]) ? l[i] : 0.0f;
+                const float right = r && std::isfinite(r[i]) ? r[i] : left;
+                mono[(size_t)i] = (left + right) * 0.5f;
+            }
+            record.isLoop = LoopStructureAnalyzer::isLoop(
+                file, mono.data(), frames, sr, seconds);
+            record.loopAnalysisVersion = 2;
+            if (record.loopUserOverride >= 0)
+                record.isLoop = record.loopUserOverride == 1;
             return true;
         }
 
