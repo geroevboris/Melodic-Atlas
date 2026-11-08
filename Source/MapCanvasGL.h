@@ -363,13 +363,70 @@ namespace Atlas
                     || !matchesCurrentFilter(rec))
                     continue;
                 auto& island = islandOverlays[(size_t)rec.islandGroup];
+                island.islandId = rec.islandGroup;
+                island.points.push_back({rec.neuralMapX, rec.neuralMapY});
                 ++island.count;
-                island.minX = std::min(island.minX, rec.neuralMapX);
-                island.minY = std::min(island.minY, rec.neuralMapY);
-                island.maxX = std::max(island.maxX, rec.neuralMapX);
-                island.maxY = std::max(island.maxY, rec.neuralMapY);
+                island.centreX += rec.neuralMapX;
+                island.centreY += rec.neuralMapY;
                 if (island.colourGroup < 0)
                     island.colourGroup = rec.colourGroup;
+            }
+            constexpr int angles = 48;
+            constexpr float tau = juce::MathConstants<float>::twoPi;
+            for (auto& island : islandOverlays)
+            {
+                if (island.count == 0)
+                    continue;
+                island.centreX /= (float)island.count;
+                island.centreY /= (float)island.count;
+
+                // A smoothed, density-supported radial envelope: lobe sizes
+                // follow the actual filtered sample positions, never an
+                // ellipse fitted to their bounding box. Precomputed only
+                // on database/filter changes, not during painting.
+                std::array<float, angles> original {};
+                for (int i = 0; i < angles; ++i)
+                {
+                    const float angle = tau * (float)i / (float)angles;
+                    const float ux = std::cos(angle);
+                    const float uy = std::sin(angle);
+                    float extent = 0.0f;
+                    for (const auto& pt : island.points)
+                    {
+                        const float dx = pt.x - island.centreX;
+                        const float dy = pt.y - island.centreY;
+                        const float along = dx * ux + dy * uy;
+                        if (along <= 0.0f)
+                            continue;
+                        const float perpendicular = std::abs(dx * uy - dy * ux);
+                        const float distance = std::sqrt(dx * dx + dy * dy);
+                        const float spread = std::max(0.009f, distance * 0.48f);
+                        const float closeness =
+                            std::exp(-0.5f * (perpendicular / spread)
+                                           * (perpendicular / spread));
+                        extent = std::max(extent, along * closeness);
+                    }
+                    original[(size_t)i] = juce::jlimit(
+                        0.014f, 0.14f, extent + 0.014f);
+                }
+                double radialSquareSum = 0.0;
+                for (int i = 0; i < angles; ++i)
+                {
+                    const int prev = (i + angles - 1) % angles;
+                    const int next = (i + 1) % angles;
+                    const float r = 0.25f * original[(size_t)prev]
+                        + 0.5f * original[(size_t)i]
+                        + 0.25f * original[(size_t)next];
+                    island.radial[(size_t)i] = r;
+                    radialSquareSum += (double)r * r;
+                }
+                const float meanSq = (float)(radialSquareSum / angles);
+                const float area = juce::MathConstants<float>::pi * meanSq;
+                const float density = (float)island.count
+                    / std::max(1.0f, area * 9500.0f);
+                island.fillAlpha = juce::jlimit(0.065f, 0.25f,
+                    0.065f + 0.185f * (1.0f - std::exp(-density)));
+                island.points.clear();
             }
         }
 
@@ -377,47 +434,49 @@ namespace Atlas
         {
             if (!neuralMapActive || database == nullptr)
                 return;
-            std::array<bool, 18> visible {};
-            for (int index : visibleSampleIndices)
+            constexpr int angles = 48;
+            constexpr float tau = juce::MathConstants<float>::twoPi;
+            for (const auto& island : islandOverlays)
             {
-                const auto& rec = (*database)[(size_t)index];
-                if (rec.islandGroup >= 0 && rec.islandGroup < 18)
-                    visible[(size_t)rec.islandGroup] = true;
-            }
-            for (int id = 0; id < 18; ++id)
-            {
-                const auto& island = islandOverlays[(size_t)id];
-                if (!visible[(size_t)id] || island.count < 3)
+                if (island.count < 2)
                     continue;
+                std::array<juce::Point<float>, angles> positions {};
+                for (int i = 0; i < angles; ++i)
+                {
+                    const float angle = tau * (float)i / (float)angles;
+                    const float radius = island.radial[(size_t)i];
+                    positions[(size_t)i] = mapToScreen(
+                        island.centreX + std::cos(angle) * radius,
+                        island.centreY + std::sin(angle) * radius);
+                }
+                auto midpoint = [](juce::Point<float> p, juce::Point<float> q)
+                {
+                    return juce::Point<float>(
+                        (p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f);
+                };
+                juce::Path outline;
+                const auto start = midpoint(
+                    positions[(size_t)(angles - 1)], positions[0]);
+                outline.startNewSubPath(start);
+                for (int i = 0; i < angles; ++i)
+                {
+                    const auto control = positions[(size_t)i];
+                    const auto end = midpoint(control,
+                        positions[(size_t)((i + 1) % angles)]);
+                    outline.quadraticTo(control, end);
+                }
+                outline.closeSubPath();
 
-                const auto a = mapToScreen(island.minX, island.minY);
-                const auto b = mapToScreen(island.maxX, island.maxY);
-                const float pad = std::max(9.0f, 13.0f * zoomFactor);
-                juce::Rectangle<float> extent(
-                    std::min(a.x, b.x) - pad,
-                    std::min(a.y, b.y) - pad,
-                    std::max(14.0f, std::abs(a.x - b.x) + 2.0f * pad),
-                    std::max(14.0f, std::abs(a.y - b.y) + 2.0f * pad));
-                // Rounded, soft island territory; each point remains the
-                // actual playable sample at its true projected coordinate.
                 SampleRecord display;
                 display.colourGroup = island.colourGroup;
+                display.islandGroup = island.islandId;
                 const auto colour = MusicMath::getClapFamilyColour(display);
-                g.setColour(colour.withAlpha(0.045f));
-                g.fillEllipse(extent);
-                g.setColour(colour.withAlpha(0.32f));
-                g.drawEllipse(extent, 1.0f);
-                if (zoomFactor <= 2.0f && island.count >= 6)
-                {
-                    g.setColour(colour.withAlpha(0.78f));
-                    g.setFont(juce::Font(
-                        juce::Font::getDefaultMonospacedFontName(),
-                        8.5f, juce::Font::bold));
-                    g.drawText("ISLAND " + juce::String(id + 1),
-                        (int)extent.getX(), (int)extent.getY() - 12,
-                        (int)extent.getWidth(), 12,
-                        juce::Justification::centred, false);
-                }
+                // Colour intensity represents filtered sample concentration,
+                // even when semantic zoom hides almost all marker dots.
+                g.setColour(colour.withAlpha(island.fillAlpha));
+                g.fillPath(outline);
+                g.setColour(colour.withAlpha(0.27f));
+                g.strokePath(outline, juce::PathStrokeType(1.05f));
             }
         }
 
@@ -800,10 +859,11 @@ namespace Atlas
         // Panning and auditioning do not alter the visible representatives.
         struct IslandOverlay
         {
-            float minX = 1.0f, minY = 1.0f;
-            float maxX = 0.0f, maxY = 0.0f;
-            int count = 0;
-            int colourGroup = -1;
+            std::vector<juce::Point<float>> points;
+            std::array<float, 48> radial {};
+            float centreX = 0.0f, centreY = 0.0f;
+            float fillAlpha = 0.065f;
+            int count = 0, colourGroup = -1, islandId = -1;
         };
         std::array<IslandOverlay, 18> islandOverlays {};
         bool neuralMapActive = false;
