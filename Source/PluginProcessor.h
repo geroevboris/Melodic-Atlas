@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <unordered_map>
 #include "AtlasTypes.h"
 #include "AudioAnalyzer.h"
 #include "SamplerEngine.h"
@@ -72,6 +73,12 @@ public:
 
     void saveDatabaseCacheToDisk();
     bool loadDatabaseCacheFromDisk();
+    // Non-destructive user corrections. They affect only atlas visibility
+    // and One-shots/Loops grouping, never source audio files.
+    void hideAtlasSamples(const std::vector<int>& indices);
+    void restoreHiddenAtlasSamples();
+    void setSampleLoopOverride(int index, int mode); // -1 auto, 0 shot, 1 loop
+    int getHiddenAtlasSampleCount() const;
 
     std::atomic<bool> showLoopsTab { false };
     std::atomic<int> projectKeyRoot { 9 };
@@ -106,6 +113,11 @@ private:
     void run() override;
     void generateDemoAtlas();
     juce::File getDatabaseCacheFile() const;
+    juce::File getAtlasOverridesFile() const;
+    void loadAtlasOverrides();
+    void saveAtlasOverrides() const;
+    void applyAtlasOverrides(Atlas::SampleRecord& rec) const;
+
 
     mutable juce::CriticalSection dbLock;
     juce::AudioFormatManager formatManager;
@@ -116,6 +128,12 @@ private:
     std::vector<Atlas::ProjectSnapshot> undoStack;
     std::vector<Atlas::ProjectSnapshot> redoStack;
 
+    struct AtlasOverride
+    {
+        bool hidden = false;
+        int loopMode = -1;
+    };
+    std::unordered_map<std::string, AtlasOverride> atlasOverrides;
     juce::File folderToScan;
     std::atomic<bool> incrementalRefresh { false };
     std::atomic<bool> geometryVersionCurrent { false };
