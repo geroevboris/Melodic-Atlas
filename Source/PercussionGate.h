@@ -39,7 +39,22 @@ namespace Atlas
                         return true;
                 return false;
             };
-            if (hasDrumTokens(file.getFileNameWithoutExtension()))
+            const auto name = file.getFileNameWithoutExtension().toLowerCase();
+            // Compact labels and common drum-loop naming conventions are
+            // frequent in commercial sample packs (e.g. DrumLoop_128).
+            static constexpr const char* explicitPatterns[] = {
+                "drumloop", "drum_loop", "drum-loop", "drum loop",
+                "drumbreak", "drum_break", "drum break",
+                "breakbeat", "break_beat", "break beat",
+                "drumfill", "drum_fill", "drum fill",
+                "perc_loop", "perc-loop", "percussion_loop",
+                "shakerloop", "claploop", "snareloop",
+                "hihatloop", "hatloop", "kickloop"
+            };
+            for (const auto* token : explicitPatterns)
+                if (name.contains(token))
+                    return true;
+            if (hasDrumTokens(name))
                 return true;
 
             // Some libraries use anonymous numbered files stored beneath
@@ -56,7 +71,11 @@ namespace Atlas
                     folder == "claps" || folder == "clap" ||
                     folder == "hats" || folder == "hihat" ||
                     folder == "hi hats" || folder == "cymbals" ||
-                    folder == "shakers" || folder == "toms")
+                    folder == "shakers" || folder == "toms" ||
+                    folder == "drum loops" || folder == "drumloops" ||
+                    folder == "drum breaks" || folder == "breakbeats" ||
+                    folder == "breaks" || folder == "percussion loops" ||
+                    folder == "perc loops" || folder == "drum fills")
                     return true;
             }
             return false;
