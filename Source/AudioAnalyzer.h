@@ -108,45 +108,14 @@ namespace Atlas
             juce::String lowerName = file.getFileNameWithoutExtension().toLowerCase();
             parsePitchAndBpmFromFilename(lowerName, detectedMidi, outRecord.detectedBpm);
 
-            // Approximate active duration using short RMS windows rather
-            // than treating trailing silence as musical length. For files
-            // longer than the six seconds analysed here, an energetic final
-            // window keeps the original file duration as a safe upper bound.
-            // Measurements are cached; no extra file read is required.
-            const int window = std::max(1, (int)(sr * 0.025));
-            float maxWindowRms = 0.0f;
-            std::vector<float> rmsWindows;
-            rmsWindows.reserve((size_t)(maxSamplesToRead / window + 1));
-            for (int start = 0; start < maxSamplesToRead; start += window)
-            {
-                double power = 0.0;
-                const int count = std::min(window, maxSamplesToRead - start);
-                for (int j = 0; j < count; ++j)
-                {
-                    const float value = downmix[(size_t)(start + j)];
-                    power += (double)value * value;
-                }
-                const float value = (float)std::sqrt(power / count);
-                rmsWindows.push_back(value);
-                maxWindowRms = std::max(maxWindowRms, value);
-            }
-            const float activeThreshold = std::max(
-                0.0005f, maxWindowRms * 0.032f);
-            int lastActiveWindow = -1;
-            for (int i = 0; i < (int)rmsWindows.size(); ++i)
-                if (rmsWindows[(size_t)i] >= activeThreshold)
-                    lastActiveWindow = i;
-            double activeSeconds = lastActiveWindow < 0
-                ? duration : std::min(duration,
-                    (double)(lastActiveWindow + 1) * (double)window / sr);
-            if (duration > (double)maxSamplesToRead / sr + 0.02
-                && lastActiveWindow >= (int)rmsWindows.size() - 2)
-                activeSeconds = duration;
+            const double activeSeconds = estimateActiveSeconds(
+                downmix.data(), maxSamplesToRead, sr, duration);
 
             outRecord.file = file;
             outRecord.name = file.getFileNameWithoutExtension();
             outRecord.durationSec = duration;
             outRecord.effectiveDurationSec = activeSeconds;
+            outRecord.durationAnalysisVersion = 1;
             outRecord.isLoop = LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
             outRecord.loopAnalysisVersion = 1;
@@ -181,6 +150,41 @@ namespace Atlas
             else
                 outRecord.cluster = ClusterGroup::Other;
             InstrumentSubgroupTags::evaluate(file, outRecord);
+            return true;
+        }
+
+        // Refresh old caches without re-running expensive CLAP inference.
+        // Used on scanner thread only and only once per unchanged file.
+        static bool refreshEffectiveDuration(const juce::File& file,
+                                             juce::AudioFormatManager& formats,
+                                             SampleRecord& record)
+        {
+            std::unique_ptr<juce::AudioFormatReader> reader(
+                formats.createReaderFor(file));
+            if (reader == nullptr || reader->lengthInSamples <= 0
+                || reader->sampleRate <= 0.0)
+                return false;
+            const double sampleRate = reader->sampleRate;
+            const double totalSeconds = (double)reader->lengthInSamples / sampleRate;
+            const int count = (int)std::min<juce::int64>(
+                reader->lengthInSamples, (juce::int64)(sampleRate * 6.0));
+            const bool stereo = reader->numChannels > 1;
+            juce::AudioBuffer<float> data(stereo ? 2 : 1, count);
+            data.clear();
+            if (!reader->read(&data, 0, count, 0, true, stereo))
+                return false;
+            std::vector<float> mono((size_t)count);
+            const float* l = data.getReadPointer(0);
+            const float* r = stereo ? data.getReadPointer(1) : nullptr;
+            for (int i = 0; i < count; ++i)
+            {
+                const float vl = std::isfinite(l[i]) ? l[i] : 0.0f;
+                const float vr = r && std::isfinite(r[i]) ? r[i] : vl;
+                mono[(size_t)i] = (vl + vr) * 0.5f;
+            }
+            record.effectiveDurationSec = estimateActiveSeconds(
+                mono.data(), count, sampleRate, totalSeconds);
+            record.durationAnalysisVersion = 1;
             return true;
         }
 
@@ -436,6 +440,44 @@ namespace Atlas
         }
 
     private:
+        static double estimateActiveSeconds(const float* signal, int samples,
+                                            double sampleRate, double duration)
+        {
+            if (samples <= 0 || sampleRate <= 0.0)
+                return duration;
+            const int window = std::max(1, (int)(sampleRate * 0.025));
+            float highest = 0.0f;
+            std::vector<float> energy;
+            energy.reserve((size_t)(samples / window + 1));
+            for (int start = 0; start < samples; start += window)
+            {
+                double power = 0.0;
+                const int count = std::min(window, samples - start);
+                for (int j = 0; j < count; ++j)
+                {
+                    const float value = signal[start + j];
+                    power += (double)value * value;
+                }
+                const float rms = (float)std::sqrt(power / count);
+                energy.push_back(rms);
+                highest = std::max(highest, rms);
+            }
+            const float threshold = std::max(0.0005f, highest * 0.032f);
+            int lastActive = -1;
+            for (int i = 0; i < (int)energy.size(); ++i)
+                if (energy[(size_t)i] >= threshold)
+                    lastActive = i;
+            double active = lastActive < 0 ? duration
+                : std::min(duration,
+                    (double)(lastActive + 1) * (double)window / sampleRate);
+            // A six-second excerpt can't know when a later sustained loop
+            // ends; conservatively keep its full duration.
+            if (duration > (double)samples / sampleRate + 0.02
+                && lastActive >= (int)energy.size() - 2)
+                active = duration;
+            return std::max(0.06, active);
+        }
+
         static void detectPitchAutocorr(const float* data, int numSamples, double sr,
                                          int& outMidi, float& outConf)
         {
