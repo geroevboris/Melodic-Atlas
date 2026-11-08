@@ -351,7 +351,7 @@ namespace Atlas
             // a dim crossed ring. Shift+right-clicking that exact marker
             // must still offer instrument-tag correction without making
             // the sound count as a matching search result.
-            if (hit < 0 && e.mods.isPopupMenu()
+            if (e.mods.isPopupMenu()
                 && e.mods.isShiftDown() && database
                 && activeSampleIndex >= 0
                 && activeSampleIndex < (int)database->size())
@@ -363,7 +363,7 @@ namespace Atlas
                     && !PercussionGate::shouldExcludeFromAtlas(selected)
                     && !matchesCurrentFilter(selected)
                     && pt.getDistanceFrom(
-                        mapToScreen(selected)) <= 12.0f)
+                        mapToScreen(selected)) <= 8.0f)
                     hit = activeSampleIndex;
             }
 
