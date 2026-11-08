@@ -87,17 +87,17 @@ namespace Atlas
             {
                 const auto token = filenameTokens[i];
                 juce::String number;
-                if (token.endsWith("bpm"))
-                    number = token.dropLastCharacters(3);
-                else if (token.startsWith("bpm"))
-                    number = token.substring(3);
-                else if (token == "bpm")
+                if (token == "bpm")
                 {
                     if (i > 0)
                         number = filenameTokens[i - 1];
                     if (number.isEmpty() && i + 1 < filenameTokens.size())
                         number = filenameTokens[i + 1];
                 }
+                else if (token.endsWith("bpm"))
+                    number = token.dropLastCharacters(3);
+                else if (token.startsWith("bpm"))
+                    number = token.substring(3);
                 if (number.isNotEmpty()
                     && number.containsOnly("0123456789"))
                 {
