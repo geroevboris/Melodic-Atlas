@@ -25,15 +25,23 @@ namespace Atlas
                 return tokens.contains(target);
             };
             const bool taggedOneShot =
-                word(name, "oneshot") || word(name, "one-shot")
-                || word(name, "one") && word(name, "shot")
+                word(name, "oneshot") || word(name, "oneshots")
+                || (word(name, "one") && word(name, "shot"))
                 || word(parent, "oneshots") || word(parent, "oneshot")
-                || word(grandparent, "oneshots");
+                || word(parent, "one shots") || word(grandparent, "oneshots");
             if (taggedOneShot)
                 return false;
 
-            const bool taggedLoop = word(name, "loop") || word(name, "loops")
+            const bool taggedLoop =
+                word(name, "loop") || word(name, "loops")
+                || word(name, "looped") || word(name, "drumloop")
+                || word(name, "beatloop") || word(name, "breakbeat")
+                || word(name, "groove") || word(name, "pattern")
+                || word(name, "sequence") || word(name, "phrase")
+                || word(name, "riff") || word(name, "arpeggio")
                 || word(parent, "loops") || word(parent, "loop")
+                || word(parent, "drumloops") || word(parent, "drum loops")
+                || word(parent, "melodic loops") || word(parent, "phrases")
                 || word(grandparent, "loops");
             if (taggedLoop)
                 return true;
@@ -79,7 +87,7 @@ namespace Atlas
                     && (onsets.empty() || i - onsets.back() >= minSeparation))
                     onsets.push_back(i);
             }
-            if (onsets.size() < 4)
+            if (onsets.size() < 3)
                 return false;
 
             // Regularly spaced events are a conservative rhythm cue, not
@@ -100,8 +108,12 @@ namespace Atlas
                 }
                 bestMatches = std::max(bestMatches, matches);
             }
-            return bestMatches >= 3
+            // Two repeated intervals imply a phrase; avoid promoting a
+            // decaying one-shot with a few incidental transient tails.
+            const bool strongSequence = bestMatches >= 2
                 && bestMatches >= (int)(onsets.size() - 1) * 2 / 3;
+            const bool enoughDuration = duration >= 1.4;
+            return strongSequence && enoughDuration;
         }
     };
 }
