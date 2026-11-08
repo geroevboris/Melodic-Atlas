@@ -13,8 +13,9 @@ namespace Atlas
     // neighbour geometry, NOT the global axis positions.
     struct SoundIslandLayout
     {
-        static constexpr int maxIslands = 18;
-        static constexpr int geometryVersion = 4;
+        static constexpr int similarityIslands = 18;
+        static constexpr int maxIslands = similarityIslands * 4;
+        static constexpr int geometryVersion = 5;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
@@ -49,9 +50,29 @@ namespace Atlas
                     const float f0x = juce::jlimit(0.04f, 0.96f,
                         std::log(std::max(45.0f, fundamental) / 90.0f)
                             / std::log(9000.0f / 90.0f));
-                    acousticX = 0.50f * acousticX + 0.50f * f0x;
+                    // A bass with rich harmonics still has a low
+                    // fundamental; above middle C the spectral character
+                    // becomes progressively more important.
+                    const float fundamentalWeight =
+                        fundamental < 220.0f ? 0.77f
+                        : fundamental < 650.0f ? 0.58f : 0.32f;
+                    acousticX = (1.0f - fundamentalWeight) * acousticX
+                        + fundamentalWeight * f0x;
+                    if (fundamental < 165.0f)
+                        acousticX = std::min(acousticX, 0.232f);
+                    else if (fundamental < 420.0f)
+                        acousticX = std::min(acousticX, 0.470f);
                 }
-                return acousticX;
+                // Strong low-band dominance is independent evidence that a
+                // sound belongs toward the left, even if its noisy/harmonic
+                // spectrum raises the centroid.
+                if (rec.acoustic.lowBandRatio >= 0.43f
+                    && rec.acoustic.highBandRatio < 0.27f)
+                    acousticX = std::min(acousticX, 0.232f);
+                else if (rec.acoustic.lowBandRatio >= 0.31f
+                         && rec.acoustic.highBandRatio < 0.24f)
+                    acousticX = std::min(acousticX, 0.475f);
+                return juce::jlimit(0.015f, 0.985f, acousticX);
             }
             return juce::jlimit(0.04f, 0.96f, rec.spectralCentroidNorm);
         }
@@ -112,9 +133,15 @@ namespace Atlas
             {
                 auto& rec = records[i];
                 if (rec.isLoop != loopMode
-                    || rec.islandGroup < 0 || rec.islandGroup >= maxIslands
+                    || rec.islandGroup < 0
+                    || rec.islandGroup >= similarityIslands
                     || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
+                // A broad CLAP island may span an entire keyboard or many
+                // registers. Split its VISUAL territory by spectral region
+                // while retaining the original CLAP similarity assignment.
+                const int region = spectralRegion(frequencyPosition(rec));
+                rec.visualIslandGroup = rec.islandGroup * 4 + region;
                 // First upgrade from old caches has only rendered positions.
                 // Subsequent reflows always use the saved source projection.
                 if (rec.projectionX < 0.0f || rec.projectionY < 0.0f)
@@ -122,7 +149,7 @@ namespace Atlas
                     rec.projectionX = rec.neuralMapX;
                     rec.projectionY = rec.neuralMapY;
                 }
-                islands[(size_t)rec.islandGroup].members.push_back(i);
+                islands[(size_t)rec.visualIslandGroup].members.push_back(i);
                 ++eligible;
             }
             if (eligible == 0)
@@ -218,9 +245,13 @@ namespace Atlas
                         + 0.06f * (island.anchorX - island.centreX);
                     const float y = island.centreY + force[(size_t)i].y
                         + 0.06f * (island.anchorY - island.centreY);
+                    const float bandStart = (float)island.region * 0.25f;
+                    const float bandEnd = bandStart + 0.25f;
                     island.centreX = juce::jlimit(
-                        juce::jmax(0.025f, island.anchorX - 0.035f),
-                        juce::jmin(0.975f, island.anchorX + 0.035f), x);
+                        juce::jmax(bandStart + 0.024f,
+                                   island.anchorX - 0.025f),
+                        juce::jmin(bandEnd - 0.024f,
+                                   island.anchorX + 0.025f), x);
                     island.centreY = juce::jlimit(
                         juce::jmax(0.025f, island.anchorY - 0.04f),
                         juce::jmin(0.975f, island.anchorY + 0.04f), y);
@@ -254,8 +285,8 @@ namespace Atlas
                     // Soft intra-island acoustic ordering: similar sounds
                     // stay close in CLAP, bright ones lean slightly right and
                     // long ones slightly upward, without splitting the island.
-                    dx += juce::jlimit(-0.015f, 0.015f,
-                        0.15f * (frequencyPosition(rec) - island.anchorX));
+                    dx += juce::jlimit(-0.045f, 0.045f,
+                        0.45f * (frequencyPosition(rec) - island.anchorX));
                     dy += juce::jlimit(-0.015f, 0.015f,
                         0.15f * (durationPosition(rec) - island.anchorY));
                     const float len = std::sqrt(dx * dx + dy * dy);
@@ -265,8 +296,10 @@ namespace Atlas
                         dx *= maxR / len;
                         dy *= maxR / len;
                     }
-                    rec.neuralMapX = juce::jlimit(0.0f, 1.0f,
-                                                 island.centreX + dx);
+                    const float bandStart = (float)island.region * 0.25f;
+                    rec.neuralMapX = juce::jlimit(
+                        bandStart + 0.006f, bandStart + 0.244f,
+                        island.centreX + dx);
                     rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
                                                  island.centreY + dy);
                     rec.colourGroup = island.region; // fixed colour for island
