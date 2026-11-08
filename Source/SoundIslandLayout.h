@@ -16,7 +16,7 @@ namespace Atlas
     {
         static constexpr int similarityIslands = 18;
         static constexpr int maxIslands = similarityIslands * 4;
-        static constexpr int geometryVersion = 6;
+        static constexpr int geometryVersion = 7;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
@@ -107,6 +107,7 @@ namespace Atlas
             float maxDistance = 0.0f;
             float radius = 0.045f;
             int region = 0;
+            int attackShadeLevel = 1; // sharp / medium / soft
         };
 
         static float median(std::vector<float>& v)
@@ -188,6 +189,10 @@ namespace Atlas
                 island.centreX = island.anchorX;
                 island.centreY = island.anchorY;
                 island.region = spectralRegion(island.anchorX);
+                // Higher screen Y means a faster/sharper onset.
+                // 3 discrete levels, avoiding random point-by-point colour.
+                island.attackShadeLevel = island.anchorY >= 0.65f ? 0
+                    : island.anchorY <= 0.35f ? 2 : 1;
 
                 const float expected = (float)eligible / (float)active;
                 const float relative = count / std::max(1.0f, expected);
@@ -203,10 +208,11 @@ namespace Atlas
                 }
             }
 
-            // Layout repulsion is deliberately subordinate to the axes:
-            // X may move at most ~3.5% and Y at most ~4% from an island's
-            // measured median. Groups with identical measurements can overlap
-            // slightly rather than falsely move into distant spectral bands.
+            // Compact groups while preserving meaningful acoustic axes.
+            // Nearby islands in the SAME frequency band and with similar
+            // attack character softly attract one another. Remote groups
+            // remain separate; collision forces prevent samples merging.
+            // Attraction only affects island centres, never CLAP membership.
             for (int iteration = 0; iteration < 120 && active > 1; ++iteration)
             {
                 std::array<juce::Point<float>, maxIslands> force {};
@@ -223,20 +229,36 @@ namespace Atlas
                         const float dx = right.centreX - left.centreX;
                         const float dy = right.centreY - left.centreY;
                         const float dist = std::sqrt(dx * dx + dy * dy);
-                        const float required =
-                            left.radius + right.radius + 0.014f;
-                        if (dist >= required)
-                            continue;
-                        const float angle = (float)(a * 17 + b * 29) * 1.173f;
+                        const float required = left.radius + right.radius
+                                               + 0.006f;
+                        const float angle = (float)(a * 17 + b * 29)
+                            * 1.173f;
                         const float nx = dist > 0.0001f
                             ? dx / dist : std::cos(angle);
                         const float ny = dist > 0.0001f
                             ? dy / dist : std::sin(angle);
-                        const float push = (required - dist) * 0.36f;
-                        force[(size_t)a].x -= nx * push;
-                        force[(size_t)a].y -= ny * push;
-                        force[(size_t)b].x += nx * push;
-                        force[(size_t)b].y += ny * push;
+                        if (dist < required)
+                        {
+                            const float push = (required - dist) * 0.41f;
+                            force[(size_t)a].x -= nx * push;
+                            force[(size_t)a].y -= ny * push;
+                            force[(size_t)b].x += nx * push;
+                            force[(size_t)b].y += ny * push;
+                        }
+                        else if (left.region == right.region
+                                 && dist < 0.24f
+                                 && std::abs(left.anchorX-right.anchorX) < 0.12f
+                                 && std::abs(left.anchorY-right.anchorY) < 0.17f)
+                        {
+                            // Gentle pull, capped to avoid collapsing distinct
+                            // islands or distorting the spectral/attack map.
+                            const float pull = std::min(0.0024f,
+                                (dist-required) * 0.023f);
+                            force[(size_t)a].x += nx * pull;
+                            force[(size_t)a].y += ny * pull;
+                            force[(size_t)b].x -= nx * pull;
+                            force[(size_t)b].y -= ny * pull;
+                        }
                     }
                 }
                 for (int i = 0; i < maxIslands; ++i)
@@ -245,19 +267,21 @@ namespace Atlas
                     if (island.members.empty())
                         continue;
                     const float x = island.centreX + force[(size_t)i].x
-                        + 0.06f * (island.anchorX - island.centreX);
+                        + 0.055f * (island.anchorX - island.centreX);
                     const float y = island.centreY + force[(size_t)i].y
-                        + 0.06f * (island.anchorY - island.centreY);
+                        + 0.055f * (island.anchorY - island.centreY);
                     const float bandStart = (float)island.region * 0.25f;
                     const float bandEnd = bandStart + 0.25f;
+                    // Max offset: +/- 3.5% in frequency, +/- 5.5% in attack.
+                    // Spectral region boundaries are never crossed.
                     island.centreX = juce::jlimit(
                         juce::jmax(bandStart + 0.024f,
-                                   island.anchorX - 0.025f),
+                                   island.anchorX - 0.035f),
                         juce::jmin(bandEnd - 0.024f,
-                                   island.anchorX + 0.025f), x);
+                                   island.anchorX + 0.035f), x);
                     island.centreY = juce::jlimit(
-                        juce::jmax(0.025f, island.anchorY - 0.04f),
-                        juce::jmin(0.975f, island.anchorY + 0.04f), y);
+                        juce::jmax(0.025f, island.anchorY - 0.055f),
+                        juce::jmin(0.975f, island.anchorY + 0.055f), y);
                 }
             }
 
@@ -305,7 +329,8 @@ namespace Atlas
                         island.centreX + dx);
                     rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
                                                  island.centreY + dy);
-                    rec.colourGroup = island.region; // fixed colour for island
+                    rec.colourGroup = island.region; // fixed spectral hue
+                    rec.attackShadeLevel = island.attackShadeLevel;
                 }
             }
             return true;
