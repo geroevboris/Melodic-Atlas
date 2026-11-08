@@ -101,14 +101,14 @@ namespace Atlas
                 g.drawHorizontalLine((int)((mapBottomY / 8.0f) * (float)r), 0.0f, w);
 
             // Quiet axis hints remain fixed while the star map zooms.
-            // Screen Y is inverted: longer sounds appear toward the top.
+            // Y represents initial attack: soft/slow at top, sharp/fast below.
             g.setColour(juce::Colour(0xff637384).withAlpha(0.65f));
             g.setFont(juce::Font(
                 juce::Font::getDefaultMonospacedFontName(),
                 9.0f, juce::Font::plain));
-            g.drawText("LONG", 5, 29, 56, 14,
+            g.drawText("SOFT", 5, 29, 56, 14,
                        juce::Justification::centredLeft, false);
-            g.drawText("SHORT", 5, (int)mapBottomY - 21, 56, 14,
+            g.drawText("SHARP", 5, (int)mapBottomY - 21, 56, 14,
                        juce::Justification::centredLeft, false);
             g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
                        juce::Justification::centredLeft, false);
