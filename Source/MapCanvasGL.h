@@ -2,6 +2,7 @@
 #include "SamplerEngine.h"
 #include "PercussionGate.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
@@ -26,6 +27,22 @@ namespace Atlas
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
             database = std::move(dbSnapshot);
+            for (auto& island : islandOverlays)
+                island = {};
+            if (database != nullptr)
+                for (const auto& rec : *database)
+                    if (rec.islandGroup >= 0 && rec.islandGroup < 18
+                        && rec.neuralMapValid)
+                    {
+                        auto& island = islandOverlays[(size_t)rec.islandGroup];
+                        ++island.count;
+                        island.minX = std::min(island.minX, rec.neuralMapX);
+                        island.minY = std::min(island.minY, rec.neuralMapY);
+                        island.maxX = std::max(island.maxX, rec.neuralMapX);
+                        island.maxY = std::max(island.maxY, rec.neuralMapY);
+                        if (island.colourGroup < 0)
+                            island.colourGroup = rec.colourGroup;
+                    }
             // Require complete coverage: a partial imported projection must
             // not mix neural and legacy coordinates on the same map.
             neuralMapActive = database != nullptr && !database->empty();
@@ -110,6 +127,7 @@ namespace Atlas
             if (database != nullptr)
             {
                 ensureVisibleSamples();
+                drawSoundIslands(g);
                 for (int i : visibleSampleIndices)
                 {
                     const auto& rec = (*database)[(size_t)i];
@@ -346,6 +364,54 @@ namespace Atlas
         }
 
     private:
+        void drawSoundIslands(juce::Graphics& g)
+        {
+            if (!neuralMapActive || database == nullptr)
+                return;
+            std::array<bool, 18> visible {};
+            for (int index : visibleSampleIndices)
+            {
+                const auto& rec = (*database)[(size_t)index];
+                if (rec.islandGroup >= 0 && rec.islandGroup < 18)
+                    visible[(size_t)rec.islandGroup] = true;
+            }
+            for (int id = 0; id < 18; ++id)
+            {
+                const auto& island = islandOverlays[(size_t)id];
+                if (!visible[(size_t)id] || island.count < 3)
+                    continue;
+
+                const auto a = mapToScreen(island.minX, island.minY);
+                const auto b = mapToScreen(island.maxX, island.maxY);
+                const float pad = std::max(9.0f, 13.0f * zoomFactor);
+                juce::Rectangle<float> extent(
+                    std::min(a.x, b.x) - pad,
+                    std::min(a.y, b.y) - pad,
+                    std::max(14.0f, std::abs(a.x - b.x) + 2.0f * pad),
+                    std::max(14.0f, std::abs(a.y - b.y) + 2.0f * pad));
+                // Rounded, soft island territory; each point remains the
+                // actual playable sample at its true projected coordinate.
+                SampleRecord display;
+                display.colourGroup = island.colourGroup;
+                const auto colour = MusicMath::getClapFamilyColour(display);
+                g.setColour(colour.withAlpha(0.045f));
+                g.fillEllipse(extent);
+                g.setColour(colour.withAlpha(0.32f));
+                g.drawEllipse(extent, 1.0f);
+                if (zoomFactor <= 2.0f && island.count >= 6)
+                {
+                    g.setColour(colour.withAlpha(0.78f));
+                    g.setFont(juce::Font(
+                        juce::Font::getDefaultMonospacedFontName(),
+                        8.5f, juce::Font::bold));
+                    g.drawText("ISLAND " + juce::String(id + 1),
+                        (int)extent.getX(), (int)extent.getY() - 12,
+                        (int)extent.getWidth(), 12,
+                        juce::Justification::centred, false);
+                }
+            }
+        }
+
         void drawTopOverlayAndZoomControls(juce::Graphics& g, float w)
         {
             const juce::Font monoSmall(
@@ -723,6 +789,14 @@ namespace Atlas
 
         // Recomputed only when data, filters, viewport size or zoom changes.
         // Panning and auditioning do not alter the visible representatives.
+        struct IslandOverlay
+        {
+            float minX = 1.0f, minY = 1.0f;
+            float maxX = 0.0f, maxY = 0.0f;
+            int count = 0;
+            int colourGroup = -1;
+        };
+        std::array<IslandOverlay, 18> islandOverlays {};
         bool neuralMapActive = false;
         mutable bool candidateOrderDirty = true;
         mutable std::vector<int> sortedCandidateIndices;
