@@ -703,47 +703,90 @@ namespace Atlas
             return ClusterGroup::Other;
         }
 
-        bool matchesCurrentFilter(const SampleRecord& rec) const
+        enum class FilterReason
         {
-            // A cached legacy entry may be present in the database for old
-            // projects/pad history, but must not appear on the melodic map.
-            if (rec.hiddenFromAtlas || PercussionGate::shouldExcludeFromAtlas(rec))
-                return false;
+            Match, Hidden, Percussion, OtherTab, NoTag,
+            OtherFamily, NoSubtype, OtherCharacter
+        };
 
-            // Only a validated instrument identity can satisfy instrument
-            // filters. Unidentified/legacy samples are still available under
-            // ALL as neutral points, not falsely labelled as synthesizers.
+        FilterReason getFilterReason(const SampleRecord& rec) const
+        {
+            if (rec.hiddenFromAtlas)
+                return FilterReason::Hidden;
+            if (PercussionGate::shouldExcludeFromAtlas(rec))
+                return FilterReason::Percussion;
+            if (rec.isLoop != showLoopsOnly)
+                return FilterReason::OtherTab;
+
             const bool identified =
                 rec.identityState == IdentityState::Identified
                 && (int)rec.identityCluster >= 0
                 && (int)rec.identityCluster < 7;
-            const int cIdx = identified ? (int)rec.identityCluster : 7;
-
             if (activeClustersMask != 0)
             {
-                if (cIdx == 7 || (activeClustersMask & (1u << cIdx)) == 0)
-                    return false;
-
-                uint32_t reqClusterSub = clusterSubMasks[(size_t)cIdx];
-                if (reqClusterSub != 0 && (rec.subMask & reqClusterSub) == 0)
-                    return false;
+                if (!identified)
+                    return FilterReason::NoTag;
+                const int category = (int)rec.identityCluster;
+                if ((activeClustersMask & (1u << category)) == 0)
+                    return FilterReason::OtherFamily;
+                const uint32_t required = clusterSubMasks[(size_t)category];
+                if (required != 0 && (rec.subMask & required) == 0)
+                    return FilterReason::NoSubtype;
             }
-
             if (activeMoodMask != 0)
             {
-                // Category selection ORs instrument groups; character tags
-                // independently intersect with those groups (AND).
-                // Unrescanned legacy cache entries retain the old mood tags.
                 const uint32_t tags = rec.acoustic.valid
                     ? rec.characterMask : rec.subMask;
-                const uint32_t matched = tags & activeMoodMask;
-                // Strict intersection: every selected quality must match.
-                // An empty map is an intentional and meaningful result.
-                if (matched != activeMoodMask)
-                    return false;
+                if ((tags & activeMoodMask) != activeMoodMask)
+                    return FilterReason::OtherCharacter;
             }
+            return FilterReason::Match;
+        }
 
-            return true;
+        bool matchesCurrentFilter(const SampleRecord& rec) const
+        {
+            return getFilterReason(rec) == FilterReason::Match;
+        }
+
+        static juce::String explainFilterReason(FilterReason reason)
+        {
+            switch (reason)
+            {
+                case FilterReason::Hidden: return "hidden manually";
+                case FilterReason::Percussion: return "percussion excluded";
+                case FilterReason::OtherTab: return "other One-shot/Loop tab";
+                case FilterReason::NoTag: return "no confirmed instrument tag";
+                case FilterReason::OtherFamily: return "different instrument family";
+                case FilterReason::NoSubtype: return "subtype not tagged";
+                case FilterReason::OtherCharacter: return "character tag mismatch";
+                default: return {};
+            }
+        }
+
+        static juce::String instrumentTagDescription(const SampleRecord& rec)
+        {
+            const bool identified = rec.identityState == IdentityState::Identified
+                && (int)rec.identityCluster >= 0
+                && (int)rec.identityCluster < 7;
+            if (!identified)
+            {
+                if (rec.identityState == IdentityState::Ambiguous)
+                    return "UNCONFIRMED INSTRUMENT";
+                return "NO INSTRUMENT TAG";
+            }
+            juce::String text = MusicMath::getClusterName(rec.identityCluster);
+            const auto options = MusicMath::getSubgroupsForCluster(
+                rec.identityCluster);
+            for (size_t i = 1; i < options.size(); ++i)
+                if ((rec.subMask & options[i].flagBit) != 0)
+                {
+                    text += "/" + options[i].shortName;
+                    break;
+                }
+            text += rec.identityOrigin == 2 ? " [USER]"
+                : rec.identityOrigin == 1 ? " [CLAP MATCH]"
+                : " [NAME/FOLDER]";
+            return text;
         }
 
         juce::Point<float> effectiveMapCoordinates(const SampleRecord& rec) const
