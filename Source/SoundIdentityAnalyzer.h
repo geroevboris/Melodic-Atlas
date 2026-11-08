@@ -120,17 +120,20 @@ namespace Atlas
         {
             // Exact tokens, not substring matching: e.g. "ipad" should not
             // trigger a synth pad and "ambassador" must not become bass.
-            if (token == "piano" || token == "rhodes" ||
+            if (token == "piano" || token == "pianos" || token == "rhodes" ||
                 token == "wurli" || token == "wurlitzer" ||
                 token == "organ" || token == "clav" ||
                 token == "harpsichord" || token == "marimba" ||
                 token == "kalimba" || token == "vibraphone" ||
                 token == "xylophone" || token == "celesta" ||
                 token == "glock" || token == "mallet" ||
-                token == "keys" || token == "epiano")
+                token == "keys" || token == "keyboards" || token == "epiano")
                 return (int)ClusterGroup::Keys;
 
-            if (token == "synth" || token == "synthesizer" ||
+            if (token == "synth" || token == "synths" || token == "pads" ||
+                token == "pad" || token == "lead" || token == "leads" ||
+                token == "arp" || token == "arpeggio" ||
+                token == "synthesizers" || token == "synthesizer" ||
                 token == "synthesiser" || token == "juno" ||
                 token == "serum" || token == "prophet" ||
                 token == "modular" || token == "oscillator" ||
@@ -138,36 +141,40 @@ namespace Atlas
                 token == "analogue")
                 return (int)ClusterGroup::Synth;
 
-            if (token == "bass" || token == "subbass" ||
+            if (token == "bass" || token == "basses" || token == "subbass" ||
                 token == "reese" || token == "808" ||
                 token == "contrabass")
                 return (int)ClusterGroup::Bass;
 
             if (token == "vox" || token == "vocal" ||
-                token == "vocals" || token == "voice" ||
+                token == "vocals" || token == "voice" || token == "voices" ||
                 token == "choir" || token == "chant" ||
                 token == "acapella" || token == "acappella" ||
                 token == "speech" || token == "singer")
                 return (int)ClusterGroup::Vocal;
 
-            if (token == "strings" || token == "string" ||
+            if (token == "strings" || token == "violins" || token == "string" ||
                 token == "violin" || token == "viola" ||
                 token == "cello" || token == "orchestral" ||
                 token == "orchestra" || token == "brass" ||
                 token == "trumpet" || token == "trombone" ||
+                token == "tuba" || token == "flugel" || token == "frenchhorn" ||
                 token == "sax" || token == "saxophone" ||
                 token == "flute" || token == "oboe" ||
                 token == "clarinet" || token == "horn" ||
-                token == "woodwind" || token == "winds")
+                token == "woodwind" || token == "woodwinds" ||
+                token == "bassoon" || token == "piccolo" ||
+                token == "recorder" || token == "duduk" ||
+                token == "winds")
                 return (int)ClusterGroup::Strings;
 
-            if (token == "guitar" || token == "gtr" ||
+            if (token == "guitar" || token == "guitars" || token == "gtr" ||
                 token == "ukulele" || token == "banjo" ||
                 token == "mandolin" || token == "harp" ||
                 token == "sitar" || token == "koto")
                 return (int)ClusterGroup::Guitar;
 
-            if (token == "fx" || token == "sfx" ||
+            if (token == "fx" || token == "effects" || token == "sfx" ||
                 token == "riser" || token == "uplifter" ||
                 token == "downlifter" || token == "whoosh" ||
                 token == "sweep" || token == "foley" ||
