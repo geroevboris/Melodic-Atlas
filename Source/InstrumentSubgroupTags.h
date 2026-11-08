@@ -10,6 +10,16 @@ namespace Atlas
     {
         static void evaluate(const juce::File& file, SampleRecord& rec)
         {
+            // Reruns after identity refinement must discard subtype guesses
+            // belonging to the previous instrument family.
+            constexpr uint32_t instrumentMask =
+                Sub_StringsSection | Sub_Brass | Sub_Woodwind
+                | Sub_Piano | Sub_ElectricPiano | Sub_Organ | Sub_Mallet
+                | Sub_Arp | Sub_ElectricBass | Sub_SynthBass
+                | Sub_AcousticBass | Sub_AcousticGuitar
+                | Sub_ElectricGuitar | Sub_ProcessedGuitar
+                | Sub_VocalChops | Sub_Choir | Sub_VocalSinging | Sub_Atmos;
+            rec.subMask &= ~instrumentMask;
             juce::StringArray words;
             const auto append = [&words](const juce::String& text)
             {
