@@ -16,10 +16,23 @@ def load(name):
     spec.loader.exec_module(module)
     return module
 
+def encode_juce_memory_block(raw):
+    # Independent reference encoder following JUCE getBitRange(i*6, 6).
+    alphabet = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+    symbols = []
+    for bit in range(0, len(raw)*8, 6):
+        number = 0
+        for offset in range(6):
+            index = bit+offset
+            if index < len(raw)*8:
+                number |= ((raw[index//8] >> (index%8)) & 1) << offset
+        symbols.append(alphabet[number])
+    return str(len(raw)) + "." + "".join(symbols)
+
 class ClapValidationTests(unittest.TestCase):
     def test_cached_native_vector_read(self):
         module = load("clap_zero_shot_experiment")
-        blob = base64.b64encode(struct.pack("<512f", *([0.03125] * 512))).decode()
+        blob = encode_juce_memory_block(struct.pack("<512f", *([0.03125] * 512)))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sample.xml"
             path.write_text(
@@ -32,6 +45,17 @@ class ClapValidationTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(len(records[0][1]), 512)
             self.assertEqual(records[0][1][0], 0.03125)
+
+    def test_juce_codec_roundtrip_for_2048_bytes(self):
+        module = load("clap_zero_shot_experiment")
+        data = bytes((n*29 + n//11) % 256 for n in range(2048))
+        encoded = encode_juce_memory_block(data)
+        self.assertTrue(encoded.startswith("2048."))
+        self.assertEqual(module.decode_juce_memory_block(encoded), data)
+        with self.assertRaises(ValueError):
+            module.decode_juce_memory_block(encoded[:-1])
+        with self.assertRaises(ValueError):
+            module.decode_juce_memory_block("2047." + encoded.split(".",1)[1])
 
     def test_blind_score_and_coverage(self):
         module = load("evaluate_clap_blind")
