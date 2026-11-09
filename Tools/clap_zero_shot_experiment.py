@@ -190,6 +190,10 @@ def main():
         import soundfile as sf
         from scipy.signal import resample_poly
         from transformers import ClapFeatureExtractor
+        # macOS 12 MPS is missing upsample_bicubic2d used by the CLAP audio
+        # encoder; text embeddings above can still be computed with MPS.
+        # Use CPU ONLY for the small reference-audio parity test.
+        model = model.to("cpu").eval()
         extractor = ClapFeatureExtractor.from_pretrained(MODEL_ID)
         for path, cached in entries[:args.verify_native]:
             try:
@@ -201,13 +205,19 @@ def main():
                     y = resample_poly(y, 48000//d, rate//d).astype(np.float32)
                 features = extractor([y], sampling_rate=48000, return_tensors="pt")
                 with torch.inference_mode():
-                    official = model.get_audio_features(**{k: v.to(device) for k,v in features.items()})
+                    official = model.get_audio_features(**{k: v.to("cpu") for k,v in features.items()})
                 official = official.detach().float().cpu().numpy()[0]
                 official /= max(float(np.linalg.norm(official)), 1e-12)
                 comparison.append({"file": path, "native_vs_hf_cosine": float(source_embeddings[[p for p,_ in entries].index(path)] @ official)})
             except Exception as exc:
                 comparison.append({"file": path, "error": repr(exc)})
         (args.output / "native_vs_official.json").write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+        successful = [item for item in comparison if "native_vs_hf_cosine" in item]
+        if not successful:
+            raise RuntimeError(
+                "Native-to-official CLAP verification failed for every file; "
+                "see native_vs_official.json. No encoder parity conclusion can be drawn."
+            )
 
     summary = {"version":"8M-experimental", "cache_records":total,
                "valid_native_embeddings":len(entries), "device":device,
