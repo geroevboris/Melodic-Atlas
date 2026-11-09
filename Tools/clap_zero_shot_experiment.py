@@ -60,6 +60,36 @@ PROMPTS = {
  "DrumLoop": ("Drums", ["a recording of a percussion drum loop"])
 }
 
+# JUCE MemoryBlock::toBase64Encoding is NOT RFC-4648 Base64.
+# The payload is "<decimal byte size>.<6-bit symbols>", where symbols
+# encode successive little-endian bit ranges. See JUCE juce_MemoryBlock.cpp.
+JUCE_RADIX64 = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+
+def decode_juce_memory_block(value, expected_size=512*4):
+    if not isinstance(value, str):
+        raise ValueError("JUCE encoded memory block must be text")
+    prefix, sep, symbols = value.partition(".")
+    if sep != "." or not prefix.isdecimal():
+        raise ValueError("JUCE memory block missing length prefix")
+    size = int(prefix)
+    if size != expected_size:
+        raise ValueError(f"Unexpected JUCE memory block size: {size}")
+    expected_symbols = (size*8+5)//6
+    if len(symbols) != expected_symbols:
+        raise ValueError("JUCE memory block symbol count mismatch")
+    result = bytearray(size)
+    for i, symbol in enumerate(symbols):
+        v = JUCE_RADIX64.find(symbol)
+        if v < 0:
+            raise ValueError("Invalid JUCE radix64 symbol")
+        bit = i*6
+        byte = bit // 8
+        offset = bit % 8
+        result[byte] |= (v << offset) & 0xff
+        if byte+1 < size:
+            result[byte+1] |= (v >> (8-offset)) & 0xff
+    return bytes(result)
+
 def native_vectors(path):
     """Extract exactly the 512 native ONNX floats already cached by JUCE."""
     result = []
@@ -72,7 +102,7 @@ def native_vectors(path):
         if not text:
             continue
         try:
-            raw = base64.b64decode(text, validate=True)
+            raw = decode_juce_memory_block(text)
             if len(raw) != 512 * 4:
                 continue
             vec = struct.unpack("<512f", raw)
