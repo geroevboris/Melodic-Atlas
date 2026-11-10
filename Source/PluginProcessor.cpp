@@ -846,6 +846,18 @@ void MelodicAtlasAudioProcessor::run()
     folderToScan.findChildFiles(
         audioFiles, juce::File::findFiles, true, "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
 
+    // Lightweight duration check: opening a JUCE format reader reads metadata,
+    // not the waveform. Short files do not reach native CLAP inference.
+    const auto hasAtlasDuration = [this](const juce::File& file) -> bool
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader(
+            formatManager.createReaderFor(file));
+        if (reader == nullptr || reader->sampleRate <= 0.0)
+            return false;
+        const double duration = (double)reader->lengthInSamples / reader->sampleRate;
+        return Atlas::AtlasDurationPolicy::isEligible(duration);
+    };
+
     std::vector<Atlas::SampleRecord> newRecords;
     const int total = audioFiles.size();
     newRecords.reserve((size_t)std::min(total, 8000));
@@ -918,18 +930,6 @@ void MelodicAtlasAudioProcessor::run()
 #endif
 
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
-    // Lightweight duration check: opening a JUCE format reader reads metadata,
-    // not the waveform. Short files do not reach native CLAP inference.
-    const auto hasAtlasDuration = [this](const juce::File& file) -> bool
-    {
-        std::unique_ptr<juce::AudioFormatReader> reader(
-            formatManager.createReaderFor(file));
-        if (reader == nullptr || reader->sampleRate <= 0.0)
-            return false;
-        const double duration = (double)reader->lengthInSamples / reader->sampleRate;
-        return Atlas::AtlasDurationPolicy::isEligible(duration);
-    };
-
     // Explicitly named drum files are excluded from the displayed atlas,
     // but a few make valuable CLAP rejection exemplars. One percussive pack
     // cannot monopolize the reference bank.
