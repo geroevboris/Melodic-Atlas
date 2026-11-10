@@ -5,6 +5,7 @@
 #include "ClapColourClusters.h"
 #include "SoundIslandLayout.h"
 #include "ClapLibraryClassifier.h"
+#include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #include "ClapOnnxEncoder.h"
@@ -1049,6 +1050,9 @@ void MelodicAtlasAudioProcessor::run()
     {
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
         Atlas::ClapLibraryClassifier::apply(newRecords, drumExamples);
+        // Record all candidates (including CLAP-rejected ones) for held-out
+        // analysis before any additional deletion. Scanner thread only.
+        Atlas::PercussionAudit::write(newRecords, drumExamples, folderToScan);
         newRecords.erase(std::remove_if(newRecords.begin(), newRecords.end(),
             [](const Atlas::SampleRecord& rec) {
                 return Atlas::PercussionGate::shouldExcludeFromAtlas(rec);
