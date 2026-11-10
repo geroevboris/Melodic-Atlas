@@ -28,6 +28,8 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_duration_policy.cpp -o /tmp/atlas-duration-test
           /tmp/atlas-duration-test
+      - name: Test explicit drum-loop filename recognition
+        run: python -m unittest discover -s Tools -p 'test_drum_naming_8p.py' -v
 
   build:
     strategy:
