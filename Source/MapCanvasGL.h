@@ -1,6 +1,7 @@
 #pragma once
 #include "SamplerEngine.h"
 #include "PercussionGate.h"
+#include "AtlasDurationPolicy.h"
 #include "SoundIslandLayout.h"
 #include <algorithm>
 #include <array>
@@ -678,7 +679,9 @@ namespace Atlas
         {
             // A cached legacy entry may be present in the database for old
             // projects/pad history, but must not appear on the melodic map.
-            if (rec.hiddenFromAtlas || PercussionGate::shouldExcludeFromAtlas(rec))
+            if (rec.hiddenFromAtlas
+                || !AtlasDurationPolicy::isEligible(rec.durationSec)
+                || PercussionGate::shouldExcludeFromAtlas(rec))
                 return false;
 
             // Only a validated instrument identity can satisfy instrument
