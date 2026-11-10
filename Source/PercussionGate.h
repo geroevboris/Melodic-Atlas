@@ -49,7 +49,15 @@ namespace Atlas
                 "drumfill", "drum_fill", "drum fill",
                 "perc_loop", "perc-loop", "percussion_loop",
                 "shakerloop", "claploop", "snareloop",
-                "hihatloop", "hatloop", "kickloop"
+                "hihatloop", "hatloop", "kickloop",
+                // Frequently used full-loop / abbreviated drum labels that
+                // the token-only matcher misses (e.g. FGPercs, Cng Loop).
+                // Do NOT match generic "rhythm", "pattern", "groove" or
+                // "beat" — melodic loops often have those names.
+                "percloop", "perc loop", "percussionloop",
+                "percs", "beats", "drums", "drumroll",
+                "cng loop", "cng_loop", "cng-loop",
+                "hhsd loop", "hhsd_loop", "beat fill", "beat_fill"
             };
             for (const auto* token : explicitPatterns)
                 if (name.contains(token))
