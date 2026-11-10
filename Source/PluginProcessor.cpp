@@ -5,6 +5,7 @@
 #include "ClapColourClusters.h"
 #include "SoundIslandLayout.h"
 #include "ClapLibraryClassifier.h"
+#include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
 #include "ClapOnnxEncoder.h"
 #include "NativeClapProjection.h"
@@ -917,6 +918,18 @@ void MelodicAtlasAudioProcessor::run()
 #endif
 
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
+    // Lightweight duration check: opening a JUCE format reader reads metadata,
+    // not the waveform. Short files do not reach native CLAP inference.
+    const auto hasAtlasDuration = [this](const juce::File& file) -> bool
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader(
+            formatManager.createReaderFor(file));
+        if (reader == nullptr || reader->sampleRate <= 0.0)
+            return false;
+        const double duration = (double)reader->lengthInSamples / reader->sampleRate;
+        return Atlas::AtlasDurationPolicy::isEligible(duration);
+    };
+
     // Explicitly named drum files are excluded from the displayed atlas,
     // but a few make valuable CLAP rejection exemplars. One percussive pack
     // cannot monopolize the reference bank.
@@ -927,7 +940,8 @@ void MelodicAtlasAudioProcessor::run()
         std::vector<juce::File> referenceFiles;
         for (const auto& file : audioFiles)
         {
-            if (!Atlas::PercussionGate::isExplicitDrumFile(file))
+            if (!hasAtlasDuration(file)
+                || !Atlas::PercussionGate::isExplicitDrumFile(file))
                 continue;
             const auto name = file.getFileNameWithoutExtension().toLowerCase();
             const int kind = name.contains("kick") ? 0
@@ -963,6 +977,9 @@ void MelodicAtlasAudioProcessor::run()
         scanProgress.store((float)(i + 1) / (float)std::max(1, total));
 
         const auto& file = audioFiles.getReference(i);
+        // Never scan / embed anything shorter than two seconds.
+        if (!hasAtlasDuration(file))
+            continue;
         // Skip unambiguous drum-labeled files before expensive audio decode.
         if (Atlas::PercussionGate::isExplicitDrumFile(file))
             continue;
