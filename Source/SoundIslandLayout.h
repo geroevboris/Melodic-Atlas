@@ -16,7 +16,7 @@ namespace Atlas
     {
         static constexpr int similarityIslands = 18;
         static constexpr int maxIslands = similarityIslands * 4;
-        static constexpr int geometryVersion = 7;
+        static constexpr int geometryVersion = 8;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
@@ -330,7 +330,16 @@ namespace Atlas
                     rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
                                                  island.centreY + dy);
                     rec.colourGroup = island.region; // fixed spectral hue
-                    rec.attackShadeLevel = island.attackShadeLevel;
+                    // Marker shade must describe this sound, not the island median.
+                    // Island fill still uses the representative attack shade.
+                    if (rec.acoustic.attackMeasured)
+                    {
+                        const float individualAttack = attackPosition(rec);
+                        rec.attackShadeLevel = individualAttack >= 0.65f ? 0
+                            : individualAttack <= 0.35f ? 2 : 1;
+                    }
+                    else
+                        rec.attackShadeLevel = 1;
                 }
             }
             return true;
