@@ -42,12 +42,21 @@ int main()
     assert(n.isSequence);
 
     std::vector<float> sustained((size_t)(sr * 4.0));
+    // A sustained 55-Hz bass causes low-frequency RMS aliasing when
+    // event energy is sampled every 10 ms. All steady tones must be
+    // non-sequences regardless of register.
+    for (double freq : {55.0, 110.0, 130.81, 440.0})
+    {
+        for (size_t i = 0; i < sustained.size(); ++i)
+            sustained[i] = 0.5f * (float)std::sin(
+                2.0 * pi * freq * i / sr);
+        const auto tone = Atlas::RhythmSequenceEvidence9F::analyse(
+            sustained.data(), (int)sustained.size(), sr);
+        assert(!tone.isSequence);
+    }
     for (size_t i = 0; i < sustained.size(); ++i)
         sustained[i] = 0.5f * (float)std::sin(
             2.0 * pi * 110.0 * i / sr);
-    auto s = Atlas::RhythmSequenceEvidence9F::analyse(
-        sustained.data(), (int)sustained.size(), sr);
-    assert(!s.isSequence);
 
     for (size_t i = 0; i < sustained.size(); ++i)
         sustained[i] *= (float)std::exp(-4.0 * i / sr);
