@@ -218,6 +218,8 @@ namespace Atlas
         float highBandRatio = 0.2f;
         float mapX = 0.5f;
         float mapY = 0.5f;
+        // Rebuilt by map geometry; does NOT change source-family identity.
+        bool musicalBassRegisterHint = false;
         // Optional normalized Pure CLAP / UMAP Balanced coordinates.
         // Never overwrite the legacy map; an incomplete ML projection is
         // not mixed with DSP geometry.
