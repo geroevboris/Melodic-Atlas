@@ -7,6 +7,7 @@
 #include "ClapLibraryClassifier.h"
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
+#include "ClapDrumLoopGate9E.h"
 #include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
@@ -734,6 +735,10 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
                 (float)item.getProperty("char" + juce::String((int)feature), 0.0f));
 
         applyAtlasOverrides(rec);
+        // 9E applies the conservative, validated CLAP drum-loop gate
+        // to existing cached vectors: no Refresh or re-scan required.
+        // The cached source WAV, pads and manual loop overrides stay intact.
+        Atlas::ClapDrumLoopGate9E::apply(rec);
         loaded.push_back(std::move(rec));
     }
 
@@ -1052,6 +1057,12 @@ void MelodicAtlasAudioProcessor::run()
     {
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
         Atlas::ClapLibraryClassifier::apply(newRecords, drumExamples);
+        // 9E is a real production gate, unlike the passive 9D report.
+        // Apply only after CLAP vectors and old source identities are ready.
+        // This changes drum-loop exclusion but does not relabel melodic
+        // instruments or change One-shot/Loop decisions.
+        for (auto& record : newRecords)
+            Atlas::ClapDrumLoopGate9E::apply(record);
         // Record all candidates (including CLAP-rejected ones) for held-out
         // analysis before any additional deletion. Scanner thread only.
         Atlas::PercussionAudit::write(newRecords, drumExamples, folderToScan);
