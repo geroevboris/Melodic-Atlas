@@ -5,6 +5,8 @@
 #include "ClapColourClusters.h"
 #include "SoundIslandLayout.h"
 #include "ClapLibraryClassifier.h"
+// Compile-validate the optional 9C scorer. No runtime classification switch.
+#include "ClapTextPrototypeCandidate9C.h"
 #include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
