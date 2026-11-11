@@ -326,6 +326,28 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
                && (int)record.identityCluster>=0
                && (int)record.identityCluster<7)
                 ++available[(size_t)(int)record.identityCluster];
+    // A previously selected dynamic subtype can disappear after a
+    // library rescan. Clear that selection instead of leaving a blank
+    // map even when the parent instrument category has valid sounds.
+    for(int c=0;c<7;++c)
+    {
+        auto& selected=selectedDynamicSubgroups[(size_t)c];
+        if(selected.isEmpty())continue;
+        bool exists=false;
+        if(snapshot)
+            for(const auto& rec:*snapshot)
+                if((int)rec.identityCluster==c
+                    && rec.dynamicSubgroup==selected
+                    && !rec.hiddenFromAtlas
+                    && Atlas::AtlasDurationPolicy::isEligible(rec.durationSec)
+                    && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
+                {
+                    exists=true;
+                    break;
+                }
+        if(!exists)selected.clear();
+    }
+
     // A persisted selection for an absent category must not create
     // an apparently broken empty map after a library change.
     uint32_t hasContentMask=0;
