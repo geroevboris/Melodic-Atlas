@@ -527,7 +527,8 @@ namespace Atlas
             g.setColour(juce::Colour(0xe60f1319));
             g.fillRect(1.0f, 1.0f, w - 2.0f, 26.0f);
 
-            // Stable acoustic spectrum, low to high from left to right.
+            // Stable musical register, low to high from left to right.
+            // Colours no longer encode attack or per-sound lightness.
             static constexpr const char* names[] = {
                 "LOW", "LOW-MID", "HIGH-MID", "HIGH"
             };
@@ -542,25 +543,6 @@ namespace Atlas
                 g.drawText(names[c], (int)lx, 4, 59, 18,
                            juce::Justification::centredLeft, false);
                 lx += 72.0f;
-            }
-            if (w >= 720.0f)
-            {
-                // Three lightness steps of the same spectral colour:
-                // darker = fast/sharp attack, lighter = slow/soft attack.
-                float hintX = lx + 8.0f;
-                g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText("ATTACK", (int)hintX, 4, 56, 18,
-                           juce::Justification::centredLeft, false);
-                hintX += 52.0f;
-                for (int shade = 0; shade < 3; ++shade)
-                {
-                    g.setColour(MusicMath::getSpectralRegionColour(2, shade));
-                    g.fillEllipse(hintX, 10.0f, 7.0f, 7.0f);
-                    hintX += 11.0f;
-                }
-                g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText("FAST  >  SOFT", (int)hintX, 4, 102, 18,
-                           juce::Justification::centredLeft, false);
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
