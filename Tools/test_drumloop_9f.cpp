@@ -11,8 +11,8 @@ int main()
     DrumLoop9FPolicy::Evidence eq;
     eq.clapDrumsTop = eq.clapSubtypeIsDrumSequence = true;
     eq.rhythmicSequence = true;
-    eq.rhythmicEventCount = 14;
-    eq.rhythmicSpanSeconds = 4.87f;
+    eq.rhythmicEventCount = 11;
+    eq.rhythmicSpanSeconds = 4.33f;
     eq.durationSeconds = 5.05263;
     eq.drumCosine = 0.415274f;
     eq.bestMelodicCosine = 0.244933f;
@@ -22,8 +22,8 @@ int main()
     assert(DrumLoop9FPolicy::shouldExclude(eq));
 
     auto anonymous = eq;
-    anonymous.rhythmicEventCount = 20;
-    anonymous.rhythmicSpanSeconds = 4.63f;
+    anonymous.rhythmicEventCount = 15;
+    anonymous.rhythmicSpanSeconds = 4.67f;
     anonymous.durationSeconds = 5.16567;
     anonymous.drumCosine = 0.324555f;
     anonymous.bestMelodicCosine = 0.235654f;
@@ -32,8 +32,8 @@ int main()
     assert(DrumLoop9FPolicy::shouldExclude(anonymous));
 
     auto crunchy = eq;
-    crunchy.rhythmicEventCount = 25; // first 6 seconds of 9.6s file
-    crunchy.rhythmicSpanSeconds = 5.4f;
+    crunchy.rhythmicEventCount = 22; // first 6 seconds of 9.6s file
+    crunchy.rhythmicSpanSeconds = 5.87f;
     crunchy.durationSeconds = 9.6;
     crunchy.drumCosine = 0.234748f;
     crunchy.bestMelodicCosine = 0.066413f;
