@@ -43,8 +43,7 @@ namespace Atlas
             {
                 return std::isfinite(value) ? juce::String(value, 7) : "";
             };
-            juce::StringArray header;
-            header.addArray({ "relative_path", "scan_stage",
+            juce::StringArray header { "relative_path", "scan_stage",
                 "duration_s", "active_duration_s",
                 "legacy_is_loop", "loop_override", "loop_version",
                 "tempo_evidence", "tempo_evidence_strength",
@@ -60,7 +59,7 @@ namespace Atlas
                 "shadow_best_melodic_cosine", "shadow_drums_cosine",
                 "shadow_drums_minus_melodic", "shadow_drums_top1",
                 "old_vs_shadow_family_disagree",
-                "old_vs_shadow_drums_disagree" });
+                "old_vs_shadow_drums_disagree" };
             for (int i = 0; i < ClapTextBank9C::familyCount; ++i)
                 header.add("cosine_" + juce::String(
                     ClapTextBank9C::familyNames[i]));
