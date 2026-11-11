@@ -7,6 +7,7 @@
 #include "SoundIdentityAnalyzer.h"
 #include "PitchRhythmEvidence.h"
 #include "LoopStructureAnalyzer.h"
+#include "RhythmSequenceEvidence9F.h"
 #include "InstrumentSubgroupTags.h"
 
 namespace Atlas
@@ -116,9 +117,14 @@ namespace Atlas
             outRecord.durationSec = duration;
             outRecord.effectiveDurationSec = activeSeconds;
             outRecord.durationAnalysisVersion = 1;
-            outRecord.isLoop = LoopStructureAnalyzer::isLoop(
+            const auto rhythm = RhythmSequenceEvidence9F::analyse(
+                downmix.data(), maxSamplesToRead, sr);
+            outRecord.rhythmicEventCount = rhythm.onsetCount;
+            outRecord.rhythmicSpanSeconds = rhythm.onsetSpanSeconds;
+            outRecord.rhythmicSequence = rhythm.isSequence;
+            outRecord.isLoop = rhythm.isSequence || LoopStructureAnalyzer::isLoop(
                 file, downmix.data(), maxSamplesToRead, sr, duration);
-            outRecord.loopAnalysisVersion = 3;
+            outRecord.loopAnalysisVersion = 4;
             outRecord.rootMidiNote = detectedMidi;
             outRecord.pitchClass = ((detectedMidi % 12) + 12) % 12;
             outRecord.pitchConfidence = confidence;
@@ -222,9 +228,14 @@ namespace Atlas
                 const float right = r && std::isfinite(r[i]) ? r[i] : left;
                 mono[(size_t)i] = (left + right) * 0.5f;
             }
-            record.isLoop = LoopStructureAnalyzer::isLoop(
+            const auto rhythm = RhythmSequenceEvidence9F::analyse(
+                mono.data(), frames, sr);
+            record.rhythmicEventCount = rhythm.onsetCount;
+            record.rhythmicSpanSeconds = rhythm.onsetSpanSeconds;
+            record.rhythmicSequence = rhythm.isSequence;
+            record.isLoop = rhythm.isSequence || LoopStructureAnalyzer::isLoop(
                 file, mono.data(), frames, sr, seconds);
-            record.loopAnalysisVersion = 3;
+            record.loopAnalysisVersion = 4;
             if (record.loopUserOverride >= 0)
                 record.isLoop = record.loopUserOverride == 1;
             return true;
