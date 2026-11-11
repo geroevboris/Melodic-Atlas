@@ -46,3 +46,23 @@ Inputs: saved `Atlas_Neural_Bakeoff_04_FIXED/clap_subtype_scores.csv`, the previ
 6. Update OneShot/Loop and 2D musical-register coordinates separately using listening-grounded tests. Do not mix shading/colour changes into this step.
 
 No model, runtime code, or filter thresholds are modified in this commit.
+
+## Verified incoming Mac files (11 Nov 2026)
+
+The user supplied `clap_text_bank.json` and `clap_subtype_scores(1).csv` from their Mac. Verification against `summary(4).json` and the 1,373-record cached native audio embeddings:
+
+- Text bank SHA-256: `b0c37d1246dfab6974e14d49324b216d6b360a5ace45e884b518c2e77a5ab6ce`; **exactly matches** the Mac summary.
+- 52 text prompts, 34 subtypes, 512 features per prompt, one `laion/clap-htsat-unfused` checkpoint.
+- Recomputed every prompt similarity directly from 1,373 saved audio embeddings and the supplied bank. Maximum difference from CSV **6.19×10⁻⁷**; all 1,373 top subtype and family predictions match the CSV.
+- Previous baseline CSV and fresh Mac CSV agree on **all** 1,373 top families and top subtypes; cosine differences <=2×10⁻⁶ (serialization rounding).
+- With hard >=2 s rule, 59/84 reviewed WAV are eligible and cached (13 are shorter; 12 unavailable from the prior cache, mainly explicitly named drums).
+- Among 50 definite yes/no percussion labels: top-1 Drums catches **7/9**, incorrectly labels **1/41** non-percussion as Drums. False positive is `140_001.wav` (Bass). Two missed percussion clips: `TT_MONOLITHIC.WAV`, `Cymatics - Organics - Chain on Plate 3.wav`.
+- Among 39 definite non-percussion audio clips with source labels, top-1 family matches an allowed label in **31/39**. Correct family appears among top two for **35/39** and top three for **37/39** (higher coverage also raises false category inclusions).
+- Independent offline `Winds` can be mapped from existing `Brass` and `Woodwind` subtypes: **4/4** labelled winds found in this reviewed set, and overall 31/39 remains unchanged.
+- Per-class positive label detection (multi-label truth, small samples): Keys 3/5, Synth 10/11, Bass 4/5, Vocal 4/4, Strings 4/4, Winds 4/4, Guitar 3/6, FX 3/5.
+- On the **old cached** 1,050 >=2 s records, 220 have top-1 Drums. Do **not** equate that with 220 confirmed drums or hide them automatically.
+- Direct top-1 source errors include two guitar->Rhodes, piano->guitar, sitar->violin, Foley FX->vocal, and robotaki Keys/Synth->vocal.
+
+These measurements verify **bank and CSV coherence**, not independently held-out model accuracy. Top-1 always produces a class even for very weak similarity and is **not** safe to ship as the sole production classifier. Numerical parity to official audio CLAP still has an outlier at ~0.849; raw cosine is NOT calibrated probability.
+
+**Next engineering implementation gate:** prepare a versioned, static/compact text-vector resource (no Python/transformers at runtime), an independent 8-family + separate Winds score table, independent percussion scores with explicit `Unknown`/`Uncertain`, audit mode and manual overrides; test on held-out sample packs and hard-negative long loops before enabling hard exclusions. Preserve old runtime as rollback, and do not mix changes to map geometry/colour/loop-structure into this step. No plugin source changed in this audit.
