@@ -13,6 +13,8 @@ namespace Atlas
     struct ClapTextScores9C
     {
         std::array<float, ClapTextBank9C::familyCount> familyCosines {};
+        // Scores of all 52 prompts, needed for content-driven subgroups.
+        std::array<float, ClapTextBank9C::promptCount> promptCosines {};
         std::array<int, ClapTextBank9C::familyCount> familyBestPrompt {};
         int topFamily = -1, secondFamily = -1, topPrompt = -1;
         float topCosine = -1.0f, secondCosine = -1.0f, margin = 0.0f;
@@ -21,6 +23,7 @@ namespace Atlas
         ClapTextScores9C()
         {
             familyCosines.fill(-1.0f);
+            promptCosines.fill(-1.0f);
             familyBestPrompt.fill(-1);
         }
     };
@@ -58,6 +61,7 @@ namespace Atlas
                     dot += (double)audio[(size_t)d] * proto[(size_t)d];
 
                 const float cosine = (float)dot * inverseNorm;
+                out.promptCosines[(size_t)p] = cosine;
                 if (cosine > out.familyCosines[(size_t)family])
                 {
                     out.familyCosines[(size_t)family] = cosine;
