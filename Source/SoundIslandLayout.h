@@ -8,74 +8,75 @@
 
 namespace Atlas
 {
-    // Four fixed spectral zones on X; measured initial attack on Y
-    // (soft/slow attack at the top, sharp/fast at the bottom).
-    // CLAP defines island membership and relative
-    // neighbour geometry, NOT the global axis positions.
+    // Four register zones on X; Y follows original CLAP/UMAP neighbourhood,
+    // never attack. CLAP similarity also defines island membership.
     struct SoundIslandLayout
     {
         static constexpr int similarityIslands = 18;
         static constexpr int maxIslands = similarityIslands * 4;
-        static constexpr int geometryVersion = 8;
+        static constexpr int geometryVersion = 9;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
+            // Primary axis = perceived musical register, NOT spectral
+            // brightness. Distorted bass retains a low fundamental even
+            // when its upper harmonics dominate the spectral centroid.
+            const bool verifiedBass = rec.identityState == IdentityState::Identified
+                && rec.identityCluster == ClusterGroup::Bass;
+
+            float spectralX = juce::jlimit(0.025f, 0.975f,
+                                          rec.spectralCentroidNorm);
             if (rec.acoustic.valid
                 && std::isfinite(rec.acoustic.spectralCentroidHz)
                 && rec.acoustic.spectralCentroidHz > 0.0f)
             {
-                // Log frequency and energy-weighting, not MIDI pitch:
-                // a harmonic bass can therefore be perceptually brighter
-                // than its fundamental note would suggest.
-                const float hz = juce::jlimit(90.0f, 9000.0f,
-                                               rec.acoustic.spectralCentroidHz);
-                const float logFreq = std::log(hz / 90.0f)
-                                    / std::log(9000.0f / 90.0f);
-                const float energyCorrection = 0.09f *
-                    (rec.acoustic.highBandRatio - rec.acoustic.lowBandRatio);
-                float acousticX = juce::jlimit(0.04f, 0.96f,
-                                              logFreq + energyCorrection);
-                // Spectral centroid alone pushes harmonically rich basses
-                // into HIGH-MID. Incorporate the measured fundamental only
-                // when multiple independent tonal windows agree.
-                if (rec.tonal.valid
-                    && rec.tonal.validWindowCount >= 2
-                    && rec.tonal.periodicity >= 0.65f
-                    && rec.tonal.pitchStability >= 0.58f
-                    && rec.tonal.estimatedMidi >= 24.0f
-                    && rec.tonal.estimatedMidi <= 96.0f)
-                {
-                    const float fundamental = 440.0f *
-                        std::pow(2.0f,
-                            (rec.tonal.estimatedMidi - 69.0f) / 12.0f);
-                    const float f0x = juce::jlimit(0.04f, 0.96f,
-                        std::log(std::max(45.0f, fundamental) / 90.0f)
-                            / std::log(9000.0f / 90.0f));
-                    // A bass with rich harmonics still has a low
-                    // fundamental; above middle C the spectral character
-                    // becomes progressively more important.
-                    const float fundamentalWeight =
-                        fundamental < 220.0f ? 0.77f
-                        : fundamental < 650.0f ? 0.58f : 0.32f;
-                    acousticX = (1.0f - fundamentalWeight) * acousticX
-                        + fundamentalWeight * f0x;
-                    if (fundamental < 165.0f)
-                        acousticX = std::min(acousticX, 0.232f);
-                    else if (fundamental < 420.0f)
-                        acousticX = std::min(acousticX, 0.470f);
-                }
-                // Strong low-band dominance is independent evidence that a
-                // sound belongs toward the left, even if its noisy/harmonic
-                // spectrum raises the centroid.
-                if (rec.acoustic.lowBandRatio >= 0.43f
-                    && rec.acoustic.highBandRatio < 0.27f)
-                    acousticX = std::min(acousticX, 0.232f);
-                else if (rec.acoustic.lowBandRatio >= 0.31f
-                         && rec.acoustic.highBandRatio < 0.24f)
-                    acousticX = std::min(acousticX, 0.475f);
-                return juce::jlimit(0.015f, 0.985f, acousticX);
+                const float hz = juce::jlimit(
+                    90.0f, 9000.0f, rec.acoustic.spectralCentroidHz);
+                spectralX = juce::jlimit(0.04f, 0.96f,
+                    std::log(hz / 90.0f)
+                    / std::log(9000.0f / 90.0f));
             }
-            return juce::jlimit(0.04f, 0.96f, rec.spectralCentroidNorm);
+
+            // The YIN analyzer already saves the median pitch across
+            // several windows. A moving bass phrase need not have a
+            // near-constant note to contribute meaningful register.
+            const bool hasF0 = rec.tonal.valid
+                && rec.tonal.validWindowCount >= 1
+                && rec.tonal.periodicity >= 0.58f
+                && std::isfinite(rec.tonal.estimatedMidi)
+                && rec.tonal.estimatedMidi >= 24.0f
+                && rec.tonal.estimatedMidi <= 96.0f;
+            if (hasF0)
+            {
+                const float hz = 440.0f * std::pow(
+                    2.0f, (rec.tonal.estimatedMidi - 69.0f) / 12.0f);
+                const float registerX = juce::jlimit(
+                    0.04f, 0.96f, std::log(std::max(45.0f, hz) / 45.0f)
+                    / std::log(2600.0f / 45.0f));
+                // Prefer the musical fundamental over timbral brightness.
+                spectralX = 0.82f * registerX + 0.18f * spectralX;
+            }
+            else if (rec.acoustic.valid)
+            {
+                // When f0 is absent, do not confuse harmonically-rich bass
+                // with treble purely because of a high centroid.
+                if (rec.acoustic.lowBandRatio >= 0.40f)
+                    spectralX = std::min(spectralX, 0.30f);
+                else if (rec.acoustic.lowBandRatio >= 0.28f
+                         && rec.acoustic.lowBandRatio
+                            > rec.acoustic.highBandRatio)
+                    spectralX = std::min(spectralX, 0.44f);
+            }
+
+            if (verifiedBass)
+            {
+                // Source identity outranks spectral centroid. Keep ALL
+                // confirmed basses in the left register, including Reese,
+                // Neurobass, and dynamically changing basslines.
+                spectralX = std::min(spectralX,
+                    hasF0 ? 0.235f : 0.20f);
+            }
+            return juce::jlimit(0.02f, 0.98f, spectralX);
         }
 
         static float attackPosition(const SampleRecord& rec)
@@ -141,9 +142,8 @@ namespace Atlas
                     || rec.islandGroup >= similarityIslands
                     || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
-                // A broad CLAP island may span an entire keyboard or many
-                // registers. Split its VISUAL territory by spectral region
-                // while retaining the original CLAP similarity assignment.
+                // Split a broad CLAP island by musical register for stable
+                // low-left to high-right navigation.
                 const int region = spectralRegion(frequencyPosition(rec));
                 rec.visualIslandGroup = rec.islandGroup * 4 + region;
                 // First upgrade from old caches has only rendered positions.
@@ -177,7 +177,8 @@ namespace Atlas
                 {
                     const auto& rec = records[index];
                     x.push_back(frequencyPosition(rec));
-                    y.push_back(attackPosition(rec));
+                    y.push_back(juce::jlimit(0.0f, 1.0f,
+                        rec.projectionY));
                     island.sourceX += rec.projectionX;
                     island.sourceY += rec.projectionY;
                 }
@@ -189,10 +190,9 @@ namespace Atlas
                 island.centreX = island.anchorX;
                 island.centreY = island.anchorY;
                 island.region = spectralRegion(island.anchorX);
-                // Higher screen Y means a faster/sharper onset.
-                // 3 discrete levels, avoiding random point-by-point colour.
-                island.attackShadeLevel = island.anchorY >= 0.65f ? 0
-                    : island.anchorY <= 0.35f ? 2 : 1;
+                // No attack shading: all points of one register hue have
+                // the same luminance and saturation.
+                island.attackShadeLevel = 1;
 
                 const float expected = (float)eligible / (float)active;
                 const float relative = count / std::max(1.0f, expected);
@@ -208,9 +208,9 @@ namespace Atlas
                 }
             }
 
-            // Compact groups while preserving meaningful acoustic axes.
-            // Nearby islands in the SAME frequency band and with similar
-            // attack character softly attract one another. Remote groups
+            // Compact groups while preserving register X and CLAP-neighbour
+            // Y. Nearby islands in the same register and UMAP neighbourhood
+            // softly attract one another. Remote groups
             // remain separate; collision forces prevent samples merging.
             // Attraction only affects island centres, never CLAP membership.
             for (int iteration = 0; iteration < 120 && active > 1; ++iteration)
@@ -250,8 +250,7 @@ namespace Atlas
                                  && std::abs(left.anchorX-right.anchorX) < 0.12f
                                  && std::abs(left.anchorY-right.anchorY) < 0.17f)
                         {
-                            // Gentle pull, capped to avoid collapsing distinct
-                            // islands or distorting the spectral/attack map.
+                            // Gentle pull without distorting CLAP neighbours.
                             const float pull = std::min(0.0024f,
                                 (dist-required) * 0.023f);
                             force[(size_t)a].x += nx * pull;
@@ -272,8 +271,7 @@ namespace Atlas
                         + 0.055f * (island.anchorY - island.centreY);
                     const float bandStart = (float)island.region * 0.25f;
                     const float bandEnd = bandStart + 0.25f;
-                    // Max offset: +/- 3.5% in frequency, +/- 5.5% in attack.
-                    // Spectral region boundaries are never crossed.
+                    // Register-region boundaries remain stable.
                     island.centreX = juce::jlimit(
                         juce::jmax(bandStart + 0.024f,
                                    island.anchorX - 0.035f),
@@ -309,13 +307,11 @@ namespace Atlas
                         dx = std::cos(angle) * r;
                         dy = std::sin(angle) * r;
                     }
-                    // Soft intra-island acoustic ordering: similar sounds
-                    // stay close in CLAP; bright sounds lean right and
-                    // slow-attack sounds upward without splitting the island.
+                    // Intra-island X respects musical register, while Y
+                    // stays determined solely by CLAP/UMAP neighbours.
                     dx += juce::jlimit(-0.045f, 0.045f,
                         0.45f * (frequencyPosition(rec) - island.anchorX));
-                    dy += juce::jlimit(-0.015f, 0.015f,
-                        0.15f * (attackPosition(rec) - island.anchorY));
+
                     const float len = std::sqrt(dx * dx + dy * dy);
                     const float maxR = island.radius * 0.93f;
                     if (len > maxR)
@@ -329,17 +325,8 @@ namespace Atlas
                         island.centreX + dx);
                     rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
                                                  island.centreY + dy);
-                    rec.colourGroup = island.region; // fixed spectral hue
-                    // Marker shade must describe this sound, not the island median.
-                    // Island fill still uses the representative attack shade.
-                    if (rec.acoustic.attackMeasured)
-                    {
-                        const float individualAttack = attackPosition(rec);
-                        rec.attackShadeLevel = individualAttack >= 0.65f ? 0
-                            : individualAttack <= 0.35f ? 2 : 1;
-                    }
-                    else
-                        rec.attackShadeLevel = 1;
+                    rec.colourGroup = island.region;
+                    rec.attackShadeLevel = 1;
                 }
             }
             return true;
