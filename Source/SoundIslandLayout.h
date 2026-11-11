@@ -1,5 +1,6 @@
 #pragma once
 #include "AtlasTypes.h"
+#include "ClapTextPrototypeCandidate9C.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,8 +22,9 @@ namespace Atlas
             // Primary axis = perceived musical register, NOT spectral
             // brightness. Distorted bass retains a low fundamental even
             // when its upper harmonics dominate the spectral centroid.
-            const bool verifiedBass = rec.identityState == IdentityState::Identified
-                && rec.identityCluster == ClusterGroup::Bass;
+            const bool verifiedBass = rec.musicalBassRegisterHint
+                || (rec.identityState == IdentityState::Identified
+                    && rec.identityCluster == ClusterGroup::Bass);
 
             float spectralX = juce::jlimit(0.025f, 0.975f,
                                           rec.spectralCentroidNorm);
@@ -142,6 +144,24 @@ namespace Atlas
                     || rec.islandGroup >= similarityIslands
                     || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
+                // Build a non-destructive bass register hint from source name
+                // or strong CLAP Bass evidence. This does NOT set instrument
+                // labels or cause exclusion. Avoid generic \"future bass\" genre.
+                const auto name = rec.file.getFileNameWithoutExtension().toLowerCase();
+                rec.musicalBassRegisterHint =
+                    name.contains("neurobass") || name.contains("reese")
+                    || name.contains("subbass") || name.contains("sub bass")
+                    || name.contains("bassloop") || name.contains("bass_loop")
+                    || name.contains("bass loop") || name.contains("_bass_");
+                if (!rec.musicalBassRegisterHint && rec.clapEmbeddingValid)
+                {
+                    const auto scores = ClapTextPrototypeCandidate9C::evaluate(
+                        rec.clapEmbedding);
+                    rec.musicalBassRegisterHint = scores.valid
+                        && scores.topFamily == 2
+                        && scores.topCosine >= 0.42f
+                        && scores.margin >= 0.065f;
+                }
                 // Split a broad CLAP island by musical register for stable
                 // low-left to high-right navigation.
                 const int region = spectralRegion(frequencyPosition(rec));
