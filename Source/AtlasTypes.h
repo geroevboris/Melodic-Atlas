@@ -417,7 +417,7 @@ namespace Atlas
                 case ClusterGroup::Keys:
                     return {
                         { "All Keys", "", Sub_None },
-                        { "Piano", "PIANO", Sub_Piano },
+                        { "Piano / E.Piano", "PIANO", Sub_Piano },
                         { "Electric Piano / Rhodes", "E.PNO", Sub_ElectricPiano },
                         { "Organ", "ORGAN", Sub_Organ },
                         { "Mallets / Bells", "MALLET", Sub_Mallet }
@@ -428,7 +428,8 @@ namespace Atlas
                         { "Pads", "PAD", Sub_Pad },
                         { "Leads", "LEAD", Sub_Lead },
                         { "Plucks", "PLUCK", Sub_Pluck },
-                        { "Arpeggios", "ARP", Sub_Arp }
+                        { "Arpeggios", "ARP", Sub_Arp },
+                        { "Synth Textures", "TEXT", Sub_Textural }
                     };
                 case ClusterGroup::Bass:
                     return {
@@ -456,7 +457,7 @@ namespace Atlas
                     return {
                         { "All Guitars", "", Sub_None },
                         { "Acoustic Guitar", "ACOUS", Sub_AcousticGuitar },
-                        { "Electric Guitar", "ELEC", Sub_ElectricGuitar },
+                        { "Electric / Processed Guitar", "ELEC", Sub_ElectricGuitar },
                         { "Processed Guitar", "PROC", Sub_ProcessedGuitar }
                     };
                 case ClusterGroup::FX:
@@ -465,7 +466,7 @@ namespace Atlas
                         { "Atmospheres / Textures", "ATMOS", Sub_Atmos },
                         { "Risers & Sweeps", "RISER", Sub_RiserSweep },
                         { "Impacts & Hits", "HIT", Sub_ImpactHit },
-                        { "Bells & Metallic", "BELL", Sub_BellMetallic }
+                        { "Foley / Metallic", "FOLEY", Sub_BellMetallic }
                     };
                 case ClusterGroup::Other:
                     return {

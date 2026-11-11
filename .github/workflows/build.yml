@@ -42,6 +42,11 @@ jobs:
           /tmp/atlas-rhythm-9f
           c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_drumloop_9f.cpp -o /tmp/atlas-drumloop-9f
           /tmp/atlas-drumloop-9f
+      - name: Verify hierarchy 05 compressed bank and abstention policy
+        run: |
+          python -m unittest discover -s Tools -p 'test_hierarchy05_bank.py' -v
+          c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_hierarchy05_policy.cpp -o /tmp/atlas-hierarchy05
+          /tmp/atlas-hierarchy05
 
   build:
     strategy:
