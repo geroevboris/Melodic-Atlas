@@ -9,6 +9,7 @@
 #include "ClapTextPrototypeCandidate9C.h"
 #include "ClapDrumLoopGate9E.h"
 #include "ClapDrumLoopGate9F.h"
+#include "DynamicSubgroupTags9F.h"
 #include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
@@ -753,6 +754,14 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // Only caches with 9F measured rhythm evidence may be acted on;
         // older caches need a normal background Refresh to be upgraded.
         Atlas::ClapDrumLoopGate9F::apply(rec);
+        // Content-driven subtypes are computed from cached native CLAP
+        // vectors without re-embedding WAVs or altering manual overrides.
+        if (rec.identityState == Atlas::IdentityState::Identified)
+        {
+            rec.cluster = rec.identityCluster;
+            Atlas::InstrumentSubgroupTags::evaluate(rec.file, rec);
+            Atlas::DynamicSubgroupTags9F::apply(rec);
+        }
         loaded.push_back(std::move(rec));
     }
 
@@ -1079,6 +1088,12 @@ void MelodicAtlasAudioProcessor::run()
         {
             Atlas::ClapDrumLoopGate9E::apply(record);
             Atlas::ClapDrumLoopGate9F::apply(record);
+            if (record.identityState == Atlas::IdentityState::Identified)
+            {
+                record.cluster = record.identityCluster;
+                Atlas::InstrumentSubgroupTags::evaluate(record.file, record);
+                Atlas::DynamicSubgroupTags9F::apply(record);
+            }
         }
         // Record all candidates (including CLAP-rejected ones) for held-out
         // analysis before any additional deletion. Scanner thread only.
