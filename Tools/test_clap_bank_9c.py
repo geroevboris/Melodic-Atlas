@@ -54,7 +54,7 @@ class TestBank9C(unittest.TestCase):
 
     def test_winds_separate_from_strings(self):
         _, meta = parse_bank()
-        self.assertEqual([m[0] for m in meta if m[1] in ("Brass","Woodwind")], [5,5])
+        self.assertEqual([m[0] for m in meta if m[1] in ("Brass","Woodwind")], [5,5,5,5])
         self.assertTrue(all(m[0]==4 for m in meta if m[1] in
                             ("Violin","Viola","Cello","StringsSection")))
         self.assertTrue(all(m[0]==8 for m in meta if m[1] in
