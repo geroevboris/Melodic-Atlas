@@ -7,6 +7,7 @@
 #include "ClapLibraryClassifier.h"
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
+#include "ClassifierShadowAudit9D.h"
 #include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
@@ -865,6 +866,11 @@ void MelodicAtlasAudioProcessor::run()
     const int total = audioFiles.size();
     newRecords.reserve((size_t)std::min(total, 8000));
 
+    // Diagnostic-only records rejected before CLAP are retained until the
+    // shadow CSV is written. They are never published or added to the cache.
+    std::vector<Atlas::SampleRecord> earlyGateExcluded;
+    std::vector<juce::File> explicitNamedExcluded;
+
     // Snapshot old descriptors before scanning; no lock is held during I/O.
     // Preserve unchanged data, avoiding repeated audio decoding on Refresh.
     std::unordered_map<std::string, Atlas::SampleRecord> unchangedCandidates;
@@ -985,7 +991,10 @@ void MelodicAtlasAudioProcessor::run()
             continue;
         // Skip unambiguous drum-labeled files before expensive audio decode.
         if (Atlas::PercussionGate::isExplicitDrumFile(file))
+        {
+            explicitNamedExcluded.push_back(file);
             continue;
+        }
 
         const int64_t fileBytes = (int64_t)file.getSize();
         const int64_t modifiedMs = (int64_t)file.getLastModificationTime().toMilliseconds();
@@ -1020,26 +1029,38 @@ void MelodicAtlasAudioProcessor::run()
                 if (!Atlas::PercussionGate::shouldExcludeFromAtlas(reused))
                     newRecords.push_back(std::move(reused));
             }
+            else
+            {
+                // Previously excluded cached records are audit-only.
+                earlyGateExcluded.push_back(old->second);
+            }
             scannedCount.store((int)newRecords.size());
             continue;
         }
 
         hasChangedRecords = true;
         Atlas::SampleRecord rec;
-        if (Atlas::AudioAnalyzer::analyzeFile(file, formatManager, rec)
-            && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
+        if (Atlas::AudioAnalyzer::analyzeFile(file, formatManager, rec))
         {
             rec.sourceBytes = fileBytes;
             rec.sourceModifiedMs = modifiedMs;
-            applyAtlasOverrides(rec);
-            newRecords.push_back(std::move(rec));
+            if (Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
+            {
+                // Preserve gate decisions for inspection, not playback.
+                earlyGateExcluded.push_back(std::move(rec));
+            }
+            else
+            {
+                applyAtlasOverrides(rec);
+                newRecords.push_back(std::move(rec));
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
-            pendingIndices.push_back(newRecords.size() - 1);
-            pendingFiles.push_back(file);
-            if (pendingFiles.size() == 16)
-                flushClapBatch();
+                pendingIndices.push_back(newRecords.size() - 1);
+                pendingFiles.push_back(file);
+                if (pendingFiles.size() == 16)
+                    flushClapBatch();
 #endif
-            scannedCount.store((int)newRecords.size());
+                scannedCount.store((int)newRecords.size());
+            }
         }
     }
 
@@ -1052,6 +1073,11 @@ void MelodicAtlasAudioProcessor::run()
     {
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
         Atlas::ClapLibraryClassifier::apply(newRecords, drumExamples);
+        // Observe the 9C text classifier WITHOUT changing the old verdicts.
+        // Include early DSP exclusions and filename skips as separate rows;
+        // those rows have no fabricated neural scores.
+        Atlas::ClassifierShadowAudit9D::write(
+            newRecords, earlyGateExcluded, explicitNamedExcluded, folderToScan);
         // Record all candidates (including CLAP-rejected ones) for held-out
         // analysis before any additional deletion. Scanner thread only.
         Atlas::PercussionAudit::write(newRecords, drumExamples, folderToScan);
