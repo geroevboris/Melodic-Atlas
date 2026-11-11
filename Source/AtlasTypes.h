@@ -520,32 +520,26 @@ namespace Atlas
         // hue = measured spectral region (X), lightness = median initial
         // attack of this sound island (Y). No arbitrary island-ID tinting.
         // Passing shade = -1 returns the neutral/base hue for the legend.
-        static juce::Colour getSpectralRegionColour(int region, int shade)
+        static juce::Colour getSpectralRegionColour(int region, int /*shade*/)
         {
-            static constexpr uint32_t colours[] = {
-                0xff4f83ffu, // low: blue
-                0xffab70eeu, // low-mid: violet
-                0xff16cabbu, // upper-mid: teal
-                0xffffb54eu  // high: amber
+            // Fixed hue by MUSICAL REGISTER, never attack lightness.
+            // HSV sat/value are identical for all four colours.
+            static constexpr float hues[] = {
+                0.612f, // low: blue
+                0.762f, // low-mid: violet
+                0.468f, // upper-mid: teal
+                0.097f  // high: amber
             };
-            const auto base = juce::Colour(colours[(size_t)
-                juce::jlimit(0, 3, region)]);
-            // Do not use brighter() here: fully saturated blue and
-            // amber already have a 1.0 HSV value, so brightness can clamp
-            // and the "soft" shade may look identical to the base colour.
-            if (shade == 0) return base.interpolatedWith(
-                juce::Colour(0xff121821), 0.24f); // sharp / darker
-            if (shade == 2) return base.interpolatedWith(
-                juce::Colours::white, 0.23f); // soft / lighter
-            return base;
+            return juce::Colour::fromHSV(
+                hues[(size_t)juce::jlimit(0, 3, region)],
+                0.75f, 0.93f, 1.0f);
         }
 
         static juce::Colour getClapFamilyColour(const SampleRecord& rec)
         {
             if (rec.colourGroup < 0 || rec.colourGroup > 3)
                 return juce::Colour(0xff8392a4);
-            return getSpectralRegionColour(
-                rec.colourGroup, rec.attackShadeLevel);
+            return getSpectralRegionColour(rec.colourGroup, -1);
         }
 
         // Six globally stable timbre colours. Position is determined by
