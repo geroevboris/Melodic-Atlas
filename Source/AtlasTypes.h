@@ -252,6 +252,14 @@ namespace Atlas
         float identityConfidence = 0.0f;
         // 0 = explicit sample metadata, 1 = inferred by same-library CLAP.
         int identityOrigin = 0;
+        // 07: automatic and manual taxonomy are independent. The manual
+        // choice survives Refresh without poisoning learning exemplars.
+        int automaticCategory = -1;
+        juce::String automaticSubgroup;
+        juce::String dynamicSubgroup;
+        int manualCategory = -1; // -1 = follow automatic taxonomy
+        juce::String manualSubgroup;
+
         AcousticFeatures acoustic;
         TonalFeatures tonal;
         PitchStructure pitchStructure = PitchStructure::NotEvaluated;

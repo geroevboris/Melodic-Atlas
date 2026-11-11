@@ -209,6 +209,7 @@ private:
 
     uint32_t selectedClustersMask = 0;
     std::array<uint32_t, 7> selectedClusterSubgroupBit { 0, 0, 0, 0, 0, 0, 0 };
+    std::array<juce::String, 7> selectedDynamicSubgroups {};
     uint32_t selectedMoodMask = 0;
 
     std::set<int> selectedPads { 0 };

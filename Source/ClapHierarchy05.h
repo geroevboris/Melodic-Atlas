@@ -55,6 +55,35 @@ struct ClapHierarchy05 {
         return true;
     }
 
+    // 07: all 65 audio/text type scores are available irrespective of
+    // previous main identity, enabling data-driven subcategory menus.
+    static bool subtypeScores(
+        const std::array<float,ClapHierarchy05Data::dimensions>& audio,
+        std::array<float,ClapHierarchy05Data::subtypeCount>& scores)
+    {
+        const auto& bank=getBank();
+        if(!bank.valid)return false;
+        double energy=0;
+        for(const float v:audio) {
+            if(!std::isfinite(v))return false;
+            energy+=(double)v*v;
+        }
+        if(energy<1e-16)return false;
+        const float normalizer=(float)(1.0/std::sqrt(energy));
+        scores.fill(-2.0f);
+        for(int p=0;p<ClapHierarchy05Data::promptCount;++p) {
+            const auto& item=ClapHierarchy05Data::prompts[(size_t)p];
+            if(item.subtype>=ClapHierarchy05Data::subtypeCount)continue;
+            double sum=0;
+            for(int d=0;d<ClapHierarchy05Data::dimensions;++d)
+                sum+=(double)audio[(size_t)d]
+                    * bank.unit[(size_t)p][(size_t)d];
+            scores[(size_t)item.subtype]=std::max(
+                scores[(size_t)item.subtype],(float)sum*normalizer);
+        }
+        return true;
+    }
+
     static uint32_t flagForParent(int parent) {
         switch(parent) {
             case 1: return Sub_Piano;

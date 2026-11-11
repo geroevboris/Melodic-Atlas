@@ -51,6 +51,11 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_primary06_policy.cpp -o /tmp/atlas-primary06
           /tmp/atlas-primary06
+      - name: Verify complete dynamic category taxonomy 07
+        run: |
+          c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_dynamic_taxonomy07_policy.cpp -o /tmp/atlas-dynamic07
+          /tmp/atlas-dynamic07
+          python -m unittest discover -s Tools -p 'test_dynamic_taxonomy07_contract.py' -v
 
   build:
     strategy:

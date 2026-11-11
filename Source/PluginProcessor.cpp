@@ -6,6 +6,7 @@
 #include "SoundIslandLayout.h"
 #include "ClapLibraryClassifier.h"
 #include "ClapPrimaryRecovery06.h"
+#include "AdaptiveTaxonomy07.h"
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
 #include "ClapDrumLoopGate9E.h"
@@ -325,6 +326,10 @@ void MelodicAtlasAudioProcessor::loadAtlasOverrides()
         item.hidden = (bool)node.getProperty("hidden", false);
         item.loopMode = juce::jlimit(-1, 1,
             (int)node.getProperty("loopMode", -1));
+        item.manualCategory = juce::jlimit(-1, 6,
+            (int)node.getProperty("manualCategory", -1));
+        item.manualSubgroup = node.getProperty(
+            "manualSubgroup", "").toString();
         atlasOverrides[path.toStdString()] = item;
     }
 }
@@ -336,12 +341,15 @@ void MelodicAtlasAudioProcessor::saveAtlasOverrides() const
         const juce::ScopedLock lock(dbLock);
         for (const auto& [path, item] : atlasOverrides)
         {
-            if (!item.hidden && item.loopMode < 0)
+            if (!item.hidden && item.loopMode < 0
+                && item.manualCategory < 0)
                 continue;
             juce::ValueTree node("File");
             node.setProperty("path", juce::String(path), nullptr);
             node.setProperty("hidden", item.hidden, nullptr);
             node.setProperty("loopMode", item.loopMode, nullptr);
+            node.setProperty("manualCategory", item.manualCategory, nullptr);
+            node.setProperty("manualSubgroup", item.manualSubgroup, nullptr);
             root.appendChild(node, nullptr);
         }
     }
@@ -368,6 +376,8 @@ void MelodicAtlasAudioProcessor::applyAtlasOverrides(
         return;
     rec.hiddenFromAtlas = it->second.hidden;
     rec.loopUserOverride = it->second.loopMode;
+    rec.manualCategory = it->second.manualCategory;
+    rec.manualSubgroup = it->second.manualSubgroup;
     if (rec.loopUserOverride >= 0)
         rec.isLoop = rec.loopUserOverride == 1;
 }
@@ -443,6 +453,35 @@ void MelodicAtlasAudioProcessor::setSampleLoopOverride(int index, int mode)
     saveAtlasOverrides();
 }
 
+void MelodicAtlasAudioProcessor::setSampleCategoryOverride(
+    const juce::String& filePath, int family, const juce::String& subgroup)
+{
+    {
+        const juce::ScopedLock lock(dbLock);
+        auto it = std::find_if(sampleDatabase.begin(), sampleDatabase.end(),
+            [&filePath](const Atlas::SampleRecord& rec) {
+                return rec.file.getFullPathName() == filePath;
+            });
+        if(it==sampleDatabase.end())return;
+        auto& rec=*it;
+        const int target = family>=0 && family<7 ? family : -1;
+        auto& state = atlasOverrides[rec.file.getFullPathName().toStdString()];
+        state.manualCategory = target;
+        state.manualSubgroup = target>=0 ? subgroup : juce::String();
+        rec.manualCategory = state.manualCategory;
+        rec.manualSubgroup = state.manualSubgroup;
+        Atlas::AdaptiveTaxonomy07::publishManual(rec);
+        // Legacy subMask belongs to the previous instrument; new dynamic
+        // filters use dynamicSubgroup instead of stale bit flags.
+        rec.subMask = Atlas::Sub_None;
+        publishedDatabase =
+            std::make_shared<const std::vector<Atlas::SampleRecord>>(sampleDatabase);
+        samplerEngine.setSampleDatabase(publishedDatabase);
+        databaseVersion.fetch_add(1);
+    }
+    saveAtlasOverrides();
+}
+
 void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 {
     const juce::ScopedLock sl(dbLock);
@@ -451,6 +490,8 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
 
     juce::ValueTree root("MelodicAtlasDatabaseCache");
     root.setProperty("scannedFolder", folderToScan.getFullPathName(), nullptr);
+    root.setProperty("dynamicTaxonomyVersion",
+                     Atlas::AdaptiveTaxonomy07::taxonomyVersion, nullptr);
     root.setProperty("mapGeometryVersion",
                      geometryVersionCurrent.load()
                          ? Atlas::SoundIslandLayout::geometryVersion : 0,
@@ -511,6 +552,8 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("percussionConfidence", rec.percussionConfidence, nullptr);
         item.setProperty("identityConfidence", rec.identityConfidence, nullptr);
         item.setProperty("identityOrigin", rec.identityOrigin, nullptr);
+        item.setProperty("automaticCategory", rec.automaticCategory, nullptr);
+        item.setProperty("automaticSubgroup", rec.automaticSubgroup, nullptr);
         item.setProperty("acousticValid", rec.acoustic.valid, nullptr);
         item.setProperty("acousticCentroidHz", rec.acoustic.spectralCentroidHz, nullptr);
         item.setProperty("acousticCentroidNorm", rec.acoustic.spectralCentroidNorm, nullptr);
@@ -570,6 +613,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         return false;
 
     const int savedMapVersion = (int)root.getProperty("mapGeometryVersion", 0);
+    const bool cachedDynamicTaxonomy =
+        (int)root.getProperty("dynamicTaxonomyVersion", 0)
+            >= Atlas::AdaptiveTaxonomy07::taxonomyVersion;
 
     juce::String savedFolder = root.getProperty("scannedFolder", "").toString();
     if (savedFolder.isNotEmpty())
@@ -676,6 +722,17 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.identityConfidence = juce::jlimit(
             0.0f, 1.0f, (float)item.getProperty("identityConfidence", 0.0f));
         rec.identityOrigin = (int)item.getProperty("identityOrigin", 0);
+        rec.automaticCategory = juce::jlimit(-1, 6,
+            (int)item.getProperty("automaticCategory", -1));
+        rec.automaticSubgroup = item.getProperty(
+            "automaticSubgroup", "").toString();
+        if (rec.automaticCategory >= 0)
+        {
+            // Restore automatic source before applying manual overrides.
+            rec.identityCluster = (Atlas::ClusterGroup)rec.automaticCategory;
+            rec.cluster = rec.identityCluster;
+            rec.identityState = Atlas::IdentityState::Identified;
+        }
         rec.acoustic.valid = (bool)item.getProperty("acousticValid", false);
         rec.acoustic.spectralCentroidHz =
             (float)item.getProperty("acousticCentroidHz", 0.0f);
@@ -768,6 +825,15 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
 
     if (loaded.empty())
         return false;
+
+    // One-time migration of the old cache without audio re-embedding.
+    if (!cachedDynamicTaxonomy
+        || std::any_of(loaded.begin(), loaded.end(),
+            [](const Atlas::SampleRecord& r)
+            { return r.automaticCategory < 0; }))
+        Atlas::AdaptiveTaxonomy07::classify(loaded);
+    for (auto& rec : loaded)
+        Atlas::AdaptiveTaxonomy07::publishManual(rec);
 
     Atlas::AudioAnalyzer::relaxMapCoordinates(loaded);
     // CLAP cross-library exemplars are inferred on the scanner worker only.
@@ -1031,6 +1097,15 @@ void MelodicAtlasAudioProcessor::run()
             if (!Atlas::PercussionGate::shouldExcludeFromAtlas(old->second))
             {
                 auto reused = old->second;
+                // Never let a manual reassignment become a new audio
+                // classifier training seed on incremental Refresh.
+                if(reused.automaticCategory>=0
+                    && reused.automaticCategory<7)
+                {
+                    reused.identityCluster =
+                        (Atlas::ClusterGroup)reused.automaticCategory;
+                    reused.cluster = reused.identityCluster;
+                }
                 applyAtlasOverrides(reused);
                 if (reused.durationAnalysisVersion < 1
                     && Atlas::AudioAnalyzer::refreshEffectiveDuration(
@@ -1112,6 +1187,16 @@ void MelodicAtlasAudioProcessor::run()
             }), newRecords.end());
         scannedCount.store((int)newRecords.size());
 #endif
+        // Every eligible record is given a concrete source family and
+        // content-driven subgroup before publishing the finished scan.
+        Atlas::AdaptiveTaxonomy07::classify(newRecords);
+        for (auto& record : newRecords)
+        {
+            Atlas::InstrumentSubgroupTags::evaluate(record.file, record);
+            Atlas::DynamicSubgroupTags9F::apply(record);
+            applyAtlasOverrides(record);
+            Atlas::AdaptiveTaxonomy07::publishManual(record);
+        }
         if (newRecords.empty())
         {
             scanning.store(false);
@@ -1222,6 +1307,8 @@ void MelodicAtlasAudioProcessor::getStateInformation(juce::MemoryBlock& destData
     {
         state.setProperty("cSub" + juce::String(c),
                           (int)savedClusterSubs[(size_t)c], nullptr);
+        state.setProperty("dynSub" + juce::String(c),
+                          savedDynamicSubgroups[(size_t)c], nullptr);
     }
 
     juce::ValueTree padsTree("Pads");
@@ -1307,6 +1394,8 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
     {
         savedClusterSubs[(size_t)c] =
             (uint32_t)(int)state.getProperty("cSub" + juce::String(c), 0);
+        savedDynamicSubgroups[(size_t)c] = state.getProperty(
+            "dynSub" + juce::String(c), "").toString();
     }
 
     if (sampleDatabase.empty())
@@ -1398,6 +1487,16 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
             st.sustainLvl = (float)padNode.getProperty("sus", 1.0f);
             st.releaseSec = (float)padNode.getProperty("rel", 0.05f);
         }
+
+        // Pads restored from a project may reference audio outside the
+        // scanned cache. Such eligible records must also be filterable.
+        if (std::any_of(sampleDatabase.begin(),sampleDatabase.end(),
+            [](const Atlas::SampleRecord& rec) {
+                return rec.automaticCategory<0
+                    && Atlas::AtlasDurationPolicy::isEligible(rec.durationSec)
+                    && !Atlas::PercussionGate::shouldExcludeFromAtlas(rec);
+            }))
+            Atlas::AdaptiveTaxonomy07::classify(sampleDatabase);
 
         // State restoration may have appended files absent from the scan cache.
         // Publish only after all pad restoration work completes.

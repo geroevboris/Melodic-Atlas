@@ -1,4 +1,6 @@
 #include "PluginEditor.h"
+#include "AdaptiveTaxonomy07.h"
+#include <map>
 
 MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     MelodicAtlasAudioProcessor& p)
@@ -9,7 +11,9 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     setLookAndFeel(&atlasLookAndFeel);
 
     selectedClustersMask = audioProcessor.savedClustersMask;
-    selectedClusterSubgroupBit = audioProcessor.savedClusterSubs;
+    // 07 uses actual discovered names instead of legacy static bitmasks.
+    selectedClusterSubgroupBit.fill(0);
+    selectedDynamicSubgroups = audioProcessor.savedDynamicSubgroups;
     // Previous versions used different subcategory meanings. A removed
     // selection must not silently hide every sample in the new taxonomy.
     for (int c = 0; c < 7; ++c)
@@ -82,10 +86,60 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         menu.addSeparator();
         menu.addItem(4, "Move to One-shots", selected.isLoop);
         menu.addItem(5, "Move to Loops", !selected.isLoop);
+        menu.addSeparator();
+
+        // All available categories can be selected, including an empty
+        // category. Each submenu lists the dynamic subtypes that actually
+        // exist in this library. No drag gestures interfere with preview.
+        struct MoveChoice { int id; int family; juce::String subtype; };
+        std::vector<MoveChoice> choices;
+        juce::PopupMenu moveTo;
+        int commandId = 100;
+        for (int family = 0; family < 7; ++family)
+        {
+            juce::PopupMenu submenu;
+            submenu.addItem(commandId, "All " +
+                juce::String(Atlas::AdaptiveTaxonomy07::categoryName(family)),
+                true, selected.manualCategory == family
+                    && selected.manualSubgroup.isEmpty());
+            choices.push_back({ commandId++, family, {} });
+
+            std::map<std::string, int> counts;
+            for (const auto& item : *db)
+                if ((int)item.identityCluster == family
+                    && item.dynamicSubgroup.isNotEmpty()
+                    && !item.hiddenFromAtlas
+                    && !Atlas::PercussionGate::shouldExcludeFromAtlas(item))
+                    ++counts[item.dynamicSubgroup.toStdString()];
+
+            std::vector<std::pair<juce::String,int>> found;
+            for(const auto& [key,num]:counts)
+                found.emplace_back(juce::String(key),num);
+            std::sort(found.begin(),found.end(),
+                [](const auto& a, const auto& b) {
+                    if(a.second!=b.second)return a.second>b.second;
+                    return a.first.compareNatural(b.first)<0;
+                });
+            for(const auto& [name,count]:found)
+            {
+                submenu.addItem(commandId,
+                    name+" ("+juce::String(count)+")",
+                    true, selected.manualCategory==family
+                          && selected.manualSubgroup==name);
+                choices.push_back({commandId++,family,name});
+            }
+            moveTo.addSubMenu(
+                Atlas::MusicMath::getClusterName((Atlas::ClusterGroup)family),
+                submenu);
+        }
+        menu.addSubMenu("Move to...",moveTo);
+        menu.addItem(50,"Reset to automatic category",
+            selected.manualCategory >= 0);
+        const juce::String selectedPath = selected.file.getFullPathName();
         menu.showMenuAsync(
             juce::PopupMenu::Options().withTargetScreenArea(
                 juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
-            [this, sampleIdx, islandIndices](int choice)
+            [this, sampleIdx, islandIndices, selectedPath, choices](int choice)
             {
                 if (choice == 1)
                 {
@@ -106,6 +160,19 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
                 else if (choice == 4 || choice == 5)
                     audioProcessor.setSampleLoopOverride(
                         sampleIdx, choice == 5 ? 1 : 0);
+                else if (choice == 50)
+                    audioProcessor.setSampleCategoryOverride(
+                        selectedPath, -1, {});
+                else
+                    for(const auto& item:choices)
+                        if(choice==item.id)
+                        {
+                            audioProcessor.setSampleCategoryOverride(
+                                selectedPath, item.family, item.subtype);
+                            break;
+                        }
+                updateDynamicLayoutRects();
+                applyCurrentFiltersToMap();
                 repaint();
             });
     };
@@ -192,11 +259,13 @@ void MelodicAtlasAudioProcessorEditor::applyCurrentFiltersToMap()
 {
     audioProcessor.savedClustersMask = selectedClustersMask;
     audioProcessor.savedClusterSubs = selectedClusterSubgroupBit;
+    audioProcessor.savedDynamicSubgroups = selectedDynamicSubgroups;
     audioProcessor.savedMoodMask = selectedMoodMask;
 
     mapCanvas.setViewFilter(audioProcessor.showLoopsTab.load(),
                             selectedClustersMask,
                             selectedClusterSubgroupBit,
+                            selectedDynamicSubgroups,
                             selectedMoodMask);
 }
 
@@ -246,21 +315,41 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     groupFilterRects[0] = { gx, row1Y, allW, 24.0f };
     gx += allW + 6.0f;
 
+    // Show ONLY instrument categories present in the current library.
+    std::array<int,7> available {};
+    const auto snapshot = audioProcessor.getSampleDatabaseSnapshot();
+    if(snapshot)
+        for(const auto& record:*snapshot)
+            if(!record.hiddenFromAtlas
+               && Atlas::AtlasDurationPolicy::isEligible(record.durationSec)
+               && !Atlas::PercussionGate::shouldExcludeFromAtlas(record)
+               && (int)record.identityCluster>=0
+               && (int)record.identityCluster<7)
+                ++available[(size_t)(int)record.identityCluster];
+    // A persisted selection for an absent category must not create
+    // an apparently broken empty map after a library change.
+    uint32_t hasContentMask=0;
+    for(int c=0;c<7;++c)
+        if(available[(size_t)c]>0)hasContentMask|=(1u<<c);
+    selectedClustersMask &= hasContentMask;
+
     // Discover belongs after the instrument and character filters.
     for (int c = 0; c < 8; ++c)
     {
         auto cg = static_cast<Atlas::ClusterGroup>(c);
+        if(c<7 && available[(size_t)c]==0)
+        {
+            groupFilterRects[(size_t)(c+1)] = {};
+            groupDropdownRects[(size_t)c] = {};
+            continue;
+        }
         juce::String baseLabel = c == 7 ? "CHAR" : Atlas::MusicMath::getClusterName(cg);
 
         if (c < 7)
         {
-            uint32_t subBit = selectedClusterSubgroupBit[(size_t)c];
-            if (subBit != 0)
-            {
-                juce::String subShort = Atlas::MusicMath::getSubgroupShortLabel(cg, subBit);
-                if (subShort.isNotEmpty())
-                    baseLabel += ":" + subShort;
-            }
+            const auto& chosen = selectedDynamicSubgroups[(size_t)c];
+            if(chosen.isNotEmpty())
+                baseLabel += ":"+chosen.substring(0,10);
         }
         else if (selectedMoodMask != 0)
         {
@@ -438,6 +527,7 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
         auto cg = static_cast<Atlas::ClusterGroup>(c);
         const auto& btnR = groupFilterRects[(size_t)(c + 1)];
         const auto& dropR = groupDropdownRects[(size_t)c];
+        if(btnR.isEmpty())continue;
 
         bool on = (c < 7)
             ? ((selectedClustersMask & (1u << c)) != 0)
@@ -446,13 +536,9 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
         juce::String label = c == 7 ? "CHAR" : Atlas::MusicMath::getClusterName(cg);
         if (c < 7)
         {
-            uint32_t subBit = selectedClusterSubgroupBit[(size_t)c];
-            if (subBit != 0)
-            {
-                juce::String subShort = Atlas::MusicMath::getSubgroupShortLabel(cg, subBit);
-                if (subShort.isNotEmpty())
-                    label += ":" + subShort;
-            }
+            const auto& chosen=selectedDynamicSubgroups[(size_t)c];
+            if(chosen.isNotEmpty())
+                label += ":" + chosen.substring(0,10);
         }
         else if (selectedMoodMask != 0)
         {
@@ -1398,6 +1484,7 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
     if (groupFilterRects[0].contains(pt))
     {
         selectedClustersMask = 0;
+        selectedDynamicSubgroups.fill(juce::String());
         selectedMoodMask = 0;
         updateDynamicLayoutRects();
         applyCurrentFiltersToMap();
@@ -1410,7 +1497,7 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
         const auto& btnR = groupFilterRects[(size_t)(c + 1)];
         const auto& dropR = groupDropdownRects[(size_t)c];
 
-        if (!btnR.contains(pt))
+        if(btnR.isEmpty() || !btnR.contains(pt))
             continue;
 
         if (c == 7)
@@ -1462,61 +1549,59 @@ void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEve
 void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
     int clusterIndex, juce::Rectangle<float> targetBtn)
 {
-    if (clusterIndex < 0 || clusterIndex >= 7)
-        return;
-
-    auto cg = static_cast<Atlas::ClusterGroup>(clusterIndex);
-    auto options = Atlas::MusicMath::getSubgroupsForCluster(cg);
-    uint32_t currentBit = selectedClusterSubgroupBit[(size_t)clusterIndex];
-
-    // Build available subgroups from the actual library, not a fixed menu.
-    // Evidence comes from explicit sample metadata and documented DSP tags;
-    // CLAP audio embeddings do not contain named instrument tags.
-    const auto db = audioProcessor.getSampleDatabaseSnapshot();
-    std::vector<int> counts(options.size(), 0);
-    int familyTotal = 0;
-    if (db != nullptr)
-        for (const auto& rec : *db)
+    if(clusterIndex<0 || clusterIndex>=7)return;
+    const auto db=audioProcessor.getSampleDatabaseSnapshot();
+    const auto family=(Atlas::ClusterGroup)clusterIndex;
+    const auto selected=selectedDynamicSubgroups[(size_t)clusterIndex];
+    std::map<std::string,int> counts;
+    int total=0;
+    if(db)
+        for(const auto& rec:*db)
         {
-            if (rec.isLoop != audioProcessor.showLoopsTab.load()
-                || Atlas::PercussionGate::shouldExcludeFromAtlas(rec)
-                || rec.identityState != Atlas::IdentityState::Identified
-                || rec.identityCluster != cg)
+            if((int)rec.identityCluster!=clusterIndex
+               ||rec.isLoop!=audioProcessor.showLoopsTab.load()
+               ||rec.hiddenFromAtlas
+               ||Atlas::PercussionGate::shouldExcludeFromAtlas(rec))
                 continue;
-            ++familyTotal;
-            for (size_t i = 1; i < options.size(); ++i)
-                if ((rec.subMask & options[i].flagBit) != 0)
-                    ++counts[i];
+            ++total;
+            if(rec.dynamicSubgroup.isNotEmpty())
+                ++counts[rec.dynamicSubgroup.toStdString()];
         }
-    const int minimum = familyTotal > 200 ? 2 : 1;
-    std::vector<size_t> displayed;
+    std::vector<std::pair<juce::String,int>> groups;
+    for(const auto& [key,num]:counts)
+        groups.emplace_back(juce::String(key),num);
+    std::sort(groups.begin(),groups.end(),
+        [](const auto& a,const auto& b) {
+            if(a.second!=b.second)return a.second>b.second;
+            return a.first.compareNatural(b.first)<0;
+        });
+
     juce::PopupMenu menu;
-    for (size_t i = 0; i < options.size(); ++i)
-    {
-        if (i != 0 && counts[i] < minimum
-            && options[i].flagBit != currentBit)
-            continue;
-        displayed.push_back(i);
-        const int count = i == 0 ? familyTotal : counts[i];
-        menu.addItem((int)displayed.size(),
-            options[i].fullName + " (" + juce::String(count) + ")",
-            true, options[i].flagBit == currentBit);
-    }
+    menu.addItem(1,"All "+
+        Atlas::MusicMath::getClusterName(family)+
+        " ("+juce::String(total)+")",true,selected.isEmpty());
+    for(size_t i=0;i<groups.size();++i)
+        menu.addItem((int)i+2,
+            groups[i].first+" ("+juce::String(groups[i].second)+")",
+            true,selected==groups[i].first);
 
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetScreenArea(
             localAreaToGlobal(targetBtn.toNearestInt())),
-        [this, clusterIndex, options, displayed](int res)
+        [this,clusterIndex,groups](int choice)
         {
-            if (res >= 1 && res <= (int)displayed.size())
-            {
-                selectedClusterSubgroupBit[(size_t)clusterIndex] =
-                    options[displayed[(size_t)(res - 1)]].flagBit;
-                selectedClustersMask |= (1u << clusterIndex);
-                updateDynamicLayoutRects();
-                applyCurrentFiltersToMap();
-                repaint();
-            }
+            if(choice==0)return;
+            if(choice==1)
+                selectedDynamicSubgroups[(size_t)clusterIndex].clear();
+            else if(choice-2<(int)groups.size() && choice>=2)
+                selectedDynamicSubgroups[(size_t)clusterIndex]=
+                    groups[(size_t)(choice-2)].first;
+            else return;
+            selectedClusterSubgroupBit[(size_t)clusterIndex]=0;
+            selectedClustersMask |= 1u<<clusterIndex;
+            updateDynamicLayoutRects();
+            applyCurrentFiltersToMap();
+            repaint();
         });
 }
 
@@ -1537,16 +1622,36 @@ void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
     const int categoryMode = rng.nextInt(10);
     if (categoryMode < 8)
     {
-        const int first = rng.nextInt(7);
-        selectedClustersMask = (1u << first);
-        if (categoryMode == 7)
+        std::vector<int> availableCategories;
+        const auto db=audioProcessor.getSampleDatabaseSnapshot();
+        if(db)
         {
-            const int second = (first + 1 + rng.nextInt(6)) % 7;
-            selectedClustersMask |= (1u << second);
+            std::array<int,7> count{};
+            for(const auto& record:*db)
+                if(!record.hiddenFromAtlas
+                    && Atlas::AtlasDurationPolicy::isEligible(record.durationSec)
+                    && !Atlas::PercussionGate::shouldExcludeFromAtlas(record)
+                    && (int)record.identityCluster>=0
+                    && (int)record.identityCluster<7)
+                    ++count[(size_t)(int)record.identityCluster];
+            for(int c=0;c<7;++c)
+                if(count[(size_t)c]>0)availableCategories.push_back(c);
+        }
+        const int first=availableCategories.empty() ? -1 :
+            availableCategories[(size_t)rng.nextInt((int)availableCategories.size())];
+        if(first>=0) selectedClustersMask=(1u<<first);
+        if(categoryMode==7 && first>=0 && availableCategories.size()>1)
+        {
+            int other=first;
+            while(other==first)
+                other=availableCategories[(size_t)rng.nextInt(
+                    (int)availableCategories.size())];
+            selectedClustersMask|=1u<<other;
         }
     }
 
     selectedClusterSubgroupBit.fill(0);
+    selectedDynamicSubgroups.fill(juce::String());
     selectedMoodMask = 0;
 
     // One to three independently selected qualities, with strict AND

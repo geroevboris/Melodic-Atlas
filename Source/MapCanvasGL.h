@@ -51,11 +51,13 @@ namespace Atlas
         void setViewFilter(bool loopsTab,
                            uint32_t clustersMask,
                            const std::array<uint32_t, 7>& perClusterSubs,
+                           const std::array<juce::String, 7>& perClusterDynamicSubs,
                            uint32_t moodMask)
         {
             showLoopsOnly = loopsTab;
             activeClustersMask = clustersMask;
             clusterSubMasks = perClusterSubs;
+            activeDynamicSubgroups = perClusterDynamicSubs;
             activeMoodMask = moodMask;
             rebuildIslandOverlays();
             candidateOrderDirty = true;
@@ -680,8 +682,14 @@ namespace Atlas
                 if (cIdx == 7 || (activeClustersMask & (1u << cIdx)) == 0)
                     return false;
 
-                uint32_t reqClusterSub = clusterSubMasks[(size_t)cIdx];
-                if (reqClusterSub != 0 && (rec.subMask & reqClusterSub) == 0)
+                // 07: dynamically discovered names, not static bit flags.
+                const auto& requested = activeDynamicSubgroups[(size_t)cIdx];
+                if (requested.isNotEmpty()
+                    && rec.dynamicSubgroup != requested)
+                    return false;
+                const uint32_t legacy = clusterSubMasks[(size_t)cIdx];
+                if (requested.isEmpty() && legacy != 0
+                    && (rec.subMask & legacy) == 0)
                     return false;
             }
 
@@ -889,6 +897,7 @@ namespace Atlas
         bool showLoopsOnly = false;
         uint32_t activeClustersMask = 0;
         std::array<uint32_t, 7> clusterSubMasks;
+        std::array<juce::String, 7> activeDynamicSubgroups {};
         uint32_t activeMoodMask = 0;
 
         int activeSampleIndex = -1;

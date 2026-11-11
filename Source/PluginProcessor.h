@@ -78,6 +78,10 @@ public:
     void hideAtlasSamples(const std::vector<int>& indices);
     void restoreHiddenAtlasSamples();
     void setSampleLoopOverride(int index, int mode); // -1 auto, 0 shot, 1 loop
+    // 07: non-destructive manual instrument/category correction.
+    // An empty subgroup means the category itself, not Unknown.
+    void setSampleCategoryOverride(const juce::String& filePath,
+                                   int family, const juce::String& subgroup);
     int getHiddenAtlasSampleCount() const;
 
     std::atomic<bool> showLoopsTab { false };
@@ -106,6 +110,7 @@ public:
     int savedEditorHeight = 640;
     uint32_t savedClustersMask = 0;
     std::array<uint32_t, 7> savedClusterSubs = { 0, 0, 0, 0, 0, 0, 0 };
+    std::array<juce::String, 7> savedDynamicSubgroups {};
     uint32_t savedMoodMask = 0;
     int primarySelectedPad = 0;
 
@@ -132,6 +137,8 @@ private:
     {
         bool hidden = false;
         int loopMode = -1;
+        int manualCategory = -1;
+        juce::String manualSubgroup;
     };
     std::unordered_map<std::string, AtlasOverride> atlasOverrides;
     juce::File folderToScan;
