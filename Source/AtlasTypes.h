@@ -194,6 +194,11 @@ namespace Atlas
         bool isPolyChord = false;
         // 0 means legacy duration-based classification; 1 means structural scan.
         int loopAnalysisVersion = 0;
+        // 9F measured rhythmic structure independent of source identity.
+        // A melodic arpeggio may also have rhythmicSequence=true.
+        int rhythmicEventCount = 0;
+        float rhythmicSpanSeconds = 0.0f;
+        bool rhythmicSequence = false;
         double durationSec = 0.0;
         double effectiveDurationSec = 0.0; // energy-based active duration when measured
         int durationAnalysisVersion = 0;
