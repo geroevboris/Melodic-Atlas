@@ -47,6 +47,29 @@ namespace Atlas
             if (maximum < 1.0e-5f)
                 return result;
 
+            // A 10ms RMS window aliases low bass fundamentals: sustained
+            // 55 Hz can create a false ~100ms pulse train. Smooth *power*
+            // across 50ms before detecting transient onsets. This retains
+            // actual kick/snare events but suppresses steady tonal beating.
+            std::vector<float> smoothed((size_t)frames);
+            maximum = 0.0f;
+            for (int i = 0; i < frames; ++i)
+            {
+                double totalPower = 0.0;
+                int count = 0;
+                for (int j = std::max(0, i - 2);
+                     j <= std::min(frames - 1, i + 2); ++j)
+                {
+                    const double v = envelope[(size_t)j];
+                    totalPower += v * v;
+                    ++count;
+                }
+                const float rms = (float)std::sqrt(totalPower / count);
+                smoothed[(size_t)i] = rms;
+                maximum = std::max(maximum, rms);
+            }
+            envelope.swap(smoothed);
+
             const int localWindow = 11; // +/- 110 ms, adaptive peak contrast
             const int minSeparation = 9; // events >= 90 ms apart
             const float prominence = maximum * 0.060f;
