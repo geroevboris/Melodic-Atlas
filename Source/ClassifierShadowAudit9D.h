@@ -41,7 +41,7 @@ namespace Atlas
             };
             const auto strFloat = [](float value) -> juce::String
             {
-                return std::isfinite(value) ? juce::String(value, 7) : "";
+                return std::isfinite(value) ? juce::String(value, 7) : juce::String();
             };
             juce::StringArray header { "relative_path", "scan_stage",
                 "duration_s", "active_duration_s",
@@ -142,11 +142,12 @@ namespace Atlas
                 row.add(strFloat(rec.percussionConfidence));
                 row.add(juce::String(oldDrum ? 1 : 0));
                 row.add(juce::String(result.valid ? 1 : 0));
-                row.add(result.valid ? familyName(result.topFamily) : "");
+                row.add(result.valid ? familyName(result.topFamily) : juce::String());
                 row.add(result.valid && result.topPrompt >= 0
-                    ? ClapTextBank9C::prompts[(size_t)result.topPrompt].subtype : "");
+                    ? juce::String(ClapTextBank9C::prompts[(size_t)result.topPrompt].subtype)
+                    : juce::String());
                 row.add(result.valid ? strFloat(result.topCosine) : "");
-                row.add(result.valid ? familyName(result.secondFamily) : "");
+                row.add(result.valid ? familyName(result.secondFamily) : juce::String());
                 row.add(result.valid ? strFloat(result.secondCosine) : "");
                 row.add(result.valid ? strFloat(result.margin) : "");
                 row.add(result.valid ? strFloat(bestMelodic) : "");
@@ -176,7 +177,7 @@ namespace Atlas
                 row.add(quote(file.getRelativePathFrom(sourceFolder)));
                 row.add("explicit_filename_gate_excluded");
                 for (int i = 2; i < header.size(); ++i)
-                    row.add({});
+                    row.add(juce::String());
                 jassert(row.size() == header.size());
                 write(row);
             }
