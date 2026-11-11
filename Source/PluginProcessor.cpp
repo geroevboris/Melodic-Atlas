@@ -8,6 +8,7 @@
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
 #include "ClapDrumLoopGate9E.h"
+#include "ClapDrumLoopGate9F.h"
 #include "PercussionAudit.h"
 #include "AtlasDurationPolicy.h"
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
@@ -462,6 +463,9 @@ void MelodicAtlasAudioProcessor::saveDatabaseCacheToDisk()
         item.setProperty("sourceModifiedMs", (juce::int64)rec.sourceModifiedMs, nullptr);
         item.setProperty("isLoop", rec.isLoop, nullptr);
         item.setProperty("loopAnalysisVersion", rec.loopAnalysisVersion, nullptr);
+        item.setProperty("rhythmicEventCount", rec.rhythmicEventCount, nullptr);
+        item.setProperty("rhythmicSpanSeconds", rec.rhythmicSpanSeconds, nullptr);
+        item.setProperty("rhythmicSequence", rec.rhythmicSequence, nullptr);
         item.setProperty("dur", rec.durationSec, nullptr);
         item.setProperty("activeDur", rec.effectiveDurationSec, nullptr);
         item.setProperty("durationAnalysisVersion", rec.durationAnalysisVersion, nullptr);
@@ -586,6 +590,13 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         rec.sourceModifiedMs = (int64_t)(juce::int64)item.getProperty("sourceModifiedMs", (juce::int64)-1);
         rec.loopAnalysisVersion =
             (int)item.getProperty("loopAnalysisVersion", 0);
+        rec.rhythmicEventCount = juce::jlimit(0, 10000,
+            (int)item.getProperty("rhythmicEventCount", 0));
+        rec.rhythmicSpanSeconds = juce::jmax(0.0f,
+            (float)item.getProperty("rhythmicSpanSeconds", 0.0f));
+        rec.rhythmicSequence =
+            rec.loopAnalysisVersion >= 4
+            && (bool)item.getProperty("rhythmicSequence", false);
         // Old caches used a duration threshold; never present that guess
         // as a verified loop before the new scan runs.
         rec.isLoop = rec.loopAnalysisVersion >= 1
@@ -739,6 +750,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         // to existing cached vectors: no Refresh or re-scan required.
         // The cached source WAV, pads and manual loop overrides stay intact.
         Atlas::ClapDrumLoopGate9E::apply(rec);
+        // Only caches with 9F measured rhythm evidence may be acted on;
+        // older caches need a normal background Refresh to be upgraded.
+        Atlas::ClapDrumLoopGate9F::apply(rec);
         loaded.push_back(std::move(rec));
     }
 
@@ -1012,7 +1026,7 @@ void MelodicAtlasAudioProcessor::run()
                     && Atlas::AudioAnalyzer::refreshEffectiveDuration(
                         file, formatManager, reused))
                     hasChangedRecords = true;
-                if (reused.loopAnalysisVersion < 3
+                if (reused.loopAnalysisVersion < 4
                     && Atlas::AudioAnalyzer::refreshLoopStructure(
                         file, formatManager, reused))
                     hasChangedRecords = true;
@@ -1062,7 +1076,10 @@ void MelodicAtlasAudioProcessor::run()
         // This changes drum-loop exclusion but does not relabel melodic
         // instruments or change One-shot/Loop decisions.
         for (auto& record : newRecords)
+        {
             Atlas::ClapDrumLoopGate9E::apply(record);
+            Atlas::ClapDrumLoopGate9F::apply(record);
+        }
         // Record all candidates (including CLAP-rejected ones) for held-out
         // analysis before any additional deletion. Scanner thread only.
         Atlas::PercussionAudit::write(newRecords, drumExamples, folderToScan);
