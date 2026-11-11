@@ -18,7 +18,8 @@ namespace Atlas
                 | Sub_Arp | Sub_ElectricBass | Sub_SynthBass
                 | Sub_AcousticBass | Sub_AcousticGuitar
                 | Sub_ElectricGuitar | Sub_ProcessedGuitar
-                | Sub_VocalChops | Sub_Choir | Sub_VocalSinging | Sub_Atmos;
+                | Sub_VocalChops | Sub_Choir | Sub_VocalSinging
+                | Sub_Atmos | Sub_ImpactHit;
             rec.subMask &= ~instrumentMask;
             juce::StringArray words;
             const auto append = [&words](const juce::String& text)
@@ -113,6 +114,8 @@ namespace Atlas
                         rec.subMask |= Sub_ProcessedGuitar;
                     break;
                 case ClusterGroup::FX:
+                    if (contains({"impact", "impacts", "impacthit"}))
+                        rec.subMask |= Sub_ImpactHit;
                     if (contains({"atmos", "atmosphere", "ambience", "ambient",
                                   "texture", "textural", "drone", "foley"}))
                         rec.subMask |= Sub_Atmos;

@@ -5,6 +5,7 @@
 #include "ClapColourClusters.h"
 #include "SoundIslandLayout.h"
 #include "ClapLibraryClassifier.h"
+#include "ClapPrimaryRecovery06.h"
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
 #include "ClapDrumLoopGate9E.h"
@@ -1080,6 +1081,13 @@ void MelodicAtlasAudioProcessor::run()
     {
 #if defined(ATLAS_ENABLE_NATIVE_CLAP) && ATLAS_ENABLE_NATIVE_CLAP
         Atlas::ClapLibraryClassifier::apply(newRecords, drumExamples);
+        // 06: recover MAIN instrument families from Unknown, once per
+        // Refresh/scan worker pass. Existing confirmed identities are never
+        // overwritten; the resulting ids persist in the ordinary cache.
+        const int recovered06 = Atlas::ClapPrimaryRecovery06::apply(newRecords);
+        if (recovered06 > 0)
+            juce::Logger::writeToLog("Melodic Atlas: source recovery 06 assigned "
+                + juce::String(recovered06) + " previously Unknown sounds");
         // 9E is a real production gate, unlike the passive 9D report.
         // Apply only after CLAP vectors and old source identities are ready.
         // This changes drum-loop exclusion but does not relabel melodic

@@ -177,7 +177,8 @@ namespace Atlas
                 token == "sitar" || token == "koto")
                 return (int)ClusterGroup::Guitar;
 
-            if (token == "fx" || token == "effects" || token == "sfx" ||
+            if (token == "impact" || token == "impacts" ||
+                token == "fx" || token == "effects" || token == "sfx" ||
                 token == "riser" || token == "uplifter" ||
                 token == "downlifter" || token == "whoosh" ||
                 token == "sweep" || token == "foley" ||

@@ -25,6 +25,36 @@ struct ClapHierarchy05 {
         Hierarchy05Policy::Reason reason = Hierarchy05Policy::Abstain;
     };
 
+    // Primary-family text scores are independent of any existing
+    // instrument identity. Only used by the recovery classifier on the
+    // scanner worker; never force a new label from top-1 alone.
+    static bool sourceScores(
+        const std::array<float,ClapHierarchy05Data::dimensions>& audio,
+        std::array<float,8>& scores)
+    {
+        const auto& bank=getBank();
+        if(!bank.valid)return false;
+        double normSquared=0;
+        for(float v:audio) {
+            if(!std::isfinite(v))return false;
+            normSquared+=(double)v*v;
+        }
+        if(!(normSquared>1.0e-16))return false;
+        const float inv=(float)(1.0/std::sqrt(normSquared));
+        scores.fill(-2.0f);
+        for(int p=0;p<ClapHierarchy05Data::promptCount;++p) {
+            const int group=ClapHierarchy05Data::prompts[(size_t)p].source;
+            if(group<0||group>=8)continue;
+            double dot=0;
+            const auto& proto=bank.unit[(size_t)p];
+            for(int d=0;d<ClapHierarchy05Data::dimensions;++d)
+                dot+=(double)audio[(size_t)d]*proto[(size_t)d];
+            scores[(size_t)group]=std::max(scores[(size_t)group],
+                (float)dot*inv);
+        }
+        return true;
+    }
+
     static uint32_t flagForParent(int parent) {
         switch(parent) {
             case 1: return Sub_Piano;

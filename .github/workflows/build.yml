@@ -47,6 +47,10 @@ jobs:
           python -m unittest discover -s Tools -p 'test_hierarchy05_bank.py' -v
           c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_hierarchy05_policy.cpp -o /tmp/atlas-hierarchy05
           /tmp/atlas-hierarchy05
+      - name: Verify conservative primary family recovery 06
+        run: |
+          c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_primary06_policy.cpp -o /tmp/atlas-primary06
+          /tmp/atlas-primary06
 
   build:
     strategy:

@@ -22,6 +22,17 @@ struct DynamicSubgroupTags9F {
             subtypeMask|=option.flagBit;
         const uint32_t previous=rec.subMask & subtypeMask;
 
+        // An explicitly named cinematic Impact is an FX subtype even
+        // when its low-frequency transient resembles a kick in CLAP.
+        // Preserve this verified file-level evidence; it never sets
+        // PercussionState and cannot affect unrelated instruments.
+        if(rec.identityCluster==ClusterGroup::FX
+            && (previous & Sub_ImpactHit)!=0) {
+            rec.subMask &= ~subtypeMask;
+            rec.subMask |= Sub_ImpactHit;
+            return;
+        }
+
         // Do not keep forced filename-only narrow tags under disagreement.
         // The candidate is broad. Existing verified Rhodes/processed guitar
         // hints may remain as optional *narrow* tags alongside the new parent.
