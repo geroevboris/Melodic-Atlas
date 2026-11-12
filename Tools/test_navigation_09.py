@@ -51,7 +51,7 @@ class Navigation09(unittest.TestCase):
         canvas=source("MapCanvasGL.h")
         self.assertIn("0.86f*(point.x-0.5f)",canvas)
         self.assertIn("1.38f*(point.y-0.5f)",canvas)
-        self.assertIn("const auto position=effectiveMapCoordinates(rec);",canvas)
+        self.assertIn("const auto position=coverageMapPosition(idx);",canvas)
         self.assertIn("effectiveMapCoordinates(rec);",canvas)
         processor=source("PluginProcessor.cpp")
         # The cache remains a copy of the actual stored 9F/UMAP geometry;
