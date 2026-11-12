@@ -47,6 +47,20 @@ class Navigation09(unittest.TestCase):
         self.assertIn("discoveryReturning = true",canvas)
         self.assertIn("discoveryReturning = false",canvas)
         self.assertIn("visibleSampleIndices.assign(",canvas)
+    def test_smooth_random_return_keeps_old_and_new_dot_layers(self):
+        canvas=source("MapCanvasGL.h")
+        self.assertIn("discoveryReturnStartZoom = zoomFactor;",canvas)
+        self.assertIn("discoveryReturnStartMs",canvas)
+        self.assertIn("(float)elapsed / 550.0f",canvas)
+        self.assertIn("appendReturningDiscoverySamples();",canvas)
+        self.assertIn("returningNormalIndices",canvas)
+        self.assertIn("drawSoundIslands(g, fade);",canvas)
+        # Returning never jumps to the old camera before animation begins.
+        returning=canvas.split("void endDiscovery()",1)[1].split(
+            "int discoveryVisibleCount()",1)[0]
+        self.assertNotIn("zoomFactor = originalZoom;",returning)
+        self.assertNotIn("panOffset = originalPan;",returning)
+
     def test_geometric_view_transform_not_saved_to_cache(self):
         canvas=source("MapCanvasGL.h")
         self.assertIn("0.86f*(point.x-0.5f)",canvas)
