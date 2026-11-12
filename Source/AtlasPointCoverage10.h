@@ -1,12 +1,10 @@
 #pragma once
-// 10: View-only, collision-free point packing at the existing maximum zoom.
-// JUCE-free so the contract can be tested independently in CI.
-// Source coordinates/CLAP embeddings are never modified.
+// View-only organic, collision-free point packing at the existing 18x zoom.
+// Source CLAP embeddings, classification and persisted coordinates are untouched.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -22,62 +20,84 @@ struct AtlasPointCoverage10
         return ((uint64_t)(uint32_t)x << 32) | (uint32_t)y;
     }
 
-    // Outward square spiral in O(1) per step. Reused origin cells start
-    // where the previous sound finished: identical coordinates don't
-    // lead to quadratic rescanning on a large drum/FX sample pack.
-    static std::pair<int,int> spiralOffset(uint32_t index)
+    static uint32_t mix(uint64_t key)
     {
-        if(index==0u)return {0,0};
-        const int ring=(int)std::ceil(
-            (std::sqrt((double)index+1.0)-1.0)*0.5);
-        const int side=2*ring;
-        const uint32_t first=(uint32_t)(2*ring-1)*(uint32_t)(2*ring-1);
-        const int t=(int)(index-first);
-        if(t<side)return {ring,-ring+t};
-        if(t<2*side)return {ring-(t-side),ring};
-        if(t<3*side)return {-ring,ring-(t-2*side)};
-        return {-ring+(t-3*side),-ring};
+        uint32_t x=(uint32_t)(key ^ (key >> 32));
+        x^=x>>16; x*=0x7feb352du;
+        x^=x>>15; x*=0x846ca68bu;
+        return x^(x>>16);
     }
 
     static std::vector<Point> pack(const std::vector<Point>& input,
                                    float viewportWidth, float viewportHeight)
     {
+        if (viewportWidth<=58.0f || viewportHeight<=54.0f)
+            return input;
         std::vector<Point> positions;
         positions.reserve(input.size());
-        if(viewportWidth<=58.0f || viewportHeight<=54.0f)
-            return input;
-
         const float sw=viewportWidth-56.0f;
         const float sh=viewportHeight-50.0f;
         constexpr float sep=packingSeparationPx;
-        std::unordered_set<uint64_t> occupied;
+        constexpr float sepSq=sep*sep;
+        constexpr float goldenAngle=2.399963229728653f;
+        constexpr float tau=6.283185307179586f;
+
+        // Continuous coordinates instead of rounded square-grid centres.
+        // A spatial hash enforces Euclidean minimum separation, while the
+        // seeded golden-angle spiral preserves local source neighbourhoods.
+        struct Pixel { float x,y; };
+        std::vector<Pixel> placed;
+        placed.reserve(input.size());
+        std::unordered_map<uint64_t,std::vector<uint32_t>> cells;
+        cells.reserve(input.size()*2u+1u);
         std::unordered_map<uint64_t,uint32_t> nextCandidate;
-        occupied.reserve(input.size()*2u+1u);
         nextCandidate.reserve(input.size()/2u+1u);
 
-        for(const auto& source:input)
+        for (const auto& source:input)
         {
             const float mx=std::isfinite(source.x)?source.x:0.5f;
             const float my=std::isfinite(source.y)?source.y:0.5f;
-            const int bx=(int)std::lround(
-                referenceZoom*(28.0f+mx*sw)/sep);
-            const int by=(int)std::lround(
-                referenceZoom*(34.0f+my*sh)/sep);
-            const uint64_t baseKey=cellKey(bx,by);
-            auto& candidate=nextCandidate[baseKey];
-            int cx=bx,cy=by;
-            for(;;)
+            const float ox=referenceZoom*(28.0f+mx*sw);
+            const float oy=referenceZoom*(34.0f+my*sh);
+            const int baseX=(int)std::floor(ox/sep);
+            const int baseY=(int)std::floor(oy/sep);
+            const uint64_t baseKey=cellKey(baseX,baseY);
+            uint32_t& cursor=nextCandidate[baseKey];
+            const float phase=tau*(float)(mix(baseKey)&0x00ffffffu)/16777216.0f;
+            float px=ox,py=oy;
+            int cx=baseX,cy=baseY;
+            for (;;)
             {
-                const auto [ox,oy]=spiralOffset(candidate++);
-                cx=bx+ox;
-                cy=by+oy;
-                if(occupied.insert(cellKey(cx,cy)).second)
-                    break;
+                const uint32_t k=cursor++;
+                if (k!=0u)
+                {
+                    const float angle=phase+(float)k*goldenAngle;
+                    const float radius=sep*0.79f*std::sqrt((float)k);
+                    px=ox+radius*std::cos(angle);
+                    py=oy+radius*std::sin(angle);
+                }
+                cx=(int)std::floor(px/sep);
+                cy=(int)std::floor(py/sep);
+                bool overlap=false;
+                for(int dy=-1;dy<=1 && !overlap;++dy)
+                    for(int dx=-1;dx<=1 && !overlap;++dx)
+                    {
+                        const auto it=cells.find(cellKey(cx+dx,cy+dy));
+                        if(it==cells.end())continue;
+                        for(uint32_t otherIdx:it->second)
+                        {
+                            const auto& p=placed[(size_t)otherIdx];
+                            const float ddx=px-p.x,ddy=py-p.y;
+                            if(ddx*ddx+ddy*ddy<sepSq-0.0001f)
+                            { overlap=true; break; }
+                        }
+                    }
+                if(!overlap)break;
             }
-            positions.push_back({
-                (cx*sep/referenceZoom-28.0f)/sw,
-                (cy*sep/referenceZoom-34.0f)/sh
-            });
+            cells[cellKey(cx,cy)].push_back((uint32_t)placed.size());
+            placed.push_back({px,py});
+            positions.push_back({(px/referenceZoom-28.0f)/sw,
+                                 (py/referenceZoom-34.0f)/sh});
         }
         return positions;
     }
