@@ -60,6 +60,11 @@ jobs:
         run: python -m unittest discover -s Tools -p 'test_ui_polish_08.py' -v
       - name: Verify UI-owned voices and Random zoom and return
         run: python -m unittest discover -s Tools -p 'test_navigation_09.py' -v
+      - name: Verify full-map sound coverage at maximum zoom
+        run: |
+          python -m unittest discover -s Tools -p 'test_map_coverage_10.py' -v
+          c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_point_coverage_10.cpp -o /tmp/atlas-full-coverage-10
+          /tmp/atlas-full-coverage-10
 
   build:
     strategy:

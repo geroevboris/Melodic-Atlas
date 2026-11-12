@@ -3,6 +3,7 @@
 #include "PercussionGate.h"
 #include "AtlasDurationPolicy.h"
 #include "SoundIslandLayout.h"
+#include "AtlasPointCoverage10.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -36,6 +37,39 @@ namespace Atlas
             discoveryPositions.clear();
             discoveryExitStartPixels.clear();
             discoveryMorph = 1.0f;
+            // Keep the existing LOD selection when the ONLY change is a
+            // manual Hide, otherwise one removed marker makes more appear.
+            // Reuse packed coordinates so manual curation does not shuffle
+            // neighbours at the same zoom.
+            bool hideOnly = database && dbSnapshot &&
+                database->size() == dbSnapshot->size() &&
+                !visibleSamplesDirty &&
+                coveragePositions.size() == database->size();
+            bool anyNewHide = false;
+            if (hideOnly)
+                for(size_t i=0;i<database->size();++i)
+                {
+                    const auto& before=(*database)[i];
+                    const auto& after=(*dbSnapshot)[i];
+                    if(before.file != after.file
+                       ||before.mapX!=after.mapX
+                       ||before.mapY!=after.mapY
+                       ||before.neuralMapX!=after.neuralMapX
+                       ||before.neuralMapY!=after.neuralMapY
+                       ||before.isLoop!=after.isLoop
+                       ||before.identityCluster!=after.identityCluster
+                       ||before.identityState!=after.identityState
+                       ||before.dynamicSubgroup!=after.dynamicSubgroup
+                       ||before.characterMask!=after.characterMask
+                       ||before.hiddenFromAtlas && !after.hiddenFromAtlas)
+                    {
+                        hideOnly=false;
+                        break;
+                    }
+                    if(!before.hiddenFromAtlas && after.hiddenFromAtlas)
+                        anyNewHide=true;
+                }
+            hideOnly = hideOnly && anyNewHide;
             database = std::move(dbSnapshot);
             // Require complete coverage: a partial imported projection must
             // not mix neural and legacy coordinates on the same map.
@@ -47,9 +81,32 @@ namespace Atlas
                         neuralMapActive = false;
                         break;
                     }
+            if (!hideOnly)
+                rebuildCoveragePositions();
             rebuildIslandOverlays();
-            candidateOrderDirty = true;
-            visibleSamplesDirty = true;
+            candidateOrderDirty = !hideOnly;
+            if (hideOnly)
+            {
+                sortedCandidateIndices.erase(
+                    std::remove_if(sortedCandidateIndices.begin(),
+                        sortedCandidateIndices.end(),
+                        [this](int i) {
+                            return i<0 ||i>=(int)database->size()
+                                ||(*database)[(size_t)i].hiddenFromAtlas;
+                        }),sortedCandidateIndices.end());
+            }
+            if (hideOnly)
+            {
+                visibleSampleIndices.erase(
+                    std::remove_if(visibleSampleIndices.begin(),
+                        visibleSampleIndices.end(),
+                        [this](int i) {
+                            return i<0 ||i>=(int)database->size()
+                                ||(*database)[(size_t)i].hiddenFromAtlas;
+                        }),visibleSampleIndices.end());
+                visibleSamplesDirty = false;
+            }
+            else visibleSamplesDirty = true;
             activeSampleIndex = -1;
             hoveredSampleIndex = -1;
             auditionHistory.clear();
@@ -219,6 +276,8 @@ namespace Atlas
 
         void resized() override
         {
+            rebuildCoveragePositions();
+            rebuildIslandOverlays();
             visibleSamplesDirty = true;
         }
 
@@ -550,21 +609,65 @@ namespace Atlas
         }
 
     private:
+        void rebuildCoveragePositions()
+        {
+            coveragePositions.clear();
+            if(!database || getWidth()<100 || getHeight()<100)
+                return;
+            coveragePositions.resize(database->size(),
+                                     {-1000.0f,-1000.0f});
+            std::vector<AtlasPointCoverage10::Point> sources;
+            std::vector<int> indices;
+            sources.reserve(database->size());
+            indices.reserve(database->size());
+            for(int i=0;i<(int)database->size();++i)
+            {
+                const auto& rec=(*database)[(size_t)i];
+                // Explicitly hidden records KEEP their allocated cell so
+                // removing a sound cannot rearrange its neighbours.
+                // Permanently excluded short/drum samples are not shown
+                // and do not consume scarce space.
+                if(!AtlasDurationPolicy::isEligible(rec.durationSec)
+                   || PercussionGate::shouldExcludeFromAtlas(rec))
+                    continue;
+                const auto pos=effectiveMapCoordinates(rec);
+                sources.push_back({pos.x,pos.y});
+                indices.push_back(i);
+            }
+            const auto packed=AtlasPointCoverage10::pack(sources,
+                (float)getWidth(),(float)getHeight()-26.0f);
+            for(size_t n=0;n<indices.size();++n)
+                coveragePositions[(size_t)indices[n]]={
+                    packed[n].x,packed[n].y};
+        }
+
+        juce::Point<float> coverageMapPosition(int i) const
+        {
+            if(i>=0 && (size_t)i<coveragePositions.size())
+            {
+                const auto& p=coveragePositions[(size_t)i];
+                if(p.x>-100.0f && p.y>-100.0f)
+                    return p;
+            }
+            return effectiveMapCoordinates((*database)[(size_t)i]);
+        }
+
         void rebuildIslandOverlays()
         {
             for (auto& island : islandOverlays)
                 island = {};
             if (database == nullptr)
                 return;
-            for (const auto& rec : *database)
+            for (int idx=0;idx<(int)database->size();++idx)
             {
+                const auto& rec=(*database)[(size_t)idx];
                 if (rec.visualIslandGroup < 0 || rec.visualIslandGroup >= SoundIslandLayout::maxIslands
                     || !rec.neuralMapValid || rec.isLoop != showLoopsOnly
                     || !matchesCurrentFilter(rec))
                     continue;
                 auto& island = islandOverlays[(size_t)rec.visualIslandGroup];
                 island.islandId = rec.visualIslandGroup;
-                const auto position=effectiveMapCoordinates(rec);
+                const auto position=coverageMapPosition(idx);
                 island.points.push_back(position);
                 ++island.count;
                 island.centreX += position.x;
@@ -634,8 +737,12 @@ namespace Atlas
                 const float area = juce::MathConstants<float>::pi * meanSq;
                 const float density = (float)island.count
                     / std::max(1.0f, area * 9500.0f);
-                island.fillAlpha = juce::jlimit(0.065f, 0.25f,
-                    0.065f + 0.185f * (1.0f - std::exp(-density)));
+                // The fill represents ALL sounds in the island (not only
+                // LOD representatives). Preserve useful density contrast
+                // over a broad range of library sizes.
+                island.fillAlpha = juce::jlimit(0.055f, 0.38f,
+                    0.055f + 0.325f *
+                    (1.0f - std::exp(-0.55f * std::sqrt(density))));
                 island.points.clear();
             }
         }
@@ -749,6 +856,18 @@ namespace Atlas
             drawZoomBtn(zoomOutRect,   "-");
             drawZoomBtn(zoomInRect,    "+");
             drawZoomBtn(zoomResetRect, juce::String(zoomFactor, 1) + "x");
+            if (!discoveryActive && !discoveryReturning && w > 950.0f)
+            {
+                // Honest library coverage indicator: dots currently
+                // selected by LOD vs *all* filtered sounds. Zoom to 18x
+                // to see every item, including formerly hidden overlaps.
+                const juce::String progress = "POINTS " +
+                    juce::String((int)visibleSampleIndices.size()) + " / " +
+                    juce::String((int)sortedCandidateIndices.size());
+                g.setColour(juce::Colour(0xff8c9dab));
+                g.drawText(progress,(int)w-355,4,240,20,
+                           juce::Justification::centredRight,true);
+            }
         }
 
         void drawBottomHistoryBar(juce::Graphics& g, float w, float h, float mapBottomY)
@@ -929,7 +1048,8 @@ namespace Atlas
                 {
                     const float alpha=discoveryMorph*discoveryMorph*
                         (3.0f-2.0f*discoveryMorph);
-                    const auto end=mapToScreen(rec);
+                    const auto target=coverageMapPosition(sampleIndex);
+                    const auto end=mapToScreen(target.x,target.y);
                     return {
                         juce::jmap(alpha,end.x,it->second.x),
                         juce::jmap(alpha,end.y,it->second.y)
@@ -941,7 +1061,7 @@ namespace Atlas
                 const auto it=discoveryPositions.find(sampleIndex);
                 if(it!=discoveryPositions.end())
                 {
-                    const auto original=effectiveMapCoordinates(rec);
+                    const auto original=coverageMapPosition(sampleIndex);
                     const auto goal=it->second;
                     const float alpha=discoveryMorph*discoveryMorph*
                         (3.0f-2.0f*discoveryMorph);
@@ -950,7 +1070,8 @@ namespace Atlas
                         juce::jmap(alpha,original.y,goal.y));
                 }
             }
-            return mapToScreen(rec);
+            const auto point=coverageMapPosition(sampleIndex);
+            return mapToScreen(point.x,point.y);
         }
 
         juce::Point<float> mapToScreen(const SampleRecord& rec) const
@@ -1026,13 +1147,24 @@ namespace Atlas
                     });
             }
 
-            // Increase separation for click/drag audition. This is display-
-            // only LOD; the persistent semantic coordinates never move.
-            // More markers at overview zoom, with density also encoded
-            // in the underlying organic regions. No enlarged sample dots.
-            const float minSpacingPx = juce::jmap(
-                juce::jlimit(1.0f, 18.0f, zoomFactor),
-                1.0f, 18.0f, 10.5f, 14.5f);
+            // All eligible sounds MUST be reachable. The old LOD silently
+            // capped density even at 18x, so hiding one marker could reveal
+            // several more. At maximum zoom the collision-free packing
+            // guarantees a separate dot for EVERY filtered sample.
+            if (zoomFactor >= AtlasPointCoverage10::referenceZoom - 0.001f)
+            {
+                visibleSampleIndices = sortedCandidateIndices;
+                return;
+            }
+            // More information already at overview zoom. Spacing steadily
+            // decreases with zoom; no threshold that increases on approach.
+            const float logZoom = std::log(
+                juce::jlimit(1.0f, AtlasPointCoverage10::referenceZoom,
+                            zoomFactor));
+            const float normalizedZoom=logZoom/
+                std::log(AtlasPointCoverage10::referenceZoom);
+            const float minSpacingPx=juce::jmap(
+                normalizedZoom,8.0f,5.7f);
             const float width = (float)getWidth();
             const float height = (float)getHeight() - 26.0f;
             const float cellSize = minSpacingPx;
@@ -1051,7 +1183,7 @@ namespace Atlas
             {
                 const auto& rec = (*database)[(size_t)candidateIndex];
                 // Use the very same transform as the renderer, minus pan.
-                const auto coords = effectiveMapCoordinates(rec);
+                const auto coords = coverageMapPosition(candidateIndex);
                 const float x = (width * 0.5f +
                     (28.0f + coords.x * (width - 56.0f) - width * 0.5f) * zoomFactor);
                 const float y = (height * 0.5f +
@@ -1168,6 +1300,9 @@ namespace Atlas
         mutable std::vector<int> sortedCandidateIndices;
         mutable bool visibleSamplesDirty = true;
         mutable std::vector<int> visibleSampleIndices;
+        // Collision-free display positions at the existing 18x maximum.
+        // Never persisted in CLAP or project state.
+        std::vector<juce::Point<float>> coveragePositions;
 
         // UI-only temporary random discovery cloud.
         bool discoveryActive = false;
