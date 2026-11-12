@@ -21,11 +21,13 @@ class Map10(unittest.TestCase):
         m=src("MapCanvasGL.h")
         self.assertIn("normalizedZoom,8.0f,5.7f",m)
         self.assertIn('const juce::String progress = "POINTS "',m)
-        self.assertIn("island.fillAlpha = juce::jlimit(0.055f, 0.38f",m)
+        self.assertIn("island.fillAlpha = juce::jlimit(0.045f, 0.22f",m)
     def test_original_vectors_unchanged(self):
         packed=src("AtlasPointCoverage10.h")
-        self.assertIn("std::unordered_set<uint64_t> occupied",packed)
+        self.assertIn("std::unordered_map<uint64_t,std::vector<uint32_t>> cells",packed)
         self.assertIn("nextCandidate[baseKey]",packed)
+        self.assertIn("goldenAngle",packed)
+        self.assertIn("ddx*ddx+ddy*ddy<sepSq",packed)
         self.assertNotIn("neuralMapX =",src("MapCanvasGL.h"))
         self.assertNotIn("projectionX =",src("MapCanvasGL.h"))
 if __name__=="__main__":
