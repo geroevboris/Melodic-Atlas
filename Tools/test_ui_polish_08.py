@@ -33,7 +33,10 @@ class Polish08Contract(unittest.TestCase):
         self.assertIn("drawSoundIslands(g);",canvas)
     def test_character_only_four_extremes(self):
         atlas=read("Source/AtlasTypes.h")
-        text=atlas.split("case ClusterGroup::Other:")[1].split("default:",1)[0]
+        # AtlasTypes has more than one switch with ClusterGroup::Other;
+        # anchor specifically to the Character dropdown, not the first
+        # "Unknown" string conversion switch.
+        text=atlas.split('{ "Clear Character"',1)[1].split("default:",1)[0]
         for s in ("Character_Bright","Character_Dark","Character_Pluck","Character_Sustain"):
             self.assertIn(s,text)
         for s in ("Character_Warm","Character_Clean","Character_Noisy",
