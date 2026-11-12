@@ -13,11 +13,11 @@ namespace Atlas
             setColour(juce::Slider::textBoxOutlineColourId,
                       juce::Colours::transparentBlack);
             setColour(juce::PopupMenu::backgroundColourId,
-                      juce::Colour(0xff161b23));
+                      juce::Colour(0xff1b2430));
             setColour(juce::PopupMenu::textColourId,
-                      juce::Colour(0xffdce5f0));
+                      juce::Colour(0xffe5edf5));
             setColour(juce::PopupMenu::highlightedBackgroundColourId,
-                      juce::Colour(0xff294236));
+                      juce::Colour(0xff294862));
             setColour(juce::PopupMenu::highlightedTextColourId,
                       juce::Colours::white);
             setColour(juce::TooltipWindow::backgroundColourId,
@@ -25,7 +25,23 @@ namespace Atlas
             setColour(juce::TooltipWindow::textColourId,
                       juce::Colour(0xffe2eaf4));
             setColour(juce::TooltipWindow::outlineColourId,
-                      juce::Colour(0xff7ec8a3));
+                      juce::Colour(0xff52b8e9));
+        }
+
+        juce::Font getPopupMenuFont() override
+        {
+            return juce::Font(juce::Font::getDefaultSansSerifFontName(),
+                              13.5f, juce::Font::plain);
+        }
+
+        void drawPopupMenuBackground(juce::Graphics& g,
+                                     int width, int height) override
+        {
+            g.fillAll(juce::Colour(0xff19212c));
+            g.setColour(juce::Colour(0xff35495c));
+            g.drawRect(0, 0, width, height, 1);
+            g.setColour(juce::Colour(0xff438fc2).withAlpha(0.55f));
+            g.drawHorizontalLine(0, 1.0f, (float)(width - 1));
         }
 
         void drawRotarySlider(juce::Graphics& g, int x, int y,
@@ -62,7 +78,7 @@ namespace Atlas
                     valArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
                                          0.0f, std::min(midAngle, toAngle),
                                          std::max(midAngle, toAngle), true);
-                    g.setColour(juce::Colour(0xff7ec8a3));
+                    g.setColour(juce::Colour(0xff55b6e8));
                     g.strokePath(valArc, juce::PathStrokeType(
                         2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
                 }
@@ -72,7 +88,7 @@ namespace Atlas
                 juce::Path valArc;
                 valArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
                                      0.0f, rotaryStartAngle, toAngle, true);
-                g.setColour(juce::Colour(0xff7ec8a3));
+                g.setColour(juce::Colour(0xff55b6e8));
                 g.strokePath(valArc, juce::PathStrokeType(
                     2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
@@ -211,6 +227,8 @@ private:
     std::array<uint32_t, 7> selectedClusterSubgroupBit { 0, 0, 0, 0, 0, 0, 0 };
     std::array<juce::String, 7> selectedDynamicSubgroups {};
     uint32_t selectedMoodMask = 0;
+    bool diceHovered = false;
+    uint32_t diceLastClickedMs = 0;
 
     std::set<int> selectedPads { 0 };
     int primarySelectedPad = 0;

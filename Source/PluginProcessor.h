@@ -99,8 +99,8 @@ public:
     std::atomic<bool> padSettingsLocked { false };
 
     std::atomic<float> glideTime { 0.0f };
-    std::atomic<float> reverbAmount { 0.25f };
-    std::atomic<float> bankReverbAmount { 0.30f };
+    std::atomic<float> reverbAmount { 0.0f };
+    std::atomic<float> bankReverbAmount { 0.0f };
     std::atomic<float> bankPitchSemitones { 0.0f };
     std::atomic<float> masterVolumeDb { 0.0f };
 

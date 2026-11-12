@@ -56,6 +56,8 @@ jobs:
           c++ -std=c++17 -Wall -Wextra -pedantic -ISource Tools/test_dynamic_taxonomy07_policy.cpp -o /tmp/atlas-dynamic07
           /tmp/atlas-dynamic07
           python -m unittest discover -s Tools -p 'test_dynamic_taxonomy07_contract.py' -v
+      - name: Verify final Electric Pulse and Dice Cloud UI contract
+        run: python -m unittest discover -s Tools -p 'test_ui_polish_08.py' -v
 
   build:
     strategy:

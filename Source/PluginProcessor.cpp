@@ -7,6 +7,7 @@
 #include "ClapLibraryClassifier.h"
 #include "ClapPrimaryRecovery06.h"
 #include "AdaptiveTaxonomy07.h"
+#include "CharacterAnalyzer.h"
 // Compile-validate the optional 9C scorer. No runtime classification switch.
 #include "ClapTextPrototypeCandidate9C.h"
 #include "ClapDrumLoopGate9E.h"
@@ -804,6 +805,9 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
                 0.0f, 1.0f,
                 (float)item.getProperty("char" + juce::String((int)feature), 0.0f));
 
+        // Character extremes can be recomputed from saved DSP descriptors,
+        // so old caches adopt the new filter semantics without rescan.
+        Atlas::CharacterAnalyzer::evaluate(rec);
         applyAtlasOverrides(rec);
         // 9E applies the conservative, validated CLAP drum-loop gate
         // to existing cached vectors: no Refresh or re-scan required.
@@ -1192,6 +1196,9 @@ void MelodicAtlasAudioProcessor::run()
         Atlas::AdaptiveTaxonomy07::classify(newRecords);
         for (auto& record : newRecords)
         {
+            // A Refresh can reuse old cached audio descriptors. Recompute
+            // the four Character extremes without rescanning WAV audio.
+            Atlas::CharacterAnalyzer::evaluate(record);
             Atlas::InstrumentSubgroupTags::evaluate(record.file, record);
             Atlas::DynamicSubgroupTags9F::apply(record);
             applyAtlasOverrides(record);
@@ -1371,8 +1378,8 @@ void MelodicAtlasAudioProcessor::setStateInformation(const void* data, int sizeI
     bpmLockedToHost.store(state.getProperty("bpmLocked", true));
     currentBpm.store(state.getProperty("manualBpm", 120.0));
     globalBpmMultiplier.store((float)state.getProperty("bpmMult", 1.0f));
-    reverbAmount.store(state.getProperty("reverb", 0.25f));
-    bankReverbAmount.store(state.getProperty("bankReverb", 0.30f));
+    reverbAmount.store(state.getProperty("reverb", 0.0f));
+    bankReverbAmount.store(state.getProperty("bankReverb", 0.0f));
     // Migrate old preview octave into the single unified Tune parameter.
     const float oldPreviewTune = (float)state.getProperty("bankPitch", 0.0f);
     const int oldPreviewOctave = juce::jlimit(-2, 2,

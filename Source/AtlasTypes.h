@@ -479,14 +479,10 @@ namespace Atlas
                 case ClusterGroup::Other:
                     return {
                         { "Clear Character", "", Sub_None },
-                        { "Dark", "DARK", Character_Dark },
                         { "Bright", "BRIGHT", Character_Bright },
-                        { "Warm", "WARM", Character_Warm },
-                        { "Clean", "CLEAN", Character_Clean },
-                        { "Noisy", "NOISY", Character_Noisy },
-                        { "Plucky", "PLUCK", Character_Pluck },
-                        { "Sustained", "SUST", Character_Sustain },
-                        { "Textural", "TEXT", Character_Textural }
+                        { "Dark", "DARK", Character_Dark },
+                        { "Pluck", "PLUCK", Character_Pluck },
+                        { "Sustain", "SUST", Character_Sustain }
                     };
                 default:
                     return {};
@@ -533,17 +529,15 @@ namespace Atlas
         // Passing shade = -1 returns the neutral/base hue for the legend.
         static juce::Colour getSpectralRegionColour(int region, int /*shade*/)
         {
-            // Fixed hue by MUSICAL REGISTER, never attack lightness.
-            // HSV sat/value are identical for all four colours.
-            static constexpr float hues[] = {
-                0.612f, // low: blue
-                0.762f, // low-mid: violet
-                0.468f, // upper-mid: teal
-                0.097f  // high: amber
+            // Approved palette: register colours are categorical, no glow,
+            // attack-dependent shade or altered luminance.
+            static constexpr uint32_t colours[] = {
+                0xfff52c29, // LOW: Racing Red
+                0xff3c83c2, // LOW-MID: Steel Blue
+                0xff05b183, // HIGH-MID: Mint Leaf
+                0xffffbf29  // HIGH: Amber Gold
             };
-            return juce::Colour::fromHSV(
-                hues[(size_t)juce::jlimit(0, 3, region)],
-                0.75f, 0.93f, 1.0f);
+            return juce::Colour(colours[(size_t)juce::jlimit(0, 3, region)]);
         }
 
         static juce::Colour getClapFamilyColour(const SampleRecord& rec)

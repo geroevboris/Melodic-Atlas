@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 #include <unordered_map>
 
 namespace Atlas
@@ -28,6 +29,10 @@ namespace Atlas
 
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
+            discoveryActive = false;
+            discoveryIndices.clear();
+            discoveryPositions.clear();
+            discoveryMorph = 1.0f;
             database = std::move(dbSnapshot);
             rebuildIslandOverlays();
             // Require complete coverage: a partial imported projection must
@@ -54,6 +59,8 @@ namespace Atlas
                            const std::array<juce::String, 7>& perClusterDynamicSubs,
                            uint32_t moodMask)
         {
+            if (discoveryActive)
+                endDiscovery();
             showLoopsOnly = loopsTab;
             activeClustersMask = clustersMask;
             clusterSubMasks = perClusterSubs;
@@ -62,6 +69,86 @@ namespace Atlas
             rebuildIslandOverlays();
             candidateOrderDirty = true;
             visibleSamplesDirty = true;
+            repaint();
+        }
+
+        bool isDiscoveryActive() const { return discoveryActive; }
+
+        // Choose random playable samples from the WHOLE library, ignoring
+        // instrument, character and one-shot/loop filters. No database
+        // mutation, no recomputation of neural geometry or saved state.
+        void rollDiscovery(int count = 36)
+        {
+            if (!database) return;
+            std::vector<int> choices;
+            choices.reserve(database->size());
+            for (int i = 0; i < (int)database->size(); ++i)
+            {
+                const auto& rec = (*database)[(size_t)i];
+                if (!rec.hiddenFromAtlas &&
+                    AtlasDurationPolicy::isEligible(rec.durationSec) &&
+                    !PercussionGate::shouldExcludeFromAtlas(rec))
+                    choices.push_back(i);
+            }
+            if (choices.empty()) return;
+
+            if (!discoveryActive)
+            {
+                originalZoom = zoomFactor;
+                originalPan = panOffset;
+            }
+            discoveryActive = true;
+            zoomFactor = 1.0f;
+            panOffset = {0.0f, 0.0f};
+            auto& random = juce::Random::getSystemRandom();
+            for (int i = 0; i < (int)choices.size(); ++i)
+            {
+                const int j = i + random.nextInt((int)choices.size() - i);
+                std::swap(choices[(size_t)i], choices[(size_t)j]);
+            }
+            const int n = juce::jmin(count, (int)choices.size());
+            discoveryIndices.assign(choices.begin(), choices.begin() + n);
+            discoveryPositions.clear();
+            const float offset = random.nextFloat() *
+                juce::MathConstants<float>::twoPi;
+            // Tight, non-overlapping-looking disk with no islands or
+            // implied LOW/HIGH/attack axis semantics in Discovery mode.
+            for (int i = 0; i < n; ++i)
+            {
+                const float r = std::sqrt((i + 0.5f) / (float)n);
+                const float angle = offset + i * 2.39996323f;
+                discoveryPositions.emplace(discoveryIndices[(size_t)i],
+                    juce::Point<float>(
+                        0.5f + 0.145f * r * std::cos(angle),
+                        0.5f + 0.22f * r * std::sin(angle)));
+            }
+            discoveryMorph = 0.0f;
+            candidateOrderDirty = true;
+            visibleSamplesDirty = true;
+            startTimerHz(30);
+            repaint();
+        }
+
+        void endDiscovery()
+        {
+            if (!discoveryActive) return;
+            discoveryActive = false;
+            discoveryIndices.clear();
+            discoveryPositions.clear();
+            discoveryMorph = 1.0f;
+            zoomFactor = originalZoom;
+            panOffset = originalPan;
+            rebuildIslandOverlays();
+            candidateOrderDirty = true;
+            visibleSamplesDirty = true;
+            repaint();
+        }
+
+        void showParameterValue(const juce::String& message)
+        {
+            temporaryParameterText = message;
+            parameterUntil = juce::Time::getMillisecondCounter() + 1400u;
+            startTimerHz(30);
             repaint();
         }
 
@@ -103,21 +190,21 @@ namespace Atlas
             for (int r = 1; r < 8; ++r)
                 g.drawHorizontalLine((int)((mapBottomY / 8.0f) * (float)r), 0.0f, w);
 
-            // Quiet axis hints remain fixed while the star map zooms.
-            // Y represents initial attack: soft/slow at top, sharp/fast below.
+            // In Discovery mode, central positions are intentionally random
+            // and have no spectral or envelope meaning.
             g.setColour(juce::Colour(0xff637384).withAlpha(0.65f));
             g.setFont(juce::Font(
                 juce::Font::getDefaultMonospacedFontName(),
                 9.0f, juce::Font::plain));
-            g.drawText("SOFT", 5, 29, 56, 14,
-                       juce::Justification::centredLeft, false);
-            g.drawText("SHARP", 5, (int)mapBottomY - 21, 56, 14,
-                       juce::Justification::centredLeft, false);
-            g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
-                       juce::Justification::centredLeft, false);
-            g.drawText("HIGH FREQ", (int)w - 94,
-                       (int)mapBottomY - 21, 86, 14,
-                       juce::Justification::centredRight, false);
+            if (!discoveryActive)
+            {
+                // X = musical register; Y = CLAP similarity, NOT attack.
+                g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
+                           juce::Justification::centredLeft, false);
+                g.drawText("HIGH FREQ", (int)w - 94,
+                           (int)mapBottomY - 21, 86, 14,
+                           juce::Justification::centredRight, false);
+            }
 
             if (crosshairAlpha > 0.01f)
             {
@@ -135,11 +222,12 @@ namespace Atlas
             if (database != nullptr)
             {
                 ensureVisibleSamples();
-                drawSoundIslands(g);
+                if (!discoveryActive)
+                    drawSoundIslands(g);
                 for (int i : visibleSampleIndices)
                 {
                     const auto& rec = (*database)[(size_t)i];
-                    auto pt = mapToScreen(rec);
+                    auto pt = mapToScreenForIndex(i);
                     if (pt.x < -4.0f || pt.x > w + 4.0f ||
                         pt.y < 26.0f || pt.y > mapBottomY - 4.0f)
                     {
@@ -151,23 +239,26 @@ namespace Atlas
 
                     juce::Colour dotCol = MusicMath::getClapFamilyColour(rec);
 
-                    float radius = isActive ? 3.6f : (isHovered ? 2.8f : 1.9f);
-
+                    // Three stable, deliberately restrained point sizes
+                    // (88% of the prototype scale). No glow or soft halos.
+                    const uint32_t hash = (uint32_t)
+                        rec.file.getFullPathName().hashCode();
+                    const unsigned sizeGroup = hash % 100u;
+                    float radius = sizeGroup < 62u ? 1.45f
+                        : (sizeGroup < 88u ? 1.92f : 2.55f);
+                    if (isHovered) radius = juce::jmax(radius, 2.85f);
                     if (isActive)
                     {
-                        g.setColour(dotCol.withAlpha(isHoldingSample ? 0.55f : 0.30f));
-                        float haloR = isHoldingSample ? 9.5f : 6.5f;
-                        g.fillEllipse(pt.x - haloR, pt.y - haloR, haloR * 2.0f, haloR * 2.0f);
-
-                        if (isHoldingSample)
-                        {
-                            g.setColour(juce::Colours::white.withAlpha(0.85f));
-                            g.drawEllipse(pt.x - 11.0f, pt.y - 11.0f, 22.0f, 22.0f, 1.4f);
-                        }
+                        radius = 3.35f;
+                        g.setColour(juce::Colours::white.withAlpha(0.86f));
+                        g.drawEllipse(pt.x - radius - 2.4f,
+                                      pt.y - radius - 2.4f,
+                                      2.0f * (radius + 2.4f),
+                                      2.0f * (radius + 2.4f), 1.0f);
                     }
-
                     g.setColour(isActive ? juce::Colours::white : dotCol);
-                    g.fillEllipse(pt.x - radius, pt.y - radius, radius * 2.0f, radius * 2.0f);
+                    g.fillEllipse(pt.x - radius, pt.y - radius,
+                                  radius * 2.0f, radius * 2.0f);
                 }
             }
 
@@ -368,16 +459,30 @@ namespace Atlas
 
         void timerCallback() override
         {
+            bool active = false;
             if (crosshairAlpha > 0.0f)
             {
-                crosshairAlpha -= 0.06f;
-                if (crosshairAlpha <= 0.0f)
-                {
-                    crosshairAlpha = 0.0f;
-                    stopTimer();
-                }
+                crosshairAlpha = juce::jmax(0.0f, crosshairAlpha - 0.06f);
+                active = crosshairAlpha > 0.0f;
                 repaint();
             }
+            if (discoveryActive && discoveryMorph < 1.0f)
+            {
+                discoveryMorph = juce::jmin(1.0f, discoveryMorph + 0.13f);
+                active = discoveryMorph < 1.0f || active;
+                repaint();
+            }
+            if (temporaryParameterText.isNotEmpty())
+            {
+                if ((int32_t)(juce::Time::getMillisecondCounter()
+                            - parameterUntil) >= 0)
+                {
+                    temporaryParameterText.clear();
+                }
+                else active = true;
+                repaint();
+            }
+            if (!active) stopTimer();
         }
 
     private:
@@ -531,20 +636,30 @@ namespace Atlas
 
             // Stable musical register, low to high from left to right.
             // Colours no longer encode attack or per-sound lightness.
-            static constexpr const char* names[] = {
-                "LOW", "LOW-MID", "HIGH-MID", "HIGH"
-            };
             g.setFont(monoSmall);
-            float lx = 12.0f;
-            for (int c = 0; c < 4; ++c)
+            if (discoveryActive)
             {
-                g.setColour(MusicMath::getSpectralRegionColour(c, -1));
-                g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
-                lx += 11.0f;
-                g.setColour(juce::Colour(0xff9aa7b8));
-                g.drawText(names[c], (int)lx, 4, 59, 18,
-                           juce::Justification::centredLeft, false);
-                lx += 72.0f;
+                g.setColour(juce::Colour(0xffbed3e4));
+                g.drawText("RANDOM  /  " +
+                    juce::String((int)discoveryIndices.size()) + " SOUNDS",
+                    14, 4, 255, 18, juce::Justification::centredLeft, false);
+            }
+            else
+            {
+                static constexpr const char* names[] = {
+                    "LOW", "LOW-MID", "HIGH-MID", "HIGH"
+                };
+                float lx = 12.0f;
+                for (int c = 0; c < 4; ++c)
+                {
+                    g.setColour(MusicMath::getSpectralRegionColour(c, -1));
+                    g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
+                    lx += 11.0f;
+                    g.setColour(juce::Colour(0xff9aa7b8));
+                    g.drawText(names[c], (int)lx, 4, 59, 18,
+                               juce::Justification::centredLeft, false);
+                    lx += 72.0f;
+                }
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
@@ -610,7 +725,17 @@ namespace Atlas
                 }
             }
 
-            if (database != nullptr &&
+            if (temporaryParameterText.isNotEmpty())
+            {
+                g.setColour(juce::Colour(0xff65c5ef));
+                g.setFont(juce::Font(juce::Font::getDefaultSansSerifFontName(),
+                                    12.0f, juce::Font::bold));
+                g.drawText(temporaryParameterText,
+                           (int)(w * 0.45f), (int)mapBottomY,
+                           (int)(w * 0.54f) - 8, 26,
+                           juce::Justification::centredRight, true);
+            }
+            else if (database != nullptr &&
                 activeSampleIndex >= 0 &&
                 activeSampleIndex < (int)database->size())
             {
@@ -717,6 +842,26 @@ namespace Atlas
                 : juce::Point<float>(rec.mapX, rec.mapY);
         }
 
+        juce::Point<float> mapToScreenForIndex(int sampleIndex) const
+        {
+            const auto& rec = (*database)[(size_t)sampleIndex];
+            if (discoveryActive)
+            {
+                const auto it = discoveryPositions.find(sampleIndex);
+                if (it != discoveryPositions.end())
+                {
+                    const auto original = effectiveMapCoordinates(rec);
+                    const auto goal = it->second;
+                    const float alpha = discoveryMorph * discoveryMorph *
+                        (3.0f - 2.0f * discoveryMorph);
+                    return mapToScreen(
+                        juce::jmap(alpha, original.x, goal.x),
+                        juce::jmap(alpha, original.y, goal.y));
+                }
+            }
+            return mapToScreen(rec);
+        }
+
         juce::Point<float> mapToScreen(const SampleRecord& rec) const
         {
             const auto pt = effectiveMapCoordinates(rec);
@@ -748,6 +893,11 @@ namespace Atlas
             visibleSampleIndices.clear();
             if (database == nullptr || getWidth() <= 0 || getHeight() <= 26)
                 return;
+            if (discoveryActive)
+            {
+                visibleSampleIndices = discoveryIndices;
+                return;
+            }
 
             // Sorting and category checks are O(N log N). Cache that work
             // across trackpad zoom events; rebuild only after scan/filter changes.
@@ -854,7 +1004,7 @@ namespace Atlas
             for (int i : visibleSampleIndices)
             {
                 const auto& rec = (*database)[(size_t)i];
-                float dSq = mousePt.getDistanceSquaredFrom(mapToScreen(rec));
+                float dSq = mousePt.getDistanceSquaredFrom(mapToScreenForIndex(i));
                 if (dSq < bestDistSq)
                 {
                     bestDistSq = dSq;
@@ -922,6 +1072,16 @@ namespace Atlas
         mutable std::vector<int> sortedCandidateIndices;
         mutable bool visibleSamplesDirty = true;
         mutable std::vector<int> visibleSampleIndices;
+
+        // UI-only temporary random discovery cloud.
+        bool discoveryActive = false;
+        std::vector<int> discoveryIndices;
+        std::unordered_map<int, juce::Point<float>> discoveryPositions;
+        float discoveryMorph = 1.0f;
+        float originalZoom = 1.0f;
+        juce::Point<float> originalPan {0.0f, 0.0f};
+        juce::String temporaryParameterText;
+        uint32_t parameterUntil = 0;
 
         float zoomFactor = 1.0f;
         juce::Point<float> panOffset { 0.0f, 0.0f };

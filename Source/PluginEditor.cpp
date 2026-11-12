@@ -27,7 +27,10 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         if (!known)
             selectedClusterSubgroupBit[(size_t)c] = 0;
     }
-    selectedMoodMask = audioProcessor.savedMoodMask;
+    // Only four unambiguous, measured extremes remain in Character.
+    selectedMoodMask = audioProcessor.savedMoodMask &
+        (Atlas::Character_Bright | Atlas::Character_Dark |
+         Atlas::Character_Pluck | Atlas::Character_Sustain);
     primarySelectedPad = audioProcessor.primarySelectedPad;
 
     selectedPads.clear();
@@ -205,7 +208,28 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
         s.setValue(defV, juce::dontSendNotification);
         s.onValueChange = [this, cb, &s]()
         {
-            cb((float)s.getValue());
+            const float value = (float)s.getValue();
+            cb(value);
+            juce::String message;
+            if (&s == &masterVolSlider)
+            {
+                message = "MAIN: " + juce::String(value, 1) + " dB";
+            }
+            else if (&s == &previewTuneSlider)
+            {
+                message = "TUNE: " +
+                    juce::String(juce::roundToInt(value) > 0 ? "+" : "") +
+                    juce::String(juce::roundToInt(value)) + " st";
+            }
+            else
+            {
+                const bool map = (&s == &mapReverbSlider);
+                const float actualWet = value * (map ? 45.0f : 48.0f);
+                message = juce::String(map ? "MAP REV: " : "BANK REV: ") +
+                    "DRY 100% / WET " +
+                    juce::String(juce::roundToInt(actualWet)) + "%";
+            }
+            mapCanvas.showParameterValue(message);
             s.repaint();
         };
         addAndMakeVisible(s);
@@ -218,14 +242,14 @@ MelodicAtlasAudioProcessorEditor::MelodicAtlasAudioProcessorEditor(
     previewTuneSlider.setValue(audioProcessor.bankPitchSemitones.load(),
                                juce::dontSendNotification);
 
-    setupEncoder(mapReverbSlider, "REV", "Map Preview Reverb - Double-click to reset",
-                 0.0f, 1.0f, 0.25f,
+     setupEncoder(mapReverbSlider, "REV", "Map Preview Reverb - Double-click to reset",
+                 0.0f, 1.0f, 0.0f,
                  [this](float v) { audioProcessor.reverbAmount.store(v); });
     mapReverbSlider.setValue(audioProcessor.reverbAmount.load(),
                              juce::dontSendNotification);
 
-    setupEncoder(bankReverbSlider, "REV", "Bank Pads Reverb - Double-click to reset",
-                 0.0f, 1.0f, 0.30f,
+     setupEncoder(bankReverbSlider, "REV", "Bank Pads Reverb - Double-click to reset",
+                 0.0f, 1.0f, 0.0f,
                  [this](float v) { audioProcessor.bankReverbAmount.store(v); });
     bankReverbSlider.setValue(audioProcessor.bankReverbAmount.load(),
                               juce::dontSendNotification);
@@ -391,7 +415,7 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
         gx += btnW + 6.0f;
     }
     // Keep Discover next to the last filter, never on the left by ALL.
-    btnDiscover = { gx + 4.0f, row1Y, 59.0f, 24.0f };
+    btnDiscover = { gx + 4.0f, row1Y, 34.0f, 24.0f };
 
     // One global preview Tune knob; no separate octave.
     btnOctUp = btnOctDown = octValueRect = octLabelRect = {};
@@ -464,7 +488,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     g.setColour(juce::Colour(0xff252d3a));
     g.drawHorizontalLine(40, 0.0f, (float)getWidth());
 
-    g.setColour(juce::Colour(0xff7ec8a3));
+    g.setColour(juce::Colour(0xff62bfe9));
     g.drawLine(14.0f, 27.0f, 20.0f, 13.0f, 2.0f);
     g.drawLine(20.0f, 13.0f, 24.0f, 23.0f, 2.0f);
     g.drawLine(24.0f, 23.0f, 29.0f, 13.0f, 2.0f);
@@ -479,7 +503,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     {
         g.setColour(act ? aCol : juce::Colour(0xff1d232d));
         g.fillRoundedRectangle(r, 3.0f);
-        g.setColour(act ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff343e4c));
+        g.setColour(act ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4c));
         g.drawRoundedRectangle(r, 3.0f, 1.0f);
         g.setColour(act ? juce::Colours::white : juce::Colour(0xff9aa6b5));
         g.setFont(monoReg);
@@ -510,7 +534,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
         ? ("SCAN " + juce::String((int)(audioProcessor.getScanProgress() * 100.0f)) + "%")
         : (btnScanFolder.getWidth() < 142.0f ? "SCAN FOLDER" : "SCAN SAMPLE FOLDER");
     drawBtn(btnScanFolder, scanTxt,
-            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff354839));
+            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff254559));
     drawBtn(btnRefreshLibrary, "REFRESH",
             audioProcessor.isCurrentlyScanning(), juce::Colour(0xff334053));
 }
@@ -526,23 +550,38 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.drawRect(14, 46, getWidth() - 28, 48, 1);
 
     bool allOn = (selectedClustersMask == 0 && selectedMoodMask == 0);
-    g.setColour(allOn ? juce::Colour(0xff284035) : juce::Colour(0xff1d232c));
+    g.setColour(allOn ? juce::Colour(0xff25475b) : juce::Colour(0xff1d232c));
     g.fillRoundedRectangle(groupFilterRects[0], 3.0f);
-    g.setColour(allOn ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff323b48));
+    g.setColour(allOn ? juce::Colour(0xff62bfe9) : juce::Colour(0xff323b48));
     g.drawRoundedRectangle(groupFilterRects[0], 3.0f, 1.0f);
     g.setColour(allOn ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(monoBold);
     g.drawText("ALL", groupFilterRects[0], juce::Justification::centred, false);
 
-    // A small die-shaped Discover control alongside the filter choices.
-    g.setColour(juce::Colour(0xff28313f));
-    g.fillRoundedRectangle(btnDiscover, 4.0f);
-    g.setColour(juce::Colour(0xff91b6cd));
-    g.drawRoundedRectangle(btnDiscover, 4.0f, 1.0f);
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(),
-                        9.5f, juce::Font::bold));
-    g.drawText("DISCOVER", btnDiscover, juce::Justification::centred, false);
+    // Dice = a momentary ACTION, not an enabled filter. No persistent glow.
+    const bool dicePressed = diceLastClickedMs != 0u &&
+        (uint32_t)(juce::Time::getMillisecondCounter() - diceLastClickedMs)
+            < 170u;
+    const auto background = dicePressed ? juce::Colour(0xff255e82)
+        : (diceHovered ? juce::Colour(0xff263849)
+                        : juce::Colour(0xff202934));
+    g.setColour(background);
+    g.fillRoundedRectangle(btnDiscover, 5.0f);
+    g.setColour(dicePressed ? juce::Colour(0xff69c9f4)
+        : (diceHovered ? juce::Colour(0xff52758f)
+                       : juce::Colour(0xff3c4b5c)));
+    g.drawRoundedRectangle(btnDiscover, 5.0f, 1.0f);
+    auto die = btnDiscover.withSizeKeepingCentre(15.0f, 15.0f);
+    g.setColour(dicePressed ? juce::Colours::white
+                            : juce::Colour(0xffc4d7e4));
+    g.drawRoundedRectangle(die, 2.5f, 1.5f);
+    for (const auto point : {juce::Point<float>(-4.0f,-4.0f),
+                             juce::Point<float>(4.0f,-4.0f),
+                             juce::Point<float>(0.0f,0.0f),
+                             juce::Point<float>(-4.0f,4.0f),
+                             juce::Point<float>(4.0f,4.0f)})
+        g.fillEllipse(die.getCentreX() + point.x - 1.15f,
+                      die.getCentreY() + point.y - 1.15f, 2.3f, 2.3f);
 
     for (int c = 0; c < 8; ++c)
     {
@@ -611,17 +650,17 @@ void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
 
     bool isChrom = (audioProcessor.bankModeIndex.load() == (int)Atlas::BankMode::Chromatic);
 
-    g.setColour(!isChrom ? juce::Colour(0xff284035) : juce::Colour(0xff1c222b));
+    g.setColour(!isChrom ? juce::Colour(0xff25475b) : juce::Colour(0xff1c222b));
     g.fillRoundedRectangle(btnPadTriggerMode, 3.0f);
-    g.setColour(!isChrom ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff343e4d));
+    g.setColour(!isChrom ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4d));
     g.drawRoundedRectangle(btnPadTriggerMode, 3.0f, 1.0f);
     g.setColour(!isChrom ? juce::Colours::white : juce::Colour(0xff8e9aa8));
     g.setFont(monoReg);
     g.drawText("PAD TRIGGER", btnPadTriggerMode, juce::Justification::centred, false);
 
-    g.setColour(isChrom ? juce::Colour(0xff284035) : juce::Colour(0xff1c222b));
+    g.setColour(isChrom ? juce::Colour(0xff25475b) : juce::Colour(0xff1c222b));
     g.fillRoundedRectangle(btnChromaticMode, 3.0f);
-    g.setColour(isChrom ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff343e4d));
+    g.setColour(isChrom ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4d));
     g.drawRoundedRectangle(btnChromaticMode, 3.0f, 1.0f);
     g.setColour(isChrom ? juce::Colours::white : juce::Colour(0xff8e9aa8));
     g.drawText("CHROMATIC", btnChromaticMode, juce::Justification::centred, false);
@@ -636,12 +675,12 @@ void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
     g.drawRoundedRectangle(rightBankPanelRect, 4.0f, 1.0f);
 
     bool locked = audioProcessor.padSettingsLocked.load();
-    g.setColour(locked ? juce::Colour(0xff284035) : juce::Colour(0xff1e242d));
+    g.setColour(locked ? juce::Colour(0xff25475b) : juce::Colour(0xff1e242d));
     g.fillRoundedRectangle(btnLockPadsIcon, 3.5f);
-    g.setColour(locked ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff36404e));
+    g.setColour(locked ? juce::Colour(0xff62bfe9) : juce::Colour(0xff36404e));
     g.drawRoundedRectangle(btnLockPadsIcon, 3.5f, 1.0f);
     drawLockVectorIcon(g, btnLockPadsIcon.reduced(10.0f, 6.0f), locked,
-                       locked ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff9aa6b5));
+                       locked ? juce::Colour(0xff62bfe9) : juce::Colour(0xff9aa6b5));
 
     g.setColour(juce::Colour(0xff1e242d));
     g.fillRoundedRectangle(btnClearAllIcon, 3.5f);
@@ -686,7 +725,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadSlot(juce::Graphics& g, int padIdx
     }
     else if (isPlayingNow)
     {
-        g.setColour(juce::Colour(0xff62f5b5));
+        g.setColour(juce::Colour(0xff71d1f5));
         g.drawRoundedRectangle(r, 3.5f, 2.0f);
     }
     else if (isSel || isDrop)
@@ -733,7 +772,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
     const juce::Font monoName(
         juce::Font::getDefaultMonospacedFontName(), 10.5f, juce::Font::plain);
 
-    g.setColour(isPlayingNow ? juce::Colour(0xff62f5b5) : juce::Colour(0xffe2eaf4));
+    g.setColour(isPlayingNow ? juce::Colour(0xff71d1f5) : juce::Colour(0xffe2eaf4));
     g.setFont(monoNote);
     g.drawText(Atlas::MusicMath::formatPadNoteAndCents(
                    rec->pitchClass, st.semitoneOffset, st.centOffset),
@@ -752,9 +791,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
 
     // Кнопка S (открывает настройки BPM-синхронизации и тона пэда)
     bool syncHighlighted = st.padSyncBpm || st.syncViewOpen;
-    g.setColour(syncHighlighted ? juce::Colour(0xff263f34) : juce::Colour(0xff222a35));
+    g.setColour(syncHighlighted ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
-    g.setColour(syncHighlighted ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff4a586b));
+    g.setColour(syncHighlighted ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(syncBtnZone, 2.5f, 1.0f);
     g.setColour(syncHighlighted ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::bold));
@@ -762,9 +801,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
 
     // Кнопка режима воспроизведения (One-Shot → / Loop ↻ / Reverse ←)
     bool modeActive = (st.playbackMode != Atlas::PadPlaybackMode::OneShot);
-    g.setColour(modeActive ? juce::Colour(0xff263f34) : juce::Colour(0xff222a35));
+    g.setColour(modeActive ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(playModeBtnZone, 2.5f);
-    g.setColour(modeActive ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff4a586b));
+    g.setColour(modeActive ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(playModeBtnZone, 2.5f, 1.0f);
     drawPlaybackModeIcon(g, playModeBtnZone.reduced(2.5f, 2.5f), st.playbackMode,
                          modeActive ? juce::Colours::white : juce::Colour(0xffb8c5d6));
@@ -886,9 +925,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadSyncView(
     auto drawMiniChoiceBtn = [&](juce::Rectangle<float> br,
                                  const juce::String& txt, bool on)
     {
-        g.setColour(on ? juce::Colour(0xff284035) : juce::Colour(0xff151a22));
+        g.setColour(on ? juce::Colour(0xff25475b) : juce::Colour(0xff151a22));
         g.fillRoundedRectangle(br, 2.5f);
-        g.setColour(on ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff343e4c));
+        g.setColour(on ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4c));
         g.drawRoundedRectangle(br, 2.5f, 1.0f);
         g.setColour(on ? juce::Colours::white : juce::Colour(0xff9aa6b5));
         g.setFont(monoBold);
@@ -917,9 +956,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
     drawCloseVectorIcon(g, closeBtnZone.reduced(2.5f), juce::Colour(0xff8490a0));
     drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xffe6c167));
 
-    g.setColour(st.padSyncBpm ? juce::Colour(0xff263f34) : juce::Colour(0xff222a35));
+    g.setColour(st.padSyncBpm ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
-    g.setColour(st.padSyncBpm ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff4a586b));
+    g.setColour(st.padSyncBpm ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(syncBtnZone, 2.5f, 1.0f);
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::bold));
@@ -942,7 +981,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
         {
             float norm = (float)b / (float)numBars;
             bool inside = (norm >= st.regionStart && norm <= st.regionEnd);
-            g.setColour(inside ? juce::Colour(0xff7ec8a3) : juce::Colour(0xff384352));
+            g.setColour(inside ? juce::Colour(0xff62bfe9) : juce::Colour(0xff384352));
             float barH = std::max(1.5f, peaks[b * step] * regionWaveBox.getHeight() * 0.85f);
             g.fillRect(regionWaveBox.getX() + (float)b * barW,
                        cy - barH * 0.5f,
@@ -1029,7 +1068,7 @@ void MelodicAtlasAudioProcessorEditor::drawMiniEncoder(
         valArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
                              startAngle, curAngle, true);
 
-    g.setColour(juce::Colour(0xff7ec8a3));
+    g.setColour(juce::Colour(0xff62bfe9));
     g.strokePath(valArc, juce::PathStrokeType(2.2f));
     g.setColour(juce::Colour(0xff151a22));
     g.fillEllipse(centre.x - radius * 0.82f, centre.y - radius * 0.82f,
@@ -1277,11 +1316,29 @@ void MelodicAtlasAudioProcessorEditor::drawCloseVectorIcon(
 
 void MelodicAtlasAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
 {
+    const bool hoveringDice = btnDiscover.contains(e.position);
+    if (diceHovered != hoveringDice)
+    {
+        diceHovered = hoveringDice;
+        repaint(btnDiscover.toNearestInt().expanded(3));
+    }
     updateHoverTooltip(e.position);
 }
 
 void MelodicAtlasAudioProcessorEditor::updateHoverTooltip(juce::Point<float> pt)
 {
+    if (btnDiscover.contains(pt))
+    {
+        setTooltip("Random discovery: 36 sounds from the whole library. "
+                   "Click again to reroll; ALL restores the map.");
+        return;
+    }
+    if (groupFilterRects[8].contains(pt))
+    {
+        setTooltip("Character: only measured extremes of spectral brightness "
+                   "and transient/sustain envelope.");
+        return;
+    }
     if (btnLockPadsIcon.contains(pt))
     {
         setTooltip(audioProcessor.padSettingsLocked.load()
@@ -1629,70 +1686,11 @@ void MelodicAtlasAudioProcessorEditor::showClusterSubgroupPopupMenu(
 
 void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
 {
-    // The die randomizes the filter itself, not a sample. Empty selections
-    // are valid: this is for unexpected creative searches, not guaranteed hits.
-    auto& rng = juce::Random::getSystemRandom();
-    const uint32_t flags[] = {
-        Atlas::Character_Dark, Atlas::Character_Bright,
-        Atlas::Character_Warm, Atlas::Character_Clean,
-        Atlas::Character_Noisy, Atlas::Character_Pluck,
-        Atlas::Character_Sustain, Atlas::Character_Textural
-    };
-
-    // Usually one instrument category, occasionally all or two categories.
-    selectedClustersMask = 0;
-    const int categoryMode = rng.nextInt(10);
-    if (categoryMode < 8)
-    {
-        std::vector<int> availableCategories;
-        const auto db=audioProcessor.getSampleDatabaseSnapshot();
-        if(db)
-        {
-            std::array<int,7> count{};
-            for(const auto& record:*db)
-                if(!record.hiddenFromAtlas
-                    && Atlas::AtlasDurationPolicy::isEligible(record.durationSec)
-                    && !Atlas::PercussionGate::shouldExcludeFromAtlas(record)
-                    && (int)record.identityCluster>=0
-                    && (int)record.identityCluster<7)
-                    ++count[(size_t)(int)record.identityCluster];
-            for(int c=0;c<7;++c)
-                if(count[(size_t)c]>0)availableCategories.push_back(c);
-        }
-        const int first=availableCategories.empty() ? -1 :
-            availableCategories[(size_t)rng.nextInt((int)availableCategories.size())];
-        if(first>=0) selectedClustersMask=(1u<<first);
-        if(categoryMode==7 && first>=0 && availableCategories.size()>1)
-        {
-            int other=first;
-            while(other==first)
-                other=availableCategories[(size_t)rng.nextInt(
-                    (int)availableCategories.size())];
-            selectedClustersMask|=1u<<other;
-        }
-    }
-
-    selectedClusterSubgroupBit.fill(0);
-    selectedDynamicSubgroups.fill(juce::String());
-    selectedMoodMask = 0;
-
-    // One to three independently selected qualities, with strict AND
-    // semantics. No lookup against sample contents, no relaxed matching.
-    const int qualityCount = 1 + rng.nextInt(3);
-    int selectedCount = 0;
-    while (selectedCount < qualityCount)
-    {
-        const uint32_t flag = flags[rng.nextInt(8)];
-        if ((selectedMoodMask & flag) == 0)
-        {
-            selectedMoodMask |= flag;
-            ++selectedCount;
-        }
-    }
-
-    updateDynamicLayoutRects();
-    applyCurrentFiltersToMap();
-    repaint();
+    // Independent temporary creative search: NO random filter combinations,
+    // no persistent changes to instrument/loop/character selections.
+    diceLastClickedMs = juce::Time::getMillisecondCounter();
+    mapCanvas.rollDiscovery(36);
+    repaint(btnDiscover.toNearestInt().expanded(3));
 }
 
 void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(
@@ -2135,6 +2133,15 @@ void MelodicAtlasAudioProcessorEditor::filesDropped(
 
 void MelodicAtlasAudioProcessorEditor::timerCallback()
 {
+    if (diceLastClickedMs != 0u)
+    {
+        if ((uint32_t)(juce::Time::getMillisecondCounter() -
+                       diceLastClickedMs) >= 170u)
+        {
+            diceLastClickedMs = 0u;
+        }
+        repaint(btnDiscover.toNearestInt().expanded(3));
+    }
     uint64_t currentVer = audioProcessor.databaseVersion.load();
     if (currentVer != lastSeenDbVersion)
     {

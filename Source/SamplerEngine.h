@@ -1035,8 +1035,8 @@ namespace Atlas
 
         BankMode bankMode = BankMode::Chromatic;
         float glideTimeSec = 0.0f;
-        float mapReverbAmt = 0.25f;
-        float bankReverbAmt = 0.30f;
+        float mapReverbAmt = 0.0f;
+        float bankReverbAmt = 0.0f;
         float previewPitchSemitones = 0.0f;
         TransposeQuality transposeQuality = TransposeQuality::CleanRepitch;
         float masterGainLinear = 1.0f;

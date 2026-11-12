@@ -54,15 +54,20 @@ namespace Atlas
             // Do not claim rhythmic character from aggregate activity alone.
             record.characterScores[Rhythmic] = 0.0f;
 
-            constexpr float threshold = 0.64f;
-            const uint32_t flags[] = {
-                Character_Dark, Character_Bright, Character_Warm,
-                Character_Clean, Character_Noisy, Character_Pluck,
-                Character_Sustain, Character_Textural, Character_Rhythmic
-            };
-            for (size_t i = 0; i < record.characterScores.size(); ++i)
-                if (record.characterScores[i] >= threshold)
-                    record.characterMask |= flags[i];
+            // Use only measurable EXTREMES: no vague Warm/Clean/Textural.
+            // Bright/Dark: spectral-centroid extremes (~1.8 kHz / ~600 Hz
+            // for the logarithmic brightness descriptor above).
+            // Pluck/Sustain: contrasting transient and envelope evidence.
+            // Middle/ambiguous sounds receive neither tag.
+            if (brightness >= 0.75f)
+                record.characterMask |= Character_Bright;
+            else if (brightness <= 0.25f)
+                record.characterMask |= Character_Dark;
+
+            if (transient >= 0.55f && sustain <= 0.35f)
+                record.characterMask |= Character_Pluck;
+            else if (sustain >= 0.70f && transient <= 0.35f)
+                record.characterMask |= Character_Sustain;
         }
     };
 }
