@@ -820,11 +820,11 @@ namespace Atlas
 
             if (activeMoodMask != 0)
             {
-                // Category selection ORs instrument groups; character tags
-                // independently intersect with those groups (AND).
-                // Unrescanned legacy cache entries retain the old mood tags.
+                // Character is an independent measured DSP property.
+                // Never reinterpret instrument subtype bits as Character
+                // when acoustic analysis is unavailable.
                 const uint32_t tags = rec.acoustic.valid
-                    ? rec.characterMask : rec.subMask;
+                    ? rec.characterMask : 0u;
                 const uint32_t matched = tags & activeMoodMask;
                 // Strict intersection: every selected quality must match.
                 // An empty map is an intentional and meaningful result.
