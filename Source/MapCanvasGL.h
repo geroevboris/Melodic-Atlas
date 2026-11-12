@@ -29,12 +29,14 @@ namespace Atlas
 
         void setSampleDatabase(std::shared_ptr<const std::vector<SampleRecord>> dbSnapshot)
         {
+            // Library changes invalidate temporary sample indices.
             discoveryActive = false;
+            discoveryReturning = false;
             discoveryIndices.clear();
             discoveryPositions.clear();
+            discoveryExitStartPixels.clear();
             discoveryMorph = 1.0f;
             database = std::move(dbSnapshot);
-            rebuildIslandOverlays();
             // Require complete coverage: a partial imported projection must
             // not mix neural and legacy coordinates on the same map.
             neuralMapActive = database != nullptr && !database->empty();
@@ -45,6 +47,7 @@ namespace Atlas
                         neuralMapActive = false;
                         break;
                     }
+            rebuildIslandOverlays();
             candidateOrderDirty = true;
             visibleSamplesDirty = true;
             activeSampleIndex = -1;
@@ -77,7 +80,7 @@ namespace Atlas
         // Choose random playable samples from the WHOLE library, ignoring
         // instrument, character and one-shot/loop filters. No database
         // mutation, no recomputation of neural geometry or saved state.
-        void rollDiscovery(int count = 36)
+        void rollDiscovery(int count = 200)
         {
             if (!database) return;
             std::vector<int> choices;
@@ -92,12 +95,14 @@ namespace Atlas
             }
             if (choices.empty()) return;
 
-            if (!discoveryActive)
+            if (!discoveryActive && !discoveryReturning)
             {
                 originalZoom = zoomFactor;
                 originalPan = panOffset;
             }
             discoveryActive = true;
+            discoveryReturning = false;
+            discoveryExitStartPixels.clear();
             zoomFactor = 1.0f;
             panOffset = {0.0f, 0.0f};
             auto& random = juce::Random::getSystemRandom();
@@ -109,18 +114,31 @@ namespace Atlas
             const int n = juce::jmin(count, (int)choices.size());
             discoveryIndices.assign(choices.begin(), choices.begin() + n);
             discoveryPositions.clear();
-            const float offset = random.nextFloat() *
+            // Low-discrepancy radial positions: every prefix (60, 100, 140,
+            // 180, 200) fills the cloud. Zoom reveals markers without
+            // relocating previous ones. Keep circular proportions in pixels.
+            const float visibleH = juce::jmax(1.0f,
+                (float)getHeight() - 26.0f);
+            const float visibleW = juce::jmax(1.0f, (float)getWidth());
+            const float ratio = visibleH / visibleW;
+            const float angleOffset = random.nextFloat() *
                 juce::MathConstants<float>::twoPi;
-            // Tight, non-overlapping-looking disk with no islands or
-            // implied LOW/HIGH/attack axis semantics in Discovery mode.
             for (int i = 0; i < n; ++i)
             {
-                const float r = std::sqrt((i + 0.5f) / (float)n);
-                const float angle = offset + i * 2.39996323f;
+                uint32_t index=(uint32_t)(i + 1);
+                float radical=0.0f, place=0.5f;
+                while(index>0u)
+                {
+                    radical += place*(float)(index&1u);
+                    index >>= 1u;
+                    place *= 0.5f;
+                }
+                const float radius=std::sqrt(radical);
+                const float angle=angleOffset+(float)i*2.39996323f;
                 discoveryPositions.emplace(discoveryIndices[(size_t)i],
                     juce::Point<float>(
-                        0.5f + 0.145f * r * std::cos(angle),
-                        0.5f + 0.22f * r * std::sin(angle)));
+                        0.5f + 0.30f * ratio * radius * std::cos(angle),
+                        0.5f + 0.30f * radius * std::sin(angle)));
             }
             discoveryMorph = 0.0f;
             candidateOrderDirty = true;
@@ -129,19 +147,48 @@ namespace Atlas
             repaint();
         }
 
+        // Return by dispersing the SAME visible random points to the
+        // original CLAP islands; no changes to persistent sample geometry.
         void endDiscovery()
         {
             if (!discoveryActive) return;
+            discoveryExitStartPixels.clear();
+            discoveryExitCount = discoveryVisibleCount();
+            for (int i=0; i<discoveryExitCount; ++i)
+            {
+                const int idx=discoveryIndices[(size_t)i];
+                discoveryExitStartPixels[idx]=mapToScreenForIndex(idx);
+            }
             discoveryActive = false;
-            discoveryIndices.clear();
-            discoveryPositions.clear();
+            discoveryReturning = true;
             discoveryMorph = 1.0f;
             zoomFactor = originalZoom;
             panOffset = originalPan;
-            rebuildIslandOverlays();
             candidateOrderDirty = true;
             visibleSamplesDirty = true;
+            startTimerHz(30);
             repaint();
+        }
+
+        int discoveryVisibleCount() const
+        {
+            const int pool=(int)discoveryIndices.size();
+            if(pool==0)return 0;
+            // 60 at 1x, 100 at 1.5x, 140 at 2x, 180 at 3x, 200 at 4x+.
+            static constexpr float levels[]={1.0f,1.5f,2.0f,3.0f,4.0f};
+            static constexpr int counts[]={60,100,140,180,200};
+            int shown=200;
+            if(zoomFactor<=levels[0])shown=counts[0];
+            else for(int i=1;i<5;++i)
+                if(zoomFactor<=levels[i])
+                {
+                    const float alpha=(zoomFactor-levels[i-1])
+                        /(levels[i]-levels[i-1]);
+                    shown=juce::roundToInt(juce::jmap(alpha,
+                        (float)counts[i-1],(float)counts[i]));
+                    break;
+                }
+            return juce::jmin(pool,shown);
         }
 
         void showParameterValue(const juce::String& message)
@@ -196,7 +243,7 @@ namespace Atlas
             g.setFont(juce::Font(
                 juce::Font::getDefaultMonospacedFontName(),
                 9.0f, juce::Font::plain));
-            if (!discoveryActive)
+            if (!discoveryActive && !discoveryReturning)
             {
                 // X = musical register; Y = CLAP similarity, NOT attack.
                 g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
@@ -222,7 +269,7 @@ namespace Atlas
             if (database != nullptr)
             {
                 ensureVisibleSamples();
-                if (!discoveryActive)
+                if (!discoveryActive && !discoveryReturning)
                     drawSoundIslands(g);
                 for (int i : visibleSampleIndices)
                 {
@@ -472,6 +519,23 @@ namespace Atlas
                 active = discoveryMorph < 1.0f || active;
                 repaint();
             }
+            if (discoveryReturning)
+            {
+                discoveryMorph = juce::jmax(0.0f, discoveryMorph - 0.10f);
+                if (discoveryMorph <= 0.0f)
+                {
+                    discoveryReturning = false;
+                    discoveryIndices.clear();
+                    discoveryPositions.clear();
+                    discoveryExitStartPixels.clear();
+                    discoveryExitCount = 0;
+                    candidateOrderDirty = true;
+                    visibleSamplesDirty = true;
+                    rebuildIslandOverlays();
+                }
+                else active = true;
+                repaint();
+            }
             if (temporaryParameterText.isNotEmpty())
             {
                 if ((int32_t)(juce::Time::getMillisecondCounter()
@@ -500,10 +564,11 @@ namespace Atlas
                     continue;
                 auto& island = islandOverlays[(size_t)rec.visualIslandGroup];
                 island.islandId = rec.visualIslandGroup;
-                island.points.push_back({rec.neuralMapX, rec.neuralMapY});
+                const auto position=effectiveMapCoordinates(rec);
+                island.points.push_back(position);
                 ++island.count;
-                island.centreX += rec.neuralMapX;
-                island.centreY += rec.neuralMapY;
+                island.centreX += position.x;
+                island.centreY += position.y;
                 if (island.colourGroup < 0)
                 {
                     island.colourGroup = rec.colourGroup;
@@ -637,11 +702,15 @@ namespace Atlas
             // Stable musical register, low to high from left to right.
             // Colours no longer encode attack or per-sound lightness.
             g.setFont(monoSmall);
-            if (discoveryActive)
+            if (discoveryActive || discoveryReturning)
             {
                 g.setColour(juce::Colour(0xffbed3e4));
-                g.drawText("RANDOM  /  " +
-                    juce::String((int)discoveryIndices.size()) + " SOUNDS",
+                const juce::String title = discoveryReturning
+                    ? "RETURNING TO ATLAS"
+                    : ("RANDOM  /  " +
+                        juce::String(discoveryVisibleCount()) + " OF " +
+                        juce::String((int)discoveryIndices.size()) + " SOUNDS");
+                g.drawText(title,
                     14, 4, 255, 18, juce::Justification::centredLeft, false);
             }
             else
@@ -837,26 +906,48 @@ namespace Atlas
 
         juce::Point<float> effectiveMapCoordinates(const SampleRecord& rec) const
         {
-            return neuralMapActive
+            auto point=neuralMapActive
                 ? juce::Point<float>(rec.neuralMapX, rec.neuralMapY)
                 : juce::Point<float>(rec.mapX, rec.mapY);
+            // Purely visual: narrower across X, taller along Y. Apply
+            // identically to dots, island outlines, LOD and hit testing.
+            // Cached CLAP positions, semantic register and pads are intact.
+            point.x=juce::jlimit(0.0f,1.0f,
+                0.5f + 0.86f*(point.x-0.5f));
+            point.y=juce::jlimit(0.0f,1.0f,
+                0.5f + 1.38f*(point.y-0.5f));
+            return point;
         }
 
         juce::Point<float> mapToScreenForIndex(int sampleIndex) const
         {
             const auto& rec = (*database)[(size_t)sampleIndex];
+            if (discoveryReturning)
+            {
+                const auto it=discoveryExitStartPixels.find(sampleIndex);
+                if(it!=discoveryExitStartPixels.end())
+                {
+                    const float alpha=discoveryMorph*discoveryMorph*
+                        (3.0f-2.0f*discoveryMorph);
+                    const auto end=mapToScreen(rec);
+                    return {
+                        juce::jmap(alpha,end.x,it->second.x),
+                        juce::jmap(alpha,end.y,it->second.y)
+                    };
+                }
+            }
             if (discoveryActive)
             {
-                const auto it = discoveryPositions.find(sampleIndex);
-                if (it != discoveryPositions.end())
+                const auto it=discoveryPositions.find(sampleIndex);
+                if(it!=discoveryPositions.end())
                 {
-                    const auto original = effectiveMapCoordinates(rec);
-                    const auto goal = it->second;
-                    const float alpha = discoveryMorph * discoveryMorph *
-                        (3.0f - 2.0f * discoveryMorph);
+                    const auto original=effectiveMapCoordinates(rec);
+                    const auto goal=it->second;
+                    const float alpha=discoveryMorph*discoveryMorph*
+                        (3.0f-2.0f*discoveryMorph);
                     return mapToScreen(
-                        juce::jmap(alpha, original.x, goal.x),
-                        juce::jmap(alpha, original.y, goal.y));
+                        juce::jmap(alpha,original.x,goal.x),
+                        juce::jmap(alpha,original.y,goal.y));
                 }
             }
             return mapToScreen(rec);
@@ -893,9 +984,14 @@ namespace Atlas
             visibleSampleIndices.clear();
             if (database == nullptr || getWidth() <= 0 || getHeight() <= 26)
                 return;
-            if (discoveryActive)
+            if(discoveryActive || discoveryReturning)
             {
-                visibleSampleIndices = discoveryIndices;
+                const int count=discoveryReturning
+                    ? discoveryExitCount : discoveryVisibleCount();
+                visibleSampleIndices.assign(
+                    discoveryIndices.begin(),
+                    discoveryIndices.begin()+juce::jlimit(0,
+                        (int)discoveryIndices.size(),count));
                 return;
             }
 
@@ -1075,8 +1171,11 @@ namespace Atlas
 
         // UI-only temporary random discovery cloud.
         bool discoveryActive = false;
+        bool discoveryReturning = false;
+        int discoveryExitCount = 0;
         std::vector<int> discoveryIndices;
         std::unordered_map<int, juce::Point<float>> discoveryPositions;
+        std::unordered_map<int, juce::Point<float>> discoveryExitStartPixels;
         float discoveryMorph = 1.0f;
         float originalZoom = 1.0f;
         juce::Point<float> originalPan {0.0f, 0.0f};

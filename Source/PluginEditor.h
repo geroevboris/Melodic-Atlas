@@ -264,6 +264,7 @@ private:
     juce::Rectangle<float> lblKeyRect, btnKeyRoot, btnScaleType, btnPitchMode, btnTransposeQuality;
     juce::Rectangle<float> lblBpmRect, btnBpmHalf, btnBpmSync, btnBpmDouble, btnScanFolder, btnRefreshLibrary;
 
+    juce::Rectangle<float> btnRandomReturn;
     juce::Rectangle<float> btnDiscover;
     std::array<juce::Rectangle<float>, 9> groupFilterRects;
     std::array<juce::Rectangle<float>, 8> groupDropdownRects;

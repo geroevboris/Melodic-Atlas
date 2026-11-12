@@ -18,13 +18,13 @@ class Polish08Contract(unittest.TestCase):
         block = editor.split(
             "void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()")[1].split(
             "void MelodicAtlasAudioProcessorEditor::showMoodsPopupMenu(")[0]
-        self.assertIn("mapCanvas.rollDiscovery(36)",block)
+        self.assertIn("mapCanvas.rollDiscovery(200)",block)
         self.assertNotIn("selectedClustersMask",block)
         self.assertNotIn("selectedMoodMask",block)
         self.assertIn("discoveryPositions",canvas)
         self.assertIn("endDiscovery()",canvas)
         self.assertIn("if (!discoveryActive)",canvas)
-        self.assertIn("visibleSampleIndices = discoveryIndices;",canvas)
+        self.assertIn("visibleSampleIndices.assign(",canvas)
     def test_three_sizes_without_glow(self):
         canvas=read("Source/MapCanvasGL.h")
         self.assertIn("sizeGroup < 62u",canvas)

@@ -316,7 +316,10 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
     btnGlobalRedo = { hx, 8.0f, 24.0f, 24.0f }; hx += 24.0f + groupGap * 0.5f;
 
     btnOneShots = { hx, 8.0f, 76.0f, 24.0f }; hx += 80.0f;
-    btnLoops    = { hx, 8.0f, 54.0f, 24.0f }; hx += 54.0f + groupGap;
+    btnLoops    = { hx, 8.0f, 54.0f, 24.0f }; hx += 54.0f;
+    btnRandomReturn = btnOneShots.getUnion(btnLoops);
+    btnDiscover = { hx + 8.0f, 8.0f, 34.0f, 24.0f };
+    hx += 42.0f + groupGap;
 
     // Retired auto key/scale and map BPM controls.
     lblKeyRect = btnKeyRoot = btnScaleType = btnPitchMode = btnTransposeQuality = {};
@@ -414,8 +417,8 @@ void MelodicAtlasAudioProcessorEditor::updateDynamicLayoutRects()
         groupDropdownRects[(size_t)c]     = { gx + btnW - 18.0f, row1Y, 18.0f, 24.0f };
         gx += btnW + 6.0f;
     }
-    // Keep Discover next to the last filter, never on the left by ALL.
-    btnDiscover = { gx + 4.0f, row1Y, 34.0f, 24.0f };
+    // The Random dice belongs in the header beside ONE-SHOTS and LOOPS,
+    // not between instrument category filters.
 
     // One global preview Tune knob; no separate octave.
     btnOctUp = btnOctDown = octValueRect = octLabelRect = {};
@@ -527,8 +530,45 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
                        audioProcessor.canGlobalRedo()
                        ? juce::Colour(0xffdce6f2) : juce::Colour(0xff4d5866), true);
 
-    drawBtn(btnOneShots, "ONE-SHOTS", !audioProcessor.showLoopsTab.load());
-    drawBtn(btnLoops,    "LOOPS",     audioProcessor.showLoopsTab.load());
+    if (mapCanvas.isDiscoveryActive())
+    {
+        drawBtn(btnRandomReturn, "< RANDOM", true,
+                juce::Colour(0xff25475b));
+    }
+    else
+    {
+        drawBtn(btnOneShots, "ONE-SHOTS",
+                !audioProcessor.showLoopsTab.load());
+        drawBtn(btnLoops, "LOOPS",
+                audioProcessor.showLoopsTab.load());
+    }
+
+    // Dice = a momentary ACTION, not an enabled filter. No persistent glow.
+    const bool dicePressed = diceLastClickedMs != 0u &&
+        (uint32_t)(juce::Time::getMillisecondCounter() - diceLastClickedMs)
+            < 170u;
+    const auto background = dicePressed ? juce::Colour(0xff255e82)
+        : (diceHovered ? juce::Colour(0xff263849)
+                        : juce::Colour(0xff202934));
+    g.setColour(background);
+    g.fillRoundedRectangle(btnDiscover, 5.0f);
+    g.setColour(dicePressed ? juce::Colour(0xff69c9f4)
+        : (diceHovered ? juce::Colour(0xff52758f)
+                       : juce::Colour(0xff3c4b5c)));
+    g.drawRoundedRectangle(btnDiscover, 5.0f, 1.0f);
+    auto die = btnDiscover.withSizeKeepingCentre(15.0f, 15.0f);
+    g.setColour(dicePressed ? juce::Colours::white
+                            : juce::Colour(0xffc4d7e4));
+    g.drawRoundedRectangle(die, 2.5f, 1.5f);
+    for (const auto point : {juce::Point<float>(-4.0f,-4.0f),
+                             juce::Point<float>(4.0f,-4.0f),
+                             juce::Point<float>(0.0f,0.0f),
+                             juce::Point<float>(-4.0f,4.0f),
+                             juce::Point<float>(4.0f,4.0f)})
+        g.fillEllipse(die.getCentreX() + point.x - 1.15f,
+                      die.getCentreY() + point.y - 1.15f, 2.3f, 2.3f);
+
+
 
     juce::String scanTxt = audioProcessor.isCurrentlyScanning()
         ? ("SCAN " + juce::String((int)(audioProcessor.getScanProgress() * 100.0f)) + "%")
@@ -557,31 +597,6 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.setColour(allOn ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(monoBold);
     g.drawText("ALL", groupFilterRects[0], juce::Justification::centred, false);
-
-    // Dice = a momentary ACTION, not an enabled filter. No persistent glow.
-    const bool dicePressed = diceLastClickedMs != 0u &&
-        (uint32_t)(juce::Time::getMillisecondCounter() - diceLastClickedMs)
-            < 170u;
-    const auto background = dicePressed ? juce::Colour(0xff255e82)
-        : (diceHovered ? juce::Colour(0xff263849)
-                        : juce::Colour(0xff202934));
-    g.setColour(background);
-    g.fillRoundedRectangle(btnDiscover, 5.0f);
-    g.setColour(dicePressed ? juce::Colour(0xff69c9f4)
-        : (diceHovered ? juce::Colour(0xff52758f)
-                       : juce::Colour(0xff3c4b5c)));
-    g.drawRoundedRectangle(btnDiscover, 5.0f, 1.0f);
-    auto die = btnDiscover.withSizeKeepingCentre(15.0f, 15.0f);
-    g.setColour(dicePressed ? juce::Colours::white
-                            : juce::Colour(0xffc4d7e4));
-    g.drawRoundedRectangle(die, 2.5f, 1.5f);
-    for (const auto point : {juce::Point<float>(-4.0f,-4.0f),
-                             juce::Point<float>(4.0f,-4.0f),
-                             juce::Point<float>(0.0f,0.0f),
-                             juce::Point<float>(-4.0f,4.0f),
-                             juce::Point<float>(4.0f,4.0f)})
-        g.fillEllipse(die.getCentreX() + point.x - 1.15f,
-                      die.getCentreY() + point.y - 1.15f, 2.3f, 2.3f);
 
     for (int c = 0; c < 8; ++c)
     {
@@ -1329,8 +1344,8 @@ void MelodicAtlasAudioProcessorEditor::updateHoverTooltip(juce::Point<float> pt)
 {
     if (btnDiscover.contains(pt))
     {
-        setTooltip("Random discovery: 36 sounds from the whole library. "
-                   "Click again to reroll; ALL restores the map.");
+        setTooltip("Random discovery: 60 to 200 sounds from the entire library. "
+                   "Click again to reroll; < RANDOM returns to previous view.");
         return;
     }
     if (groupFilterRects[8].contains(pt))
@@ -1526,13 +1541,25 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(const juce::MouseEve
         return;
     }
 
-    if (btnOneShots.contains(pt))
+    // Dice is a third navigation mode, not an instrument filter.
+    if (btnDiscover.contains(pt))
+    {
+        discoverRandomFilter();
+        return;
+    }
+    if (mapCanvas.isDiscoveryActive() && btnRandomReturn.contains(pt))
+    {
+        mapCanvas.endDiscovery();
+        repaint();
+        return;
+    }
+    if (!mapCanvas.isDiscoveryActive() && btnOneShots.contains(pt))
     {
         audioProcessor.showLoopsTab.store(false);
         applyCurrentFiltersToMap();
         repaint();
     }
-    else if (btnLoops.contains(pt))
+    else if (!mapCanvas.isDiscoveryActive() && btnLoops.contains(pt))
     {
         audioProcessor.showLoopsTab.store(true);
         applyCurrentFiltersToMap();
@@ -1553,12 +1580,6 @@ void MelodicAtlasAudioProcessorEditor::handleTopHeaderClick(const juce::MouseEve
 void MelodicAtlasAudioProcessorEditor::handleFilterBarClick(const juce::MouseEvent& e)
 {
     auto pt = e.position;
-
-    if (btnDiscover.contains(pt))
-    {
-        discoverRandomFilter();
-        return;
-    }
 
     if (groupFilterRects[0].contains(pt))
     {
@@ -1689,7 +1710,7 @@ void MelodicAtlasAudioProcessorEditor::discoverRandomFilter()
     // Independent temporary creative search: NO random filter combinations,
     // no persistent changes to instrument/loop/character selections.
     diceLastClickedMs = juce::Time::getMillisecondCounter();
-    mapCanvas.rollDiscovery(36);
+    mapCanvas.rollDiscovery(200);
     repaint(btnDiscover.toNearestInt().expanded(3));
 }
 

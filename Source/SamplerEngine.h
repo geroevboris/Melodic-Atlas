@@ -380,10 +380,11 @@ namespace Atlas
 
             for (auto& v : voices)
             {
-                if (v.active && v.padIndex == padIdx && !v.releasing)
+                if (v.active && v.triggeredByUI && v.padIndex == padIdx
+                    && !v.releasing)
                     v.releasing = true;
             }
-            triggerPadVoice(padIdx, 60, 0.9f, 0.0f);
+            triggerPadVoice(padIdx, 60, 0.9f, 0.0f, true);
         }
 
         void releasePadFromUI(int padIdx)
@@ -391,7 +392,11 @@ namespace Atlas
             const juce::ScopedLock sl(engineLock);
             for (auto& v : voices)
             {
-                if (v.active && !v.releasing && (padIdx < 0 || v.padIndex == padIdx))
+                // Editor mouse-up/close must NEVER release a sustained
+                // MIDI-triggered note. Only voices started by mouse clicks
+                // on pad controls are released by this UI action.
+                if (v.active && v.triggeredByUI && !v.releasing
+                    && (padIdx < 0 || v.padIndex == padIdx))
                     v.releasing = true;
             }
         }
@@ -805,6 +810,7 @@ namespace Atlas
             bool active = false;
             bool inAttack = true;
             bool releasing = false;
+            bool triggeredByUI = false;
             int padIndex = -1;
             int midiNote = 60;
             float velocity = 1.0f;
@@ -893,13 +899,15 @@ namespace Atlas
         {
             for (auto& v : voices)
             {
-                if (v.active && !v.releasing && v.midiNote == midiNote)
+                if (v.active && !v.triggeredByUI && !v.releasing
+                    && v.midiNote == midiNote)
                     v.releasing = true;
             }
         }
 
         void triggerPadVoice(int padIdx, int midiNote,
-                             float velocity, float chromaticSemitoneShift)
+                             float velocity, float chromaticSemitoneShift,
+                             bool fromUI = false)
         {
             if (padIdx < 0 || padIdx >= 12)
                 return;
@@ -914,7 +922,8 @@ namespace Atlas
 
             for (auto& v : voices)
             {
-                if (v.active && v.padIndex == padIdx && v.midiNote == midiNote && !v.releasing)
+                if (v.active && v.padIndex == padIdx && v.midiNote == midiNote
+                    && v.triggeredByUI == fromUI && !v.releasing)
                     v.releasing = true;
             }
 
@@ -954,6 +963,7 @@ namespace Atlas
             chosen->active = true;
             chosen->inAttack = true;
             chosen->releasing = false;
+            chosen->triggeredByUI = fromUI;
             chosen->padIndex = padIdx;
             chosen->midiNote = midiNote;
             chosen->velocity = juce::jlimit(0.1f, 1.0f, velocity);
