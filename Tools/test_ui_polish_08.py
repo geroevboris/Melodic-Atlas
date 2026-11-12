@@ -30,7 +30,10 @@ class Polish08Contract(unittest.TestCase):
         self.assertIn("sizeGroup < 62u",canvas)
         self.assertIn("sizeGroup < 88u",canvas)
         self.assertNotIn("haloR",canvas)
-        self.assertIn("drawSoundIslands(g);",canvas)
+        # Islands must render in normal mode and fade in smoothly when
+        # returning from Random. The old unparameterized call is obsolete.
+        self.assertIn("drawSoundIslands(g, fade);",canvas)
+        self.assertIn("void drawSoundIslands(juce::Graphics& g, float opacity",canvas)
     def test_character_only_four_extremes(self):
         atlas=read("Source/AtlasTypes.h")
         # AtlasTypes has more than one switch with ClusterGroup::Other;
