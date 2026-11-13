@@ -747,7 +747,8 @@ void MelodicAtlasAudioProcessorEditor::drawPadSlot(juce::Graphics& g, int padIdx
     }
     else if (isSel || isDrop)
     {
-        g.setColour(juce::Colour(0xff96d1a4));
+        // Keep selection/drag focus warm orange; green remains the control accent.
+        g.setColour(juce::Colour(0xffe6c167));
         g.drawRoundedRectangle(r, 3.5f, 1.6f);
     }
     else
