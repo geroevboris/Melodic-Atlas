@@ -34,6 +34,35 @@ class Polish08Contract(unittest.TestCase):
         # returning from Random. The old unparameterized call is obsolete.
         self.assertIn("drawSoundIslands(g, fade);",canvas)
         self.assertIn("void drawSoundIslands(juce::Graphics& g, float opacity",canvas)
+    def test_green_accent_matches_existing_export_button(self):
+        editor=read("Source/PluginEditor.cpp")
+        header=read("Source/PluginEditor.h")
+        canvas=read("Source/MapCanvasGL.h")
+        for body in (editor,header):
+            self.assertIn("0xff96d1a4",body)
+            for old_blue in ("0xff62bfe9","0xff55b6e8",
+                             "0xff71d1f5","0xff52b8e9"):
+                self.assertNotIn(old_blue,body)
+        self.assertIn("0xff6da37b",editor)
+        self.assertIn("0xff96d1a4",canvas)
+
+    def test_stable_spectral_legend_and_clean_lower_corners(self):
+        canvas=read("Source/MapCanvasGL.h")
+        self.assertNotIn('"RANDOM  /  "',canvas)
+        self.assertNotIn('"RETURNING TO ATLAS"',canvas)
+        self.assertNotIn('"LOW FREQ"',canvas)
+        self.assertNotIn('"HIGH FREQ"',canvas)
+        overlay=canvas.split("void drawTopOverlayAndZoomControls(",1)[1]
+        self.assertIn('"LOW", "LOW-MID", "HIGH-MID", "HIGH"',overlay)
+        self.assertIn('const juce::String progress = "POINTS "',overlay)
+
+    def test_organic_islands_use_visual_not_cached_coordinates(self):
+        canvas=read("Source/MapCanvasGL.h")
+        self.assertIn("OrganicIslandCloud11::arrange(",canvas)
+        self.assertIn("AtlasPointCoverage10::pack(packedSources,",canvas)
+        self.assertNotIn("neuralMapX =",canvas)
+        self.assertNotIn("projectionX =",canvas)
+
     def test_character_only_four_extremes(self):
         atlas=read("Source/AtlasTypes.h")
         # AtlasTypes has more than one switch with ClusterGroup::Other;
