@@ -664,8 +664,13 @@ namespace Atlas
                     continue;
                 const auto pos=effectiveMapCoordinates(rec);
                 sources.push_back({pos.x,pos.y});
+                // One-shots and loops have independent island atlases:
+                // their identical group numbers must never be merged.
                 islandIds.push_back(rec.neuralMapValid
-                    ? rec.visualIslandGroup : -1);
+                    && rec.visualIslandGroup >= 0
+                    ? rec.visualIslandGroup +
+                        (rec.isLoop ? SoundIslandLayout::maxIslands : 0)
+                    : -1);
                 fileSeeds.push_back((uint32_t)
                     rec.file.getFullPathName().hashCode());
                 indices.push_back(i);
