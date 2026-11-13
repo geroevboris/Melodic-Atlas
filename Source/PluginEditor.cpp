@@ -479,6 +479,8 @@ void MelodicAtlasAudioProcessorEditor::paint(juce::Graphics& g)
     drawBankAndRightPanel(g);
 }
 
+// UI highlight palette matches the existing green Drag All button.
+// Spectral region colours remain independent in AtlasTypes.h.
 void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
 {
     const juce::Font monoBold(
@@ -491,7 +493,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     g.setColour(juce::Colour(0xff252d3a));
     g.drawHorizontalLine(40, 0.0f, (float)getWidth());
 
-    g.setColour(juce::Colour(0xff62bfe9));
+    g.setColour(juce::Colour(0xff96d1a4));
     g.drawLine(14.0f, 27.0f, 20.0f, 13.0f, 2.0f);
     g.drawLine(20.0f, 13.0f, 24.0f, 23.0f, 2.0f);
     g.drawLine(24.0f, 23.0f, 29.0f, 13.0f, 2.0f);
@@ -506,7 +508,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     {
         g.setColour(act ? aCol : juce::Colour(0xff1d232d));
         g.fillRoundedRectangle(r, 3.0f);
-        g.setColour(act ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4c));
+        g.setColour(act ? juce::Colour(0xff96d1a4) : juce::Colour(0xff343e4c));
         g.drawRoundedRectangle(r, 3.0f, 1.0f);
         g.setColour(act ? juce::Colours::white : juce::Colour(0xff9aa6b5));
         g.setFont(monoReg);
@@ -533,7 +535,7 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     if (mapCanvas.isDiscoveryActive())
     {
         drawBtn(btnRandomReturn, "< RANDOM", true,
-                juce::Colour(0xff25475b));
+                juce::Colour(0xff2d4938));
     }
     else
     {
@@ -547,18 +549,18 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
     const bool dicePressed = diceLastClickedMs != 0u &&
         (uint32_t)(juce::Time::getMillisecondCounter() - diceLastClickedMs)
             < 170u;
-    const auto background = dicePressed ? juce::Colour(0xff255e82)
-        : (diceHovered ? juce::Colour(0xff263849)
+    const auto background = dicePressed ? juce::Colour(0xff436a50)
+        : (diceHovered ? juce::Colour(0xff2c4035)
                         : juce::Colour(0xff202934));
     g.setColour(background);
     g.fillRoundedRectangle(btnDiscover, 5.0f);
-    g.setColour(dicePressed ? juce::Colour(0xff69c9f4)
-        : (diceHovered ? juce::Colour(0xff52758f)
+    g.setColour(dicePressed ? juce::Colour(0xff96d1a4)
+        : (diceHovered ? juce::Colour(0xff6da37b)
                        : juce::Colour(0xff3c4b5c)));
     g.drawRoundedRectangle(btnDiscover, 5.0f, 1.0f);
     auto die = btnDiscover.withSizeKeepingCentre(15.0f, 15.0f);
     g.setColour(dicePressed ? juce::Colours::white
-                            : juce::Colour(0xffc4d7e4));
+                            : juce::Colour(0xffc8e0ce));
     g.drawRoundedRectangle(die, 2.5f, 1.5f);
     for (const auto point : {juce::Point<float>(-4.0f,-4.0f),
                              juce::Point<float>(4.0f,-4.0f),
@@ -574,9 +576,9 @@ void MelodicAtlasAudioProcessorEditor::drawTopHeader(juce::Graphics& g)
         ? ("SCAN " + juce::String((int)(audioProcessor.getScanProgress() * 100.0f)) + "%")
         : (btnScanFolder.getWidth() < 142.0f ? "SCAN FOLDER" : "SCAN SAMPLE FOLDER");
     drawBtn(btnScanFolder, scanTxt,
-            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff254559));
+            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff2d4938));
     drawBtn(btnRefreshLibrary, "REFRESH",
-            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff334053));
+            audioProcessor.isCurrentlyScanning(), juce::Colour(0xff2d4938));
 }
 
 void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
@@ -590,9 +592,9 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
     g.drawRect(14, 46, getWidth() - 28, 48, 1);
 
     bool allOn = (selectedClustersMask == 0 && selectedMoodMask == 0);
-    g.setColour(allOn ? juce::Colour(0xff25475b) : juce::Colour(0xff1d232c));
+    g.setColour(allOn ? juce::Colour(0xff2d4938) : juce::Colour(0xff1d232c));
     g.fillRoundedRectangle(groupFilterRects[0], 3.0f);
-    g.setColour(allOn ? juce::Colour(0xff62bfe9) : juce::Colour(0xff323b48));
+    g.setColour(allOn ? juce::Colour(0xff96d1a4) : juce::Colour(0xff323b48));
     g.drawRoundedRectangle(groupFilterRects[0], 3.0f, 1.0f);
     g.setColour(allOn ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(monoBold);
@@ -630,7 +632,7 @@ void MelodicAtlasAudioProcessorEditor::drawFilterBar(juce::Graphics& g)
 
         // Instrument filter highlights stay neutral. Their colours must
         // not imply an instrument owns one of the CLAP map colour families.
-        juce::Colour col = juce::Colour(0xff92a6cd);
+        juce::Colour col = juce::Colour(0xff96d1a4);
 
         g.setColour(on ? col.withAlpha(0.32f) : juce::Colour(0xff1d232c));
         g.fillRoundedRectangle(btnR, 3.0f);
@@ -665,17 +667,17 @@ void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
 
     bool isChrom = (audioProcessor.bankModeIndex.load() == (int)Atlas::BankMode::Chromatic);
 
-    g.setColour(!isChrom ? juce::Colour(0xff25475b) : juce::Colour(0xff1c222b));
+    g.setColour(!isChrom ? juce::Colour(0xff2d4938) : juce::Colour(0xff1c222b));
     g.fillRoundedRectangle(btnPadTriggerMode, 3.0f);
-    g.setColour(!isChrom ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4d));
+    g.setColour(!isChrom ? juce::Colour(0xff96d1a4) : juce::Colour(0xff343e4d));
     g.drawRoundedRectangle(btnPadTriggerMode, 3.0f, 1.0f);
     g.setColour(!isChrom ? juce::Colours::white : juce::Colour(0xff8e9aa8));
     g.setFont(monoReg);
     g.drawText("PAD TRIGGER", btnPadTriggerMode, juce::Justification::centred, false);
 
-    g.setColour(isChrom ? juce::Colour(0xff25475b) : juce::Colour(0xff1c222b));
+    g.setColour(isChrom ? juce::Colour(0xff2d4938) : juce::Colour(0xff1c222b));
     g.fillRoundedRectangle(btnChromaticMode, 3.0f);
-    g.setColour(isChrom ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4d));
+    g.setColour(isChrom ? juce::Colour(0xff96d1a4) : juce::Colour(0xff343e4d));
     g.drawRoundedRectangle(btnChromaticMode, 3.0f, 1.0f);
     g.setColour(isChrom ? juce::Colours::white : juce::Colour(0xff8e9aa8));
     g.drawText("CHROMATIC", btnChromaticMode, juce::Justification::centred, false);
@@ -690,12 +692,12 @@ void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
     g.drawRoundedRectangle(rightBankPanelRect, 4.0f, 1.0f);
 
     bool locked = audioProcessor.padSettingsLocked.load();
-    g.setColour(locked ? juce::Colour(0xff25475b) : juce::Colour(0xff1e242d));
+    g.setColour(locked ? juce::Colour(0xff2d4938) : juce::Colour(0xff1e242d));
     g.fillRoundedRectangle(btnLockPadsIcon, 3.5f);
-    g.setColour(locked ? juce::Colour(0xff62bfe9) : juce::Colour(0xff36404e));
+    g.setColour(locked ? juce::Colour(0xff96d1a4) : juce::Colour(0xff36404e));
     g.drawRoundedRectangle(btnLockPadsIcon, 3.5f, 1.0f);
     drawLockVectorIcon(g, btnLockPadsIcon.reduced(10.0f, 6.0f), locked,
-                       locked ? juce::Colour(0xff62bfe9) : juce::Colour(0xff9aa6b5));
+                       locked ? juce::Colour(0xff96d1a4) : juce::Colour(0xff9aa6b5));
 
     g.setColour(juce::Colour(0xff1e242d));
     g.fillRoundedRectangle(btnClearAllIcon, 3.5f);
@@ -740,12 +742,12 @@ void MelodicAtlasAudioProcessorEditor::drawPadSlot(juce::Graphics& g, int padIdx
     }
     else if (isPlayingNow)
     {
-        g.setColour(juce::Colour(0xff71d1f5));
+        g.setColour(juce::Colour(0xff96d1a4));
         g.drawRoundedRectangle(r, 3.5f, 2.0f);
     }
     else if (isSel || isDrop)
     {
-        g.setColour(juce::Colour(0xffe6c167));
+        g.setColour(juce::Colour(0xff96d1a4));
         g.drawRoundedRectangle(r, 3.5f, 1.6f);
     }
     else
@@ -787,7 +789,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
     const juce::Font monoName(
         juce::Font::getDefaultMonospacedFontName(), 10.5f, juce::Font::plain);
 
-    g.setColour(isPlayingNow ? juce::Colour(0xff71d1f5) : juce::Colour(0xffe2eaf4));
+    g.setColour(isPlayingNow ? juce::Colour(0xff96d1a4) : juce::Colour(0xffe2eaf4));
     g.setFont(monoNote);
     g.drawText(Atlas::MusicMath::formatPadNoteAndCents(
                    rec->pitchClass, st.semitoneOffset, st.centOffset),
@@ -806,9 +808,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
 
     // Кнопка S (открывает настройки BPM-синхронизации и тона пэда)
     bool syncHighlighted = st.padSyncBpm || st.syncViewOpen;
-    g.setColour(syncHighlighted ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
+    g.setColour(syncHighlighted ? juce::Colour(0xff273f32) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
-    g.setColour(syncHighlighted ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
+    g.setColour(syncHighlighted ? juce::Colour(0xff96d1a4) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(syncBtnZone, 2.5f, 1.0f);
     g.setColour(syncHighlighted ? juce::Colours::white : juce::Colour(0xff9aa6b5));
     g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::bold));
@@ -816,16 +818,16 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
 
     // Кнопка режима воспроизведения (One-Shot → / Loop ↻ / Reverse ←)
     bool modeActive = (st.playbackMode != Atlas::PadPlaybackMode::OneShot);
-    g.setColour(modeActive ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
+    g.setColour(modeActive ? juce::Colour(0xff273f32) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(playModeBtnZone, 2.5f);
-    g.setColour(modeActive ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
+    g.setColour(modeActive ? juce::Colour(0xff96d1a4) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(playModeBtnZone, 2.5f, 1.0f);
     drawPlaybackModeIcon(g, playModeBtnZone.reduced(2.5f, 2.5f), st.playbackMode,
                          modeActive ? juce::Colours::white : juce::Colour(0xffb8c5d6));
 
     if (st.chromaticActive)
     {
-        g.setColour(juce::Colour(0xffffcf48));
+        g.setColour(juce::Colour(0xff96d1a4));
         g.fillEllipse(chromDotZone.reduced(3.2f));
     }
     else
@@ -925,7 +927,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadSyncView(
     drawCloseVectorIcon(g, closeBtnZone.reduced(2.5f), juce::Colour(0xff8490a0));
     drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xff9aa8b8));
 
-    g.setColour(juce::Colour(0xffe6c167));
+    g.setColour(juce::Colour(0xff96d1a4));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
     g.setColour(juce::Colour(0xff14181f));
     g.setFont(monoBold);
@@ -940,9 +942,9 @@ void MelodicAtlasAudioProcessorEditor::drawPadSyncView(
     auto drawMiniChoiceBtn = [&](juce::Rectangle<float> br,
                                  const juce::String& txt, bool on)
     {
-        g.setColour(on ? juce::Colour(0xff25475b) : juce::Colour(0xff151a22));
+        g.setColour(on ? juce::Colour(0xff2d4938) : juce::Colour(0xff151a22));
         g.fillRoundedRectangle(br, 2.5f);
-        g.setColour(on ? juce::Colour(0xff62bfe9) : juce::Colour(0xff343e4c));
+        g.setColour(on ? juce::Colour(0xff96d1a4) : juce::Colour(0xff343e4c));
         g.drawRoundedRectangle(br, 2.5f, 1.0f);
         g.setColour(on ? juce::Colours::white : juce::Colour(0xff9aa6b5));
         g.setFont(monoBold);
@@ -969,11 +971,11 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
     juce::Rectangle<float> syncBtnZone (r.getRight() - 52.0f, r.getY() + 3.0f, 15.0f, 14.0f);
 
     drawCloseVectorIcon(g, closeBtnZone.reduced(2.5f), juce::Colour(0xff8490a0));
-    drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xffe6c167));
+    drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xff96d1a4));
 
-    g.setColour(st.padSyncBpm ? juce::Colour(0xff1e3e56) : juce::Colour(0xff222a35));
+    g.setColour(st.padSyncBpm ? juce::Colour(0xff273f32) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
-    g.setColour(st.padSyncBpm ? juce::Colour(0xff62bfe9) : juce::Colour(0xff4a586b));
+    g.setColour(st.padSyncBpm ? juce::Colour(0xff96d1a4) : juce::Colour(0xff4a586b));
     g.drawRoundedRectangle(syncBtnZone, 2.5f, 1.0f);
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::bold));
@@ -996,7 +998,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
         {
             float norm = (float)b / (float)numBars;
             bool inside = (norm >= st.regionStart && norm <= st.regionEnd);
-            g.setColour(inside ? juce::Colour(0xff62bfe9) : juce::Colour(0xff384352));
+            g.setColour(inside ? juce::Colour(0xff96d1a4) : juce::Colour(0xff384352));
             float barH = std::max(1.5f, peaks[b * step] * regionWaveBox.getHeight() * 0.85f);
             g.fillRect(regionWaveBox.getX() + (float)b * barW,
                        cy - barH * 0.5f,
@@ -1007,7 +1009,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
 
     float startX = regionWaveBox.getX() + st.regionStart * regionWaveBox.getWidth();
     float endX   = regionWaveBox.getX() + st.regionEnd   * regionWaveBox.getWidth();
-    g.setColour(juce::Colour(0xffe6c167));
+    g.setColour(juce::Colour(0xff96d1a4));
     g.drawLine(startX, regionWaveBox.getY(), startX, regionWaveBox.getBottom(), 2.0f);
     g.drawLine(endX,   regionWaveBox.getY(), endX,   regionWaveBox.getBottom(), 2.0f);
 
@@ -1083,7 +1085,7 @@ void MelodicAtlasAudioProcessorEditor::drawMiniEncoder(
         valArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
                              startAngle, curAngle, true);
 
-    g.setColour(juce::Colour(0xff62bfe9));
+    g.setColour(juce::Colour(0xff96d1a4));
     g.strokePath(valArc, juce::PathStrokeType(2.2f));
     g.setColour(juce::Colour(0xff151a22));
     g.fillEllipse(centre.x - radius * 0.82f, centre.y - radius * 0.82f,
