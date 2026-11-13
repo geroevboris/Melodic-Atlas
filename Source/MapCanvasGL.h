@@ -4,6 +4,7 @@
 #include "AtlasDurationPolicy.h"
 #include "SoundIslandLayout.h"
 #include "AtlasPointCoverage10.h"
+#include "OrganicIslandCloud11.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -300,22 +301,6 @@ namespace Atlas
                 g.drawVerticalLine((int)((w / 16.0f) * (float)c), 0.0f, mapBottomY);
             for (int r = 1; r < 8; ++r)
                 g.drawHorizontalLine((int)((mapBottomY / 8.0f) * (float)r), 0.0f, w);
-
-            // In Discovery mode, central positions are intentionally random
-            // and have no spectral or envelope meaning.
-            g.setColour(juce::Colour(0xff637384).withAlpha(0.65f));
-            g.setFont(juce::Font(
-                juce::Font::getDefaultMonospacedFontName(),
-                9.0f, juce::Font::plain));
-            if (!discoveryActive && !discoveryReturning)
-            {
-                // X = musical register; Y = CLAP similarity, NOT attack.
-                g.drawText("LOW FREQ", 62, (int)mapBottomY - 21, 77, 14,
-                           juce::Justification::centredLeft, false);
-                g.drawText("HIGH FREQ", (int)w - 94,
-                           (int)mapBottomY - 21, 86, 14,
-                           juce::Justification::centredRight, false);
-            }
 
             if (crosshairAlpha > 0.01f)
             {
@@ -659,9 +644,13 @@ namespace Atlas
                 return;
             coveragePositions.resize(database->size(),
                                      {-1000.0f,-1000.0f});
-            std::vector<AtlasPointCoverage10::Point> sources;
+            std::vector<OrganicIslandCloud11::Point> sources;
+            std::vector<int> islandIds;
+            std::vector<uint32_t> fileSeeds;
             std::vector<int> indices;
             sources.reserve(database->size());
+            islandIds.reserve(database->size());
+            fileSeeds.reserve(database->size());
             indices.reserve(database->size());
             for(int i=0;i<(int)database->size();++i)
             {
@@ -675,9 +664,22 @@ namespace Atlas
                     continue;
                 const auto pos=effectiveMapCoordinates(rec);
                 sources.push_back({pos.x,pos.y});
+                islandIds.push_back(rec.neuralMapValid
+                    ? rec.visualIslandGroup : -1);
+                fileSeeds.push_back((uint32_t)
+                    rec.file.getFullPathName().hashCode());
                 indices.push_back(i);
             }
-            const auto packed=AtlasPointCoverage10::pack(sources,
+            // Visual-only: slightly bloom overly horizontal CLAP neighbourhoods.
+            // Semantic groups and cached coordinates remain untouched.
+            const auto organic=OrganicIslandCloud11::arrange(
+                sources,islandIds,fileSeeds,
+                (float)getWidth(),(float)getHeight()-26.0f);
+            std::vector<AtlasPointCoverage10::Point> packedSources;
+            packedSources.reserve(organic.size());
+            for (const auto& p:organic)
+                packedSources.push_back({p.x,p.y});
+            const auto packed=AtlasPointCoverage10::pack(packedSources,
                 (float)getWidth(),(float)getHeight()-26.0f);
             for(size_t n=0;n<indices.size();++n)
                 coveragePositions[(size_t)indices[n]]={
@@ -866,33 +868,20 @@ namespace Atlas
             // Stable musical register, low to high from left to right.
             // Colours no longer encode attack or per-sound lightness.
             g.setFont(monoSmall);
-            if (discoveryActive || discoveryReturning)
+            // The map header never changes mode: only the atlas moves.
+            static constexpr const char* names[] = {
+                "LOW", "LOW-MID", "HIGH-MID", "HIGH"
+            };
+            float lx = 12.0f;
+            for (int c = 0; c < 4; ++c)
             {
-                g.setColour(juce::Colour(0xffbed3e4));
-                const juce::String title = discoveryReturning
-                    ? "RETURNING TO ATLAS"
-                    : ("RANDOM  /  " +
-                        juce::String(discoveryVisibleCount()) + " OF " +
-                        juce::String((int)discoveryIndices.size()) + " SOUNDS");
-                g.drawText(title,
-                    14, 4, 255, 18, juce::Justification::centredLeft, false);
-            }
-            else
-            {
-                static constexpr const char* names[] = {
-                    "LOW", "LOW-MID", "HIGH-MID", "HIGH"
-                };
-                float lx = 12.0f;
-                for (int c = 0; c < 4; ++c)
-                {
-                    g.setColour(MusicMath::getSpectralRegionColour(c, -1));
-                    g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
-                    lx += 11.0f;
-                    g.setColour(juce::Colour(0xff9aa7b8));
-                    g.drawText(names[c], (int)lx, 4, 59, 18,
-                               juce::Justification::centredLeft, false);
-                    lx += 72.0f;
-                }
+                g.setColour(MusicMath::getSpectralRegionColour(c, -1));
+                g.fillEllipse(lx, 10.0f, 7.0f, 7.0f);
+                lx += 11.0f;
+                g.setColour(juce::Colour(0xff9aa7b8));
+                g.drawText(names[c], (int)lx, 4, 59, 18,
+                           juce::Justification::centredLeft, false);
+                lx += 72.0f;
             }
 
             zoomOutRect   = { w - 106.0f, 4.0f, 24.0f, 20.0f };
@@ -913,14 +902,20 @@ namespace Atlas
             drawZoomBtn(zoomOutRect,   "-");
             drawZoomBtn(zoomInRect,    "+");
             drawZoomBtn(zoomResetRect, juce::String(zoomFactor, 1) + "x");
-            if (!discoveryActive && !discoveryReturning && w > 950.0f)
+            if (w > 950.0f)
             {
-                // Honest library coverage indicator: dots currently
-                // selected by LOD vs *all* filtered sounds. Zoom to 18x
-                // to see every item, including formerly hidden overlaps.
+                // Same location and label in every mode. Count only sounds
+                // actually shown in the current normal / discovery view.
+                const int shown=discoveryActive
+                    ? discoveryVisibleCount()
+                    : (discoveryReturning
+                        ? (int)returningNormalIndices.size()
+                        : (int)visibleSampleIndices.size());
+                const int total=discoveryActive
+                    ? (int)discoveryIndices.size()
+                    : (int)sortedCandidateIndices.size();
                 const juce::String progress = "POINTS " +
-                    juce::String((int)visibleSampleIndices.size()) + " / " +
-                    juce::String((int)sortedCandidateIndices.size());
+                    juce::String(shown) + " / " + juce::String(total);
                 g.setColour(juce::Colour(0xff8c9dab));
                 g.drawText(progress,(int)w-355,4,240,20,
                            juce::Justification::centredRight,true);
@@ -972,7 +967,7 @@ namespace Atlas
 
             if (temporaryParameterText.isNotEmpty())
             {
-                g.setColour(juce::Colour(0xff65c5ef));
+                g.setColour(juce::Colour(0xff96d1a4));
                 g.setFont(juce::Font(juce::Font::getDefaultSansSerifFontName(),
                                     12.0f, juce::Font::bold));
                 g.drawText(temporaryParameterText,
