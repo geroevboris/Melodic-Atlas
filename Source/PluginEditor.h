@@ -17,7 +17,7 @@ namespace Atlas
             setColour(juce::PopupMenu::textColourId,
                       juce::Colour(0xffe5edf5));
             setColour(juce::PopupMenu::highlightedBackgroundColourId,
-                      juce::Colour(0xff294862));
+                      juce::Colour(0xff2d4938));
             setColour(juce::PopupMenu::highlightedTextColourId,
                       juce::Colours::white);
             setColour(juce::TooltipWindow::backgroundColourId,
@@ -25,7 +25,7 @@ namespace Atlas
             setColour(juce::TooltipWindow::textColourId,
                       juce::Colour(0xffe2eaf4));
             setColour(juce::TooltipWindow::outlineColourId,
-                      juce::Colour(0xff52b8e9));
+                      juce::Colour(0xff96d1a4));
         }
 
         juce::Font getPopupMenuFont() override
@@ -40,7 +40,7 @@ namespace Atlas
             g.fillAll(juce::Colour(0xff19212c));
             g.setColour(juce::Colour(0xff35495c));
             g.drawRect(0, 0, width, height, 1);
-            g.setColour(juce::Colour(0xff438fc2).withAlpha(0.55f));
+            g.setColour(juce::Colour(0xff6da37b).withAlpha(0.55f));
             g.drawHorizontalLine(0, 1.0f, (float)(width - 1));
         }
 
@@ -78,7 +78,7 @@ namespace Atlas
                     valArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
                                          0.0f, std::min(midAngle, toAngle),
                                          std::max(midAngle, toAngle), true);
-                    g.setColour(juce::Colour(0xff55b6e8));
+                    g.setColour(juce::Colour(0xff96d1a4));
                     g.strokePath(valArc, juce::PathStrokeType(
                         2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
                 }
@@ -88,7 +88,7 @@ namespace Atlas
                 juce::Path valArc;
                 valArc.addCentredArc(centreX, centreY, radius + 2.5f, radius + 2.5f,
                                      0.0f, rotaryStartAngle, toAngle, true);
-                g.setColour(juce::Colour(0xff55b6e8));
+                g.setColour(juce::Colour(0xff96d1a4));
                 g.strokePath(valArc, juce::PathStrokeType(
                     2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
