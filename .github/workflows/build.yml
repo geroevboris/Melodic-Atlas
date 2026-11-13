@@ -65,6 +65,10 @@ jobs:
           python -m unittest discover -s Tools -p 'test_map_coverage_10.py' -v
           c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_point_coverage_10.cpp -o /tmp/atlas-full-coverage-10
           /tmp/atlas-full-coverage-10
+      - name: Verify view-only organic island geometry
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_organic_island_cloud_11.cpp -o /tmp/atlas-organic-island-11
+          /tmp/atlas-organic-island-11
 
   build:
     strategy:
