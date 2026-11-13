@@ -81,9 +81,9 @@ struct OrganicIslandCloud11
                 (ratio-1.45f)/2.5f));
             if(strength<0.02f)continue;
 
-            const float xGain=1.0f-0.30f*strength;
-            const float yGain=1.0f+1.7f*strength;
-            const float bloom=std::min(32.0f,std::max(9.0f,0.50f*spreadX))*strength;
+            const float xGain=1.0f-0.38f*strength;
+            const float yGain=1.0f+2.0f*strength;
+            const float bloom=std::min(50.0f,std::max(12.0f,0.72f*spreadX))*strength;
             const float phase=6.28318530718f*unit((uint32_t)entry.first*53u+943u);
             double newSumX=0.0, newSumY=0.0;
             for(const auto idx:member)
@@ -99,8 +99,8 @@ struct OrganicIslandCloud11
                 const float coherent=0.58f*std::sin(u*1.65f+phase)
                     +0.31f*std::sin(u*3.05f+phase*0.63f);
                 const float bx=centreX+(xGain*dx+0.23f*bloom*r*std::cos(a))/scaleX;
-                const float by=centreY+(yGain*dy+bloom*(0.52f*coherent
-                    +0.88f*r*std::sin(a)))/scaleY;
+                const float by=centreY+(yGain*dy+bloom*(0.75f*coherent
+                    +1.00f*r*std::sin(a)))/scaleY;
                 result[idx] = {bx,by};
                 newSumX += bx;
                 newSumY += by;
