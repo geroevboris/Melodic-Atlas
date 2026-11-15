@@ -828,7 +828,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadNormalView(
 
     if (st.chromaticActive)
     {
-        g.setColour(juce::Colour(0xff96d1a4));
+        g.setColour(juce::Colour(0xffffcf48));
         g.fillEllipse(chromDotZone.reduced(3.2f));
     }
     else
@@ -972,7 +972,7 @@ void MelodicAtlasAudioProcessorEditor::drawPadGearSettingsView(
     juce::Rectangle<float> syncBtnZone (r.getRight() - 52.0f, r.getY() + 3.0f, 15.0f, 14.0f);
 
     drawCloseVectorIcon(g, closeBtnZone.reduced(2.5f), juce::Colour(0xff8490a0));
-    drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xff96d1a4));
+    drawGearVectorIcon(g, gearBtnZone.reduced(2.0f), juce::Colour(0xffe6c167));
 
     g.setColour(st.padSyncBpm ? juce::Colour(0xff273f32) : juce::Colour(0xff222a35));
     g.fillRoundedRectangle(syncBtnZone, 2.5f);
