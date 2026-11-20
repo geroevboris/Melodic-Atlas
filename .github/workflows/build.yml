@@ -60,6 +60,10 @@ jobs:
         run: python -m unittest discover -s Tools -p 'test_ui_polish_08.py' -v
       - name: Verify UI-owned voices and Random zoom and return
         run: python -m unittest discover -s Tools -p 'test_navigation_09.py' -v
+      - name: Verify independent MIDI pad rows
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_pad_midi_routing_12.cpp -o /tmp/atlas-pad-midi-12
+          /tmp/atlas-pad-midi-12
       - name: Verify full-map sound coverage at maximum zoom
         run: |
           python -m unittest discover -s Tools -p 'test_map_coverage_10.py' -v
