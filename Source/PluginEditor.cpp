@@ -1388,6 +1388,9 @@ void MelodicAtlasAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
     currentPadDragAction = PadDragAction::None;
     activeDragPadIndex = -1;
     currentlyHeldPadIndex = -1;
+    padDragCopyMode = false;
+    padDragGestureActive = false;
+    hoveredDropPadIndex = -1;
 
     if (pt.y <= 42.0f)
     {
@@ -1441,16 +1444,40 @@ void MelodicAtlasAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e)
             st.sustainLvl = juce::jlimit(0.0f, 1.0f, dragStartParamValue + dy * 0.005f);
         else if (currentPadDragAction == PadDragAction::DialRelease)
             st.releaseSec = juce::jlimit(0.008f, 5.0f, dragStartParamValue + dy * 0.025f);
-        else if (currentPadDragAction == PadDragAction::DragPadToDaw &&
-                 e.position.getDistanceFrom(padDragStartPos) >= 7.0f)
+        else if (currentPadDragAction == PadDragAction::DragPadToDaw)
         {
-            audioProcessor.getSamplerEngine().releasePadFromUI(-1);
-            currentlyHeldPadIndex = -1;
-            currentPadDragAction = PadDragAction::None;
-            activeDragPadIndex = -1;
-            std::vector<int> padsToExport(selectedPads.begin(), selectedPads.end());
-            exportPadsToDaw(padsToExport);
-            return;
+            // A pad-to-pad gesture stays internal. Only leaving the pad
+            // bank starts the existing drag-to-DAW file export.
+            if (e.position.getDistanceFrom(padDragStartPos) >= 7.0f)
+                padDragGestureActive = true;
+            hoveredDropPadIndex = -1;
+            if (padDragGestureActive)
+            {
+                for (int i = 0; i < 12; ++i)
+                    if (i != activeDragPadIndex &&
+                        padRects[(size_t)i].contains(e.position))
+                    {
+                        hoveredDropPadIndex = i;
+                        break;
+                    }
+
+                const auto padGrid = padRects[0].getUnion(
+                    padRects[11]).expanded(4.0f);
+                if (!padGrid.contains(e.position))
+                {
+                    audioProcessor.getSamplerEngine().releasePadFromUI(-1);
+                    currentlyHeldPadIndex = -1;
+                    currentPadDragAction = PadDragAction::None;
+                    activeDragPadIndex = -1;
+                    hoveredDropPadIndex = -1;
+                    padDragCopyMode = false;
+                    padDragGestureActive = false;
+                    std::vector<int> padsToExport(
+                        selectedPads.begin(), selectedPads.end());
+                    exportPadsToDaw(padsToExport);
+                    return;
+                }
+            }
         }
         repaint();
         return;
@@ -1470,12 +1497,45 @@ void MelodicAtlasAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e)
     }
 }
 
-void MelodicAtlasAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
+void MelodicAtlasAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
 {
+    if (currentPadDragAction == PadDragAction::DragPadToDaw &&
+        activeDragPadIndex >= 0 &&
+        (padDragGestureActive ||
+         e.position.getDistanceFrom(padDragStartPos) >= 7.0f))
+    {
+        const int source = activeDragPadIndex;
+        for (int target = 0; target < 12; ++target)
+        {
+            if (target == source ||
+                !padRects[(size_t)target].contains(e.position))
+                continue;
+            const auto& st =
+                audioProcessor.getSamplerEngine().getPadState(source);
+            if (st.sampleIndex >= 0 && !st.fileMissing &&
+                audioProcessor.getSamplerEngine().getPadAudio(source) != nullptr)
+            {
+                audioProcessor.pushGlobalUndoState();
+                if (audioProcessor.getSamplerEngine().transferPad(
+                        source, target, padDragCopyMode))
+                {
+                    selectedPads.clear();
+                    selectedPads.insert(target);
+                    primarySelectedPad = target;
+                    audioProcessor.primarySelectedPad = target;
+                }
+            }
+            break;
+        }
+    }
+
     audioProcessor.getSamplerEngine().releasePadFromUI(-1);
     currentlyHeldPadIndex = -1;
     currentPadDragAction = PadDragAction::None;
     activeDragPadIndex = -1;
+    hoveredDropPadIndex = -1;
+    padDragCopyMode = false;
+    padDragGestureActive = false;
     repaint();
 }
 
@@ -2046,6 +2106,8 @@ void MelodicAtlasAudioProcessorEditor::handleBankAndRightPanelClick(
 
         activeDragPadIndex = i;
         currentlyHeldPadIndex = i;
+        padDragCopyMode = e.mods.isAltDown();
+        padDragGestureActive = false;
         currentPadDragAction = PadDragAction::DragPadToDaw;
         mapCanvas.selectSampleFromPad(padState.sampleIndex);
         audioProcessor.getSamplerEngine().triggerPadFromUI(i);
