@@ -1,5 +1,6 @@
 #pragma once
 #include "AtlasTypes.h"
+#include "PadMidiRouting12.h"
 #include <unordered_map>
 
 namespace Atlas
@@ -273,6 +274,59 @@ namespace Atlas
             padRecords[(size_t)padIdx] = last.record;
             padAudio[(size_t)padIdx] = loadOrGetAudio(last.record.file);
             st.fileMissing = (padAudio[(size_t)padIdx] == nullptr);
+        }
+
+        // In-bank drag and Alt-drag. A normal drag swaps occupied pads
+        // (moves into an empty pad); Alt-drag duplicates sound and settings
+        // without modifying the source. Each slot keeps its own local
+        // history and Chromatic-enabled state.
+        bool transferPad(int source, int target, bool copy)
+        {
+            if (source < 0 || source >= 12 || target < 0 ||
+                target >= 12 || source == target)
+                return false;
+
+            const juce::ScopedLock sl(engineLock);
+            const auto& from = padStates[(size_t)source];
+            if (from.sampleIndex < 0 || from.fileMissing ||
+                padAudio[(size_t)source] == nullptr)
+                return false;
+
+            saveCurrentPadToHistory(target);
+            if (!copy)
+                saveCurrentPadToHistory(source);
+
+            const auto sourceState = padStates[(size_t)source];
+            const auto targetState = padStates[(size_t)target];
+            const auto sourceRecord = padRecords[(size_t)source];
+            const auto sourceAudio = padAudio[(size_t)source];
+            const auto targetRecord = padRecords[(size_t)target];
+            const auto targetAudio = padAudio[(size_t)target];
+
+            padStates[(size_t)target] = sourceState;
+            padStates[(size_t)target].history = targetState.history;
+            padStates[(size_t)target].chromaticActive = targetState.chromaticActive;
+            padStates[(size_t)target].settingsViewOpen = false;
+            padStates[(size_t)target].syncViewOpen = false;
+            padRecords[(size_t)target] = sourceRecord;
+            padAudio[(size_t)target] = sourceAudio;
+
+            if (!copy)
+            {
+                padStates[(size_t)source] = targetState;
+                padStates[(size_t)source].history = sourceState.history;
+                padStates[(size_t)source].chromaticActive = sourceState.chromaticActive;
+                padStates[(size_t)source].settingsViewOpen = false;
+                padStates[(size_t)source].syncViewOpen = false;
+                padRecords[(size_t)source] = targetRecord;
+                padAudio[(size_t)source] = targetAudio;
+            }
+
+            for (auto& voice : voices)
+                if (voice.active &&
+                    (voice.padIndex == target || (!copy && voice.padIndex == source)))
+                    voice.releasing = true;
+            return true;
         }
 
         void clearAllPads()
@@ -857,8 +911,9 @@ namespace Atlas
         {
             if (bankMode == BankMode::PadTrigger)
             {
-                int padIdx = ((midiNote % 12) + 12) % 12;
-                triggerPadVoice(padIdx, midiNote, velocity, 0.0f);
+                const int padIdx = PadMidiRouting12::padForNote(midiNote);
+                if (padIdx >= 0)
+                    triggerPadVoice(padIdx, midiNote, velocity, 0.0f);
             }
             else
             {
