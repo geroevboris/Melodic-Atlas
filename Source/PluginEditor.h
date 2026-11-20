@@ -258,6 +258,8 @@ private:
     int activeDragPadIndex = -1;
     float dragStartParamValue = 0.0f;
     juce::Point<float> padDragStartPos;
+    bool padDragCopyMode = false;
+    bool padDragGestureActive = false;
 
     juce::Rectangle<float> btnGlobalUndo, btnGlobalRedo;
     juce::Rectangle<float> btnOneShots, btnLoops;
