@@ -43,6 +43,18 @@ class Navigation09(unittest.TestCase):
         self.assertIn("padStates[(size_t)target].history = targetState.history;",engine)
         self.assertIn("padStates[(size_t)target].chromaticActive = targetState.chromaticActive;",engine)
 
+    def test_history_right_click_uses_existing_pad_assignment(self):
+        canvas=source("MapCanvasGL.h")
+        editor=source("PluginEditor.cpp")
+        history=canvas.split("if (pt.y >= mapBottomY)",1)[1].split(
+            "int hit = findNearestSample(pt, 12.0f)",1)[0]
+        self.assertIn("if (e.mods.isPopupMenu())",history)
+        self.assertIn("onSampleRightClicked(histSampleIdx);",history)
+        self.assertIn("triggerSamplePreview(histSampleIdx, false);",history)
+        # History and the main map must use exactly the same assignment callback.
+        self.assertIn("mapCanvas.onSampleRightClicked = [this](int sampleIdx)",editor)
+        self.assertIn("audioProcessor.assignSampleToPadWithPreviewSettings(",editor)
+
     def test_random_mode_header_and_restored_tabs(self):
         editor=source("PluginEditor.cpp")
         header=editor.split("void MelodicAtlasAudioProcessorEditor::drawTopHeader",1)[1].split(
