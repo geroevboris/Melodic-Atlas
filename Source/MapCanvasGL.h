@@ -449,10 +449,20 @@ namespace Atlas
                 {
                     if (historyNodeRects[i].contains(pt) && i < auditionHistory.size())
                     {
-                        int histSampleIdx = auditionHistory[i];
+                        const int histSampleIdx = auditionHistory[i];
                         activeSampleIndex = histSampleIdx;
-                        isHoldingSample = true;
-                        triggerSamplePreview(histSampleIdx, false);
+                        if (e.mods.isPopupMenu())
+                        {
+                            // Same direct pad assignment as right-click on a map dot.
+                            // Do not audition or append another History entry.
+                            if (onSampleRightClicked)
+                                onSampleRightClicked(histSampleIdx);
+                        }
+                        else
+                        {
+                            isHoldingSample = true;
+                            triggerSamplePreview(histSampleIdx, false);
+                        }
                         break;
                     }
                 }
