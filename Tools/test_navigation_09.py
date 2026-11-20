@@ -20,6 +20,29 @@ class Navigation09(unittest.TestCase):
         self.assertIn("!v.triggeredByUI && !v.releasing",engine)
         self.assertIn("releasePadFromUI(-1)",editor)
         self.assertIn("void triggerPadVoice",engine)
+    def test_two_pad_rows_have_distinct_midi_octaves(self):
+        engine=source("SamplerEngine.h")
+        routing=source("PadMidiRouting12.h")
+        self.assertIn("PadMidiRouting12::padForNote(midiNote)",engine)
+        self.assertIn("if (padIdx >= 0)",engine)
+        self.assertNotIn("((midiNote % 12) + 12) % 12",engine)
+        self.assertIn("midiNote - 60",routing)
+        self.assertIn("pitch - 6",routing)
+
+    def test_bank_move_and_alt_copy_preserve_export_drag(self):
+        editor=source("PluginEditor.cpp")
+        header=source("PluginEditor.h")
+        engine=source("SamplerEngine.h")
+        self.assertIn("padDragCopyMode = e.mods.isAltDown()",editor)
+        self.assertIn("transferPad(\n                        source, target, padDragCopyMode)",editor)
+        self.assertIn("const auto padGrid = padRects[0].getUnion(",editor)
+        self.assertIn("exportPadsToDaw(padsToExport);",editor)
+        self.assertIn("padDragGestureActive",header)
+        self.assertIn("bool transferPad(int source, int target, bool copy)",engine)
+        self.assertIn("if (!copy)",engine)
+        self.assertIn("padStates[(size_t)target].history = targetState.history;",engine)
+        self.assertIn("padStates[(size_t)target].chromaticActive = targetState.chromaticActive;",engine)
+
     def test_random_mode_header_and_restored_tabs(self):
         editor=source("PluginEditor.cpp")
         header=editor.split("void MelodicAtlasAudioProcessorEditor::drawTopHeader",1)[1].split(
