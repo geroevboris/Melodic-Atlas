@@ -10,6 +10,7 @@ plugin runtime; the resulting binaries are packaged into the plugin.
 import argparse
 import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -32,12 +33,35 @@ def fetch_verified_nuget(version: str, base: Path) -> Path:
     destination = base / package
     url = ("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/"
            f"{version}/{package}")
-    req = urllib.request.Request(url + ".sha512",
-                                 headers={"User-Agent": "MelodicAtlas-CI/8B"})
-    with urllib.request.urlopen(req, timeout=60) as response:
-        expected = base64.b64decode(response.read().strip(), validate=True)
+    # NuGet does not expose <package>.nupkg.sha512 at the public flat-container
+    # URL (that sidecar lives in the local NuGet cache). The official catalog
+    # LEAF is the published source of packageHash / packageHashAlgorithm.
+    registration = ("https://api.nuget.org/v3/registration5-semver1/"
+                    f"microsoft.ml.onnxruntime/{version}.json")
+    with urllib.request.urlopen(
+        urllib.request.Request(registration,
+            headers={"User-Agent": "MelodicAtlas-CI/8B"}), timeout=60
+    ) as response:
+        registered = json.load(response)
+    catalog_entry = registered.get("catalogEntry")
+    if isinstance(catalog_entry, dict):
+        catalog_url = catalog_entry.get("@id", "")
+    else:
+        catalog_url = catalog_entry or ""
+    if not catalog_url.startswith("https://api.nuget.org/v3/catalog"):
+        raise RuntimeError(f"Unexpected official NuGet catalog URL: {catalog_url}")
+    with urllib.request.urlopen(
+        urllib.request.Request(catalog_url,
+            headers={"User-Agent": "MelodicAtlas-CI/8B"}), timeout=60
+    ) as response:
+        catalog = json.load(response)
+    if (catalog.get("id", "").lower() != "microsoft.ml.onnxruntime"
+        or catalog.get("version") != version
+        or catalog.get("packageHashAlgorithm", "").upper() != "SHA512"):
+        raise RuntimeError("Unexpected NuGet catalog package identity or digest type")
+    expected = base64.b64decode(catalog["packageHash"], validate=True)
     if len(expected) != 64:
-        raise RuntimeError("NuGet published an invalid SHA-512 digest")
+        raise RuntimeError("NuGet catalog returned an invalid SHA-512 digest")
 
     if destination.is_file():
         with destination.open("rb") as f:
