@@ -70,6 +70,13 @@ namespace Atlas
                                float bankRev, float previewTuneSemis,
                                TransposeQuality tQuality, float masterDb)
         {
+            if (bankMode != bMode)
+            {
+                // MIDI key feedback belongs to Pad Trigger only.
+                // Never retain a lit pad after switching modes.
+                heldMidiPadNotes.fill(false);
+                pressedMidiPadsMask.store(0);
+            }
             bankMode = bMode;
             glideTimeSec = juce::jlimit(0.0f, 1.0f, glideSec);
             mapReverbAmt = juce::jlimit(0.0f, 1.0f, mapRev);
@@ -460,6 +467,13 @@ namespace Atlas
             return activePadsBitmask.load();
         }
 
+        // Note-down feedback is independent of sound voices: it also works
+        // on empty or missing-file pads while their MIDI keys are held.
+        uint32_t getPressedMidiPadsMask() const
+        {
+            return pressedMidiPadsMask.load();
+        }
+
         juce::File getPadFileForExport(int padIdx)
         {
             const juce::ScopedLock sl(engineLock);
@@ -487,6 +501,8 @@ namespace Atlas
                     handleMidiNoteOff(msg.getNoteNumber());
                 else if (msg.isAllNotesOff() || msg.isAllSoundOff())
                 {
+                    heldMidiPadNotes.fill(false);
+                    pressedMidiPadsMask.store(0);
                     for (auto& v : voices)
                         v.releasing = true;
                 }
@@ -913,7 +929,12 @@ namespace Atlas
             {
                 const int padIdx = PadMidiRouting12::padForNote(midiNote);
                 if (padIdx >= 0)
+                {
+                    // A MIDI hit is visible even when no sample is assigned.
+                    heldMidiPadNotes[(size_t)midiNote] = true;
+                    refreshPressedMidiPadsMask();
                     triggerPadVoice(padIdx, midiNote, velocity, 0.0f);
+                }
             }
             else
             {
@@ -952,12 +973,33 @@ namespace Atlas
 
         void handleMidiNoteOff(int midiNote)
         {
+            if (midiNote >= 0 && midiNote < 128 &&
+                heldMidiPadNotes[(size_t)midiNote])
+            {
+                heldMidiPadNotes[(size_t)midiNote] = false;
+                refreshPressedMidiPadsMask();
+            }
             for (auto& v : voices)
             {
                 if (v.active && !v.triggeredByUI && !v.releasing
                     && v.midiNote == midiNote)
                     v.releasing = true;
             }
+        }
+
+        void refreshPressedMidiPadsMask()
+        {
+            uint32_t pressed = 0;
+            // Several keyboard octaves can map to the same pad. Keep it
+            // lit until ALL corresponding held notes have been released.
+            for (int midi = 0; midi < 128; ++midi)
+                if (heldMidiPadNotes[(size_t)midi])
+                {
+                    const int pad = PadMidiRouting12::padForNote(midi);
+                    if (pad >= 0)
+                        pressed |= (1u << pad);
+                }
+            pressedMidiPadsMask.store(pressed);
         }
 
         void triggerPadVoice(int padIdx, int midiNote,
@@ -1117,6 +1159,8 @@ namespace Atlas
         std::array<std::shared_ptr<CachedAudioData>, 12> padAudio;
         std::array<SynthVoice, 32> voices;
         std::atomic<uint32_t> activePadsBitmask { 0 };
+        std::array<bool, 128> heldMidiPadNotes {};
+        std::atomic<uint32_t> pressedMidiPadsMask { 0 };
 
         juce::dsp::Reverb mapReverb;
         juce::dsp::Reverb bankReverb;
