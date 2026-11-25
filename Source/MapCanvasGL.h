@@ -273,6 +273,26 @@ namespace Atlas
                 return;
 
             activeSampleIndex = sampleIdx;
+
+            // Preserve the current zoom. Only move the camera when the
+            // requested pad sound is actually outside the visible viewport.
+            // The marker itself is drawn independently of semantic LOD.
+            const auto pt = mapToScreenForIndex(sampleIdx);
+            if (getWidth() > 40 && getHeight() > 65)
+            {
+                constexpr float margin = 18.0f;
+                const float right = (float)getWidth() - margin;
+                const float bottom = (float)getHeight() - 26.0f - margin;
+                if (pt.x < margin)
+                    panOffset.x += margin - pt.x;
+                else if (pt.x > right)
+                    panOffset.x += right - pt.x;
+                if (pt.y < margin + 26.0f)
+                    panOffset.y += margin + 26.0f - pt.y;
+                else if (pt.y > bottom)
+                    panOffset.y += bottom - pt.y;
+                clampPanOffset();
+            }
             repaint();
         }
 
@@ -379,6 +399,33 @@ namespace Atlas
                         .withMultipliedAlpha(dotOpacity));
                     g.fillEllipse(pt.x - radius, pt.y - radius,
                                   radius * 2.0f, radius * 2.0f);
+                }
+
+                // The selected sample must never disappear when semantic
+                // zoom omits its representative dot. Draw it LAST, above
+                // nearby dots, without changing the LOD, filters or cache.
+                if (activeSampleIndex >= 0 &&
+                    activeSampleIndex < (int)database->size())
+                {
+                    const auto pt = mapToScreenForIndex(activeSampleIndex);
+                    if (std::isfinite(pt.x) && std::isfinite(pt.y) &&
+                        pt.x >= 8.0f && pt.x <= w - 8.0f &&
+                        pt.y >= 30.0f && pt.y <= mapBottomY - 8.0f)
+                    {
+                        constexpr float radius = 3.35f;
+                        g.setColour(juce::Colour(0xff0f1319).withAlpha(0.75f));
+                        g.fillEllipse(pt.x - radius - 3.1f,
+                                      pt.y - radius - 3.1f,
+                                      2.0f * (radius + 3.1f),
+                                      2.0f * (radius + 3.1f));
+                        g.setColour(juce::Colours::white);
+                        g.drawEllipse(pt.x - radius - 2.4f,
+                                      pt.y - radius - 2.4f,
+                                      2.0f * (radius + 2.4f),
+                                      2.0f * (radius + 2.4f), 1.4f);
+                        g.fillEllipse(pt.x - radius, pt.y - radius,
+                                      radius * 2.0f, radius * 2.0f);
+                    }
                 }
             }
 
