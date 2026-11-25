@@ -682,9 +682,15 @@ void MelodicAtlasAudioProcessorEditor::drawBankAndRightPanel(juce::Graphics& g)
     g.setColour(isChrom ? juce::Colours::white : juce::Colour(0xff8e9aa8));
     g.drawText("CHROMATIC", btnChromaticMode, juce::Justification::centred, false);
 
-    uint32_t playingMask = audioProcessor.getSamplerEngine().getActivePlayingPadsMask();
+    const uint32_t playingMask =
+        audioProcessor.getSamplerEngine().getActivePlayingPadsMask();
+    const uint32_t midiDownMask =
+        audioProcessor.getSamplerEngine().getPressedMidiPadsMask();
+    // A held MIDI key lights its pad even when it has no assigned sample.
+    const uint32_t padFeedbackMask = playingMask | midiDownMask;
     for (int i = 0; i < 12; ++i)
-        drawPadSlot(g, i, padRects[(size_t)i], ((playingMask & (1u << i)) != 0));
+        drawPadSlot(g, i, padRects[(size_t)i],
+                    ((padFeedbackMask & (1u << i)) != 0));
 
     g.setColour(juce::Colour(0xff161b22));
     g.fillRoundedRectangle(rightBankPanelRect, 4.0f);
@@ -2252,8 +2258,9 @@ void MelodicAtlasAudioProcessorEditor::timerCallback()
             repaint();
     }
 
-    uint32_t currentMask =
-        audioProcessor.getSamplerEngine().getActivePlayingPadsMask();
+    const uint32_t currentMask =
+        audioProcessor.getSamplerEngine().getActivePlayingPadsMask() |
+        audioProcessor.getSamplerEngine().getPressedMidiPadsMask();
     if (currentMask != lastPlayingMask)
     {
         lastPlayingMask = currentMask;
