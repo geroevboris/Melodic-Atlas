@@ -55,6 +55,38 @@ class Navigation09(unittest.TestCase):
         self.assertIn("mapCanvas.onSampleRightClicked = [this](int sampleIdx)",editor)
         self.assertIn("audioProcessor.assignSampleToPadWithPreviewSettings(",editor)
 
+    def test_selected_pad_sample_has_independent_top_layer_highlight(self):
+        canvas=source("MapCanvasGL.h")
+        select=canvas.split("void selectSampleFromPad(int sampleIdx)",1)[1].split(
+            "std::function<void(int sampleIdx)> onSampleRightClicked",1)[0]
+        self.assertIn("activeSampleIndex = sampleIdx;",select)
+        self.assertIn("mapToScreenForIndex(sampleIdx)",select)
+        self.assertIn("clampPanOffset();",select)
+        # Selection must not rely on the semantic-zoom representative list.
+        overlay=canvas.split("// The selected sample must never disappear",1)[1].split(
+            "drawTopOverlayAndZoomControls(g, w);",1)[0]
+        self.assertIn("mapToScreenForIndex(activeSampleIndex)",overlay)
+        self.assertIn("g.drawEllipse(pt.x - radius - 2.4f",overlay)
+        self.assertIn("g.fillEllipse(pt.x - radius",overlay)
+        self.assertNotIn("visibleSampleIndices",overlay)
+
+    def test_midi_key_lights_empty_pad_and_releases_with_note_off(self):
+        engine=source("SamplerEngine.h")
+        editor=source("PluginEditor.cpp")
+        self.assertIn("getPressedMidiPadsMask() const",engine)
+        self.assertIn("heldMidiPadNotes[(size_t)midiNote] = true;",engine)
+        self.assertIn("heldMidiPadNotes[(size_t)midiNote] = false;",engine)
+        self.assertIn("heldMidiPadNotes.fill(false);",engine)
+        self.assertIn("pressedMidiPadsMask.store(0);",engine)
+        self.assertIn("refreshPressedMidiPadsMask();",engine)
+        self.assertIn("const uint32_t padFeedbackMask = playingMask | midiDownMask;",editor)
+        self.assertIn("getPressedMidiPadsMask();",editor)
+        # Held-pad feedback must occur before the sound-voice guard.
+        handler=engine.split("void handleMidiNoteOn(int midiNote",1)[1].split(
+            "void handleMidiNoteOff(int midiNote)",1)[0]
+        self.assertLess(handler.index("heldMidiPadNotes[(size_t)midiNote] = true;"),
+                        handler.index("triggerPadVoice(padIdx, midiNote"))
+
     def test_random_mode_header_and_restored_tabs(self):
         editor=source("PluginEditor.cpp")
         header=editor.split("void MelodicAtlasAudioProcessorEditor::drawTopHeader",1)[1].split(
