@@ -73,6 +73,10 @@ jobs:
         run: |
           c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_organic_island_cloud_11.cpp -o /tmp/atlas-organic-island-11
           /tmp/atlas-organic-island-11
+      - name: Verify overall colour-region blending preserves organic clouds
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_colour_region_blend_12.cpp -o /tmp/atlas-colour-blend-12
+          /tmp/atlas-colour-blend-12
 
   build:
     strategy:
