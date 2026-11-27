@@ -82,7 +82,15 @@ struct ColourRegionBlend12
                     if (gap <= -boundaryOverlap)
                         continue;
 
-                    const float move = std::min(0.012f,
+                    // Keep the low-to-high order; even a tiny colour
+                    // region must not cross the centre of its neighbour.
+                    const float centreGap =
+                        (right.centre + right.shift) -
+                        (left.centre + left.shift);
+                    const float available = std::max(0.0f,
+                        (centreGap - 0.025f) * 0.5f);
+                    const float move = std::min(
+                        std::min(0.012f, available),
                         0.31f * (gap + boundaryOverlap));
                     const float moveLeft = std::max(0.0f,
                         std::min(move, left.hi - left.shift));
