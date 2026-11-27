@@ -62,43 +62,67 @@ struct ColourRegionBlend12
 
         for (int tab = 0; tab < 2; ++tab)
         {
-            // Only neighbouring spectral colours interact. Do not collapse
-            // far-away colours or change musical low-to-high ordering.
-            for (int iteration = 0; iteration < 18; ++iteration)
+            // Work on each contiguous run of real colour regions. A missing
+            // spectral colour must not cause non-neighbouring colours to jump
+            // toward one another. Each group moves rigidly in X.
+            for (int start = tab * 4; start < tab * 4 + 4;)
             {
-                for (int colour = 0; colour < 3; ++colour)
+                while (start < tab * 4 + 4 &&
+                       !stats[(size_t)start].valid)
+                    ++start;
+                if (start >= tab * 4 + 4)
+                    break;
+                int end = start + 1;
+                while (end < tab * 4 + 4 &&
+                       stats[(size_t)end].valid &&
+                       stats[(size_t)end].centre >
+                           stats[(size_t)(end - 1)].centre)
+                    ++end;
+                if (end - start < 2)
                 {
-                    auto& left = stats[(size_t)(tab * 4 + colour)];
-                    auto& right = stats[(size_t)(tab * 4 + colour + 1)];
-                    if (!left.valid || !right.valid ||
-                        right.centre <= left.centre)
-                        continue;
-
-                    // Percentile envelopes discount isolated outlier samples.
-                    // A small negative gap gives modest natural colour mixing
-                    // where the existing clusters already come close.
-                    const float gap = (right.p05 + right.shift)
-                                    - (left.p95 + left.shift);
-                    if (gap <= -boundaryOverlap)
-                        continue;
-
-                    // Keep the low-to-high order; even a tiny colour
-                    // region must not cross the centre of its neighbour.
-                    const float centreGap =
-                        (right.centre + right.shift) -
-                        (left.centre + left.shift);
-                    const float available = std::max(0.0f,
-                        (centreGap - 0.025f) * 0.5f);
-                    const float move = std::min(
-                        std::min(0.012f, available),
-                        0.31f * (gap + boundaryOverlap));
-                    const float moveLeft = std::max(0.0f,
-                        std::min(move, left.hi - left.shift));
-                    const float moveRight = std::max(0.0f,
-                        std::min(move, right.shift - right.lo));
-                    left.shift += moveLeft;
-                    right.shift -= moveRight;
+                    start = end;
+                    continue;
                 }
+
+                std::array<float, 4> shifts {};
+                // Reduce the *gaps between whole colour bands*, not the
+                // dimensions, shapes or internal layout of any CLAP island.
+                for (int i = start + 1; i < end; ++i)
+                {
+                    const auto& left = stats[(size_t)(i - 1)];
+                    const auto& right = stats[(size_t)i];
+                    const float emptyGap = right.p05 - left.p95;
+                    const float centreGap = right.centre - left.centre;
+                    const float closing = std::min(
+                        std::min(0.11f, std::max(0.0f,
+                            emptyGap + boundaryOverlap)),
+                        std::max(0.0f, centreGap - 0.025f));
+                    shifts[(size_t)(i - start)] =
+                        shifts[(size_t)(i - start - 1)] - closing;
+                }
+
+                // Centre the contraction so the entire map does not drift
+                // left or right. Bound all shifts together to retain the
+                // intended relative distances and original spectral order.
+                float mean = 0.0f;
+                for (int i = start; i < end; ++i)
+                    mean += shifts[(size_t)(i - start)];
+                mean /= (float)(end - start);
+                float scale = 1.0f;
+                for (int i = start; i < end; ++i)
+                {
+                    const auto& r = stats[(size_t)i];
+                    const float desired = shifts[(size_t)(i - start)] - mean;
+                    if (desired > 0.0f)
+                        scale = std::min(scale, r.hi / desired);
+                    else if (desired < 0.0f)
+                        scale = std::min(scale, r.lo / desired);
+                }
+                scale = std::max(0.0f, std::min(1.0f, scale));
+                for (int i = start; i < end; ++i)
+                    stats[(size_t)i].shift =
+                        (shifts[(size_t)(i - start)] - mean) * scale;
+                start = end;
             }
         }
 
