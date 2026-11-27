@@ -5,6 +5,7 @@
 #include "SoundIslandLayout.h"
 #include "AtlasPointCoverage10.h"
 #include "OrganicIslandCloud11.h"
+#include "ColourRegionBlend12.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -704,10 +705,12 @@ namespace Atlas
             std::vector<OrganicIslandCloud11::Point> sources;
             std::vector<int> islandIds;
             std::vector<uint32_t> fileSeeds;
+            std::vector<int> colourRegions;
             std::vector<int> indices;
             sources.reserve(database->size());
             islandIds.reserve(database->size());
             fileSeeds.reserve(database->size());
+            colourRegions.reserve(database->size());
             indices.reserve(database->size());
             for(int i=0;i<(int)database->size();++i)
             {
@@ -730,6 +733,11 @@ namespace Atlas
                     : -1);
                 fileSeeds.push_back((uint32_t)
                     rec.file.getFullPathName().hashCode());
+                // The four overall atlas colours, NOT the small CLAP islands.
+                // One-shot and Loop atlases converge independently.
+                colourRegions.push_back(rec.neuralMapValid &&
+                    rec.colourGroup >= 0 && rec.colourGroup < 4
+                    ? rec.colourGroup + (rec.isLoop ? 4 : 0) : -1);
                 indices.push_back(i);
             }
             // Visual-only: slightly bloom overly horizontal CLAP neighbourhoods.
@@ -737,9 +745,20 @@ namespace Atlas
             const auto organic=OrganicIslandCloud11::arrange(
                 sources,islandIds,fileSeeds,
                 (float)getWidth(),(float)getHeight()-26.0f);
+            // Only translate the four full-colour regions. Their organic
+            // small clouds, internal relative positions and CLAP identity
+            // stay unchanged; neighbouring colours can touch / overlap.
+            const auto joined=ColourRegionBlend12::arrange(
+                [&organic] {
+                    std::vector<ColourRegionBlend12::Point> pts;
+                    pts.reserve(organic.size());
+                    for (const auto& p : organic)
+                        pts.push_back({p.x,p.y});
+                    return pts;
+                }(), colourRegions);
             std::vector<AtlasPointCoverage10::Point> packedSources;
-            packedSources.reserve(organic.size());
-            for (const auto& p:organic)
+            packedSources.reserve(joined.size());
+            for (const auto& p:joined)
                 packedSources.push_back({p.x,p.y});
             const auto packed=AtlasPointCoverage10::pack(packedSources,
                 (float)getWidth(),(float)getHeight()-26.0f);
