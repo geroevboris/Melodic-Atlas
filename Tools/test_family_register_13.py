@@ -23,6 +23,8 @@ class FamilyRegister13(unittest.TestCase):
         self.assertIn("output[index] = {x, y, zoneForX(x)};", engine)
         self.assertIn("const bool wholeFamilyLayout =", canvas)
         self.assertIn("wholeFamilyCount > 0 && legacySplitCount == 0;", canvas)
+        self.assertIn("const bool familyRegister13 = rec.neuralMapValid", canvas)
+        self.assertIn("point.x=juce::jlimit(0.0f,1.0f,point.x);", canvas)
         self.assertIn("for (const auto& p : organic)", canvas)
         self.assertIn("ColourRegionBlend12::arrange(points, colourRegions)", canvas)
         self.assertIn("AtlasPointCoverage10::pack(packedSources,", canvas)
