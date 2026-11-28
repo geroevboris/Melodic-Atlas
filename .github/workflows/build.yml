@@ -77,6 +77,11 @@ jobs:
         run: |
           c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_colour_region_blend_12.cpp -o /tmp/atlas-colour-blend-12
           /tmp/atlas-colour-blend-12
+      - name: Verify one CLAP family per compact spectral neighbourhood
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -pedantic -ISource Tools/test_family_register_layout_13.cpp -o /tmp/atlas-family-register-13
+          /tmp/atlas-family-register-13
+          python -m unittest discover -s Tools -p 'test_family_register_13.py' -v
 
   build:
     strategy:
