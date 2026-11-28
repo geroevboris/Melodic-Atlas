@@ -1183,8 +1183,17 @@ namespace Atlas
             // Purely visual: narrower across X, taller along Y. Apply
             // identically to dots, island outlines, LOD and hit testing.
             // Cached CLAP positions, semantic register and pads are intact.
-            point.x=juce::jlimit(0.0f,1.0f,
-                0.5f + 0.86f*(point.x-0.5f));
+            // In geometry 13, X is already a musically meaningful
+            // spectral coordinate. Compressing it again would move a red
+            // family into the blue quarter without changing its colour.
+            const bool familyRegister13 = rec.neuralMapValid
+                && rec.islandGroup >= 0
+                && rec.visualIslandGroup == rec.islandGroup;
+            if (familyRegister13)
+                point.x=juce::jlimit(0.0f,1.0f,point.x);
+            else
+                point.x=juce::jlimit(0.0f,1.0f,
+                    0.5f + 0.86f*(point.x-0.5f));
             point.y=juce::jlimit(0.0f,1.0f,
                 0.5f + 1.38f*(point.y-0.5f));
             return point;
