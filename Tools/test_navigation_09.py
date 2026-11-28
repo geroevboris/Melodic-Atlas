@@ -128,6 +128,38 @@ class Navigation09(unittest.TestCase):
         self.assertNotIn("zoomFactor = originalZoom;",returning)
         self.assertNotIn("panOffset = originalPan;",returning)
 
+    def test_resize_debounces_expensive_packing_without_touching_discovery_timer(self):
+        canvas=source("MapCanvasGL.h")
+        resize=canvas.split("void resized() override",1)[1].split(
+            "void paint(juce::Graphics& g) override",1)[0]
+        self.assertIn("resizeSettleTimer.schedule();",resize)
+        self.assertIn("coveragePositions.size() != database->size()",resize)
+        self.assertIn("rebuildCoveragePositions();",resize)
+        self.assertIn("rebuildIslandOverlays();",resize)
+        self.assertIn("struct ResizeSettleTimer : private juce::Timer",canvas)
+        self.assertIn("void schedule() { startTimer(180); }",canvas)
+        self.assertIn("owner.rebuildCoveragePositions();",canvas)
+        self.assertIn("owner.rebuildIslandOverlays();",canvas)
+        self.assertIn("resizeSettleTimer.cancel();",canvas)
+        self.assertIn("void timerCallback() override",canvas)
+
+    def test_rollback_reconstructs_geometry_from_cached_clap(self):
+        layout=source("SoundIslandLayout.h")
+        processor=source("PluginProcessor.cpp")
+        self.assertIn("static constexpr int geometryVersion = 9;",layout)
+        self.assertIn("rec.visualIslandGroup = rec.islandGroup * 4 + region;",layout)
+        self.assertIn(
+            "savedMapVersion != Atlas::SoundIslandLayout::geometryVersion",
+            processor)
+        self.assertIn(
+            "migratedGeometry = Atlas::SoundIslandLayout::apply(loaded);",
+            processor)
+        self.assertIn(
+            "savedMapVersion == Atlas::SoundIslandLayout::geometryVersion",
+            processor)
+        self.assertNotIn("FamilyRegisterLayout13",layout)
+        self.assertNotIn("familyRegister13",source("MapCanvasGL.h"))
+
     def test_geometric_view_transform_not_saved_to_cache(self):
         canvas=source("MapCanvasGL.h")
         self.assertIn("0.86f*(point.x-0.5f)",canvas)
