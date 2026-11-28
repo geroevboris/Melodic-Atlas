@@ -870,12 +870,12 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         [](const Atlas::SampleRecord& rec) {
             return rec.attackAnalysisVersion >= 1;
         });
-    if (savedMapVersion < Atlas::SoundIslandLayout::geometryVersion
+    if (savedMapVersion != Atlas::SoundIslandLayout::geometryVersion
         && allNativeEmbeddings && completeNativeMap && allAttacksChecked)
     {
-        // Never refit expensive UMAP in the plugin constructor. Reuse
-        // cached native coordinates and perform only the bounded island
-        // separation; a full scan still fits fresh native geometry.
+        // This also handles a ROLLBACK from the rejected geometry 13:
+        // re-create the proven geometry 9 directly from persisted original
+        // CLAP projections. Never rescan files or refit costly UMAP.
         migratedGeometry = Atlas::SoundIslandLayout::apply(loaded);
     }
 #endif
@@ -883,7 +883,7 @@ bool MelodicAtlasAudioProcessor::loadDatabaseCacheFromDisk()
         Atlas::NeuralMapImport::apply(folderToScan, loaded);
 
     geometryVersionCurrent.store(
-        savedMapVersion >= Atlas::SoundIslandLayout::geometryVersion
+        savedMapVersion == Atlas::SoundIslandLayout::geometryVersion
         || migratedGeometry);
     {
         const juce::ScopedLock sl(dbLock);
