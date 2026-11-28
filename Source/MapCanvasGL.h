@@ -712,6 +712,7 @@ namespace Atlas
             fileSeeds.reserve(database->size());
             colourRegions.reserve(database->size());
             indices.reserve(database->size());
+            int wholeFamilyCount = 0, legacySplitCount = 0;
             for(int i=0;i<(int)database->size();++i)
             {
                 const auto& rec=(*database)[(size_t)i];
@@ -724,8 +725,16 @@ namespace Atlas
                     continue;
                 const auto pos=effectiveMapCoordinates(rec);
                 sources.push_back({pos.x,pos.y});
-                // One-shots and loops have independent island atlases:
-                // their identical group numbers must never be merged.
+                // One-shots and loops have independent atlas clouds.
+                // Geometry 13 uses one visual island per CLAP family.
+                if (rec.neuralMapValid && rec.islandGroup >= 0 &&
+                    rec.visualIslandGroup >= 0)
+                {
+                    if (rec.visualIslandGroup == rec.islandGroup)
+                        ++wholeFamilyCount;
+                    else
+                        ++legacySplitCount;
+                }
                 islandIds.push_back(rec.neuralMapValid
                     && rec.visualIslandGroup >= 0
                     ? rec.visualIslandGroup +
@@ -745,21 +754,31 @@ namespace Atlas
             const auto organic=OrganicIslandCloud11::arrange(
                 sources,islandIds,fileSeeds,
                 (float)getWidth(),(float)getHeight()-26.0f);
-            // Only translate the four full-colour regions. Their organic
-            // small clouds, internal relative positions and CLAP identity
-            // stay unchanged; neighbouring colours can touch / overlap.
-            const auto joined=ColourRegionBlend12::arrange(
-                [&organic] {
-                    std::vector<ColourRegionBlend12::Point> pts;
-                    pts.reserve(organic.size());
-                    for (const auto& p : organic)
-                        pts.push_back({p.x,p.y});
-                    return pts;
-                }(), colourRegions);
             std::vector<AtlasPointCoverage10::Point> packedSources;
-            packedSources.reserve(joined.size());
-            for (const auto& p:joined)
-                packedSources.push_back({p.x,p.y});
+            packedSources.reserve(organic.size());
+            const bool wholeFamilyLayout =
+                wholeFamilyCount > 0 && legacySplitCount == 0;
+            if (wholeFamilyLayout)
+            {
+                // Spectral family geometry has ALREADY located each whole
+                // CLAP cloud on LOW-to-HIGH X. The old four-colour blender
+                // would shear a mixed 60/40 family at the zone boundary.
+                for (const auto& p : organic)
+                    packedSources.push_back({p.x,p.y});
+            }
+            else
+            {
+                // Retain exact rendering of older saved maps when a cache
+                // is not yet eligible for a safe geometry-13 migration.
+                std::vector<ColourRegionBlend12::Point> points;
+                points.reserve(organic.size());
+                for (const auto& p : organic)
+                    points.push_back({p.x,p.y});
+                const auto joined =
+                    ColourRegionBlend12::arrange(points, colourRegions);
+                for (const auto& p : joined)
+                    packedSources.push_back({p.x,p.y});
+            }
             const auto packed=AtlasPointCoverage10::pack(packedSources,
                 (float)getWidth(),(float)getHeight()-26.0f);
             for(size_t n=0;n<indices.size();++n)
