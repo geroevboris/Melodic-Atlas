@@ -1,6 +1,7 @@
 #pragma once
 #include "AtlasTypes.h"
 #include "ClapTextPrototypeCandidate9C.h"
+#include "FamilyRegisterLayout13.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,13 +10,13 @@
 
 namespace Atlas
 {
-    // Four register zones on X; Y follows original CLAP/UMAP neighbourhood,
-    // never attack. CLAP similarity also defines island membership.
+    // Whole CLAP families follow their shared LOW-to-HIGH spectral profile.
+    // Individual register offsets are bounded; source UMAP stays cached.
     struct SoundIslandLayout
     {
         static constexpr int similarityIslands = 18;
         static constexpr int maxIslands = similarityIslands * 4;
-        static constexpr int geometryVersion = 9;
+        static constexpr int geometryVersion = 13;
 
         static float frequencyPosition(const SampleRecord& rec)
         {
@@ -134,8 +135,14 @@ namespace Atlas
     private:
         static bool applySubset(std::vector<SampleRecord>& records, bool loopMode)
         {
-            std::array<Island, maxIslands> islands {};
-            size_t eligible = 0;
+            // Audio similarity membership (0..17) is fixed by CLAP.
+            // No spectral sub-islands: each family moves as ONE cloud.
+            // Loops and One-shots are handled by separate calls.
+            std::vector<size_t> indices;
+            std::vector<FamilyRegisterLayout13::Member> members;
+            indices.reserve(records.size());
+            members.reserve(records.size());
+
             for (size_t i = 0; i < records.size(); ++i)
             {
                 auto& rec = records[i];
@@ -144,10 +151,11 @@ namespace Atlas
                     || rec.islandGroup >= similarityIslands
                     || !rec.clapEmbeddingValid || !rec.neuralMapValid)
                     continue;
-                // Build a non-destructive bass register hint from source name
-                // or strong CLAP Bass evidence. This does NOT set instrument
-                // labels or cause exclusion. Avoid generic \"future bass\" genre.
-                const auto name = rec.file.getFileNameWithoutExtension().toLowerCase();
+
+                // Keep the existing, conservatively corroborated bass
+                // hints. They influence musical register, never labels.
+                const auto name =
+                    rec.file.getFileNameWithoutExtension().toLowerCase();
                 rec.musicalBassRegisterHint =
                     name.contains("neurobass") || name.contains("reese")
                     || name.contains("subbass") || name.contains("sub bass")
@@ -155,199 +163,51 @@ namespace Atlas
                     || name.contains("bass loop") || name.contains("_bass_");
                 if (!rec.musicalBassRegisterHint && rec.clapEmbeddingValid)
                 {
-                    const auto scores = ClapTextPrototypeCandidate9C::evaluate(
-                        rec.clapEmbedding);
+                    const auto scores =
+                        ClapTextPrototypeCandidate9C::evaluate(rec.clapEmbedding);
                     rec.musicalBassRegisterHint = scores.valid
                         && scores.topFamily == 2
                         && scores.topCosine >= 0.42f
                         && scores.margin >= 0.065f;
                 }
-                // Split a broad CLAP island by musical register for stable
-                // low-left to high-right navigation.
-                const int region = spectralRegion(frequencyPosition(rec));
-                rec.visualIslandGroup = rec.islandGroup * 4 + region;
-                // First upgrade from old caches has only rendered positions.
-                // Subsequent reflows always use the saved source projection.
-                if (rec.projectionX < 0.0f || rec.projectionY < 0.0f)
+
+                // An old cache keeps the ORIGINAL source UMAP projection.
+                // Updating the visual layout never iterates on coordinates
+                // previously warped by a different geometry version.
+                if (!std::isfinite(rec.projectionX)
+                    || !std::isfinite(rec.projectionY)
+                    || rec.projectionX < 0.0f || rec.projectionY < 0.0f)
                 {
                     rec.projectionX = rec.neuralMapX;
                     rec.projectionY = rec.neuralMapY;
                 }
-                islands[(size_t)rec.visualIslandGroup].members.push_back(i);
-                ++eligible;
+
+                indices.push_back(i);
+                members.push_back({
+                    rec.islandGroup, rec.projectionX, rec.projectionY,
+                    frequencyPosition(rec)
+                });
             }
-            if (eligible == 0)
+
+            if (members.empty())
                 return false;
 
-            int active = 0;
-            for (auto& island : islands)
-                if (!island.members.empty())
-                    ++active;
+            const auto positions = FamilyRegisterLayout13::arrange(members);
+            if (positions.size() != members.size())
+                return false;
 
-            for (auto& island : islands)
+            for (size_t i = 0; i < members.size(); ++i)
             {
-                if (island.members.empty())
-                    continue;
-                std::vector<float> x, y;
-                x.reserve(island.members.size());
-                y.reserve(island.members.size());
-                island.sourceX = 0.0f;
-                island.sourceY = 0.0f;
-                for (size_t index : island.members)
-                {
-                    const auto& rec = records[index];
-                    x.push_back(frequencyPosition(rec));
-                    y.push_back(juce::jlimit(0.0f, 1.0f,
-                        rec.projectionY));
-                    island.sourceX += rec.projectionX;
-                    island.sourceY += rec.projectionY;
-                }
-                const float count = (float)island.members.size();
-                island.sourceX /= count;
-                island.sourceY /= count;
-                island.anchorX = median(x);
-                island.anchorY = median(y);
-                island.centreX = island.anchorX;
-                island.centreY = island.anchorY;
-                island.region = spectralRegion(island.anchorX);
-                // No attack shading: all points of one register hue have
-                // the same luminance and saturation.
-                island.attackShadeLevel = 1;
-
-                const float expected = (float)eligible / (float)active;
-                const float relative = count / std::max(1.0f, expected);
-                island.radius = juce::jlimit(0.022f, 0.075f,
-                    0.043f * std::sqrt(std::max(0.08f, relative)));
-                for (size_t index : island.members)
-                {
-                    const auto& rec = records[index];
-                    const float dx = rec.projectionX - island.sourceX;
-                    const float dy = rec.projectionY - island.sourceY;
-                    island.maxDistance = std::max(island.maxDistance,
-                        std::sqrt(dx * dx + dy * dy));
-                }
-            }
-
-            // Compact groups while preserving register X and CLAP-neighbour
-            // Y. Nearby islands in the same register and UMAP neighbourhood
-            // softly attract one another. Remote groups
-            // remain separate; collision forces prevent samples merging.
-            // Attraction only affects island centres, never CLAP membership.
-            for (int iteration = 0; iteration < 120 && active > 1; ++iteration)
-            {
-                std::array<juce::Point<float>, maxIslands> force {};
-                for (int a = 0; a < maxIslands; ++a)
-                {
-                    if (islands[(size_t)a].members.empty())
-                        continue;
-                    for (int b = a + 1; b < maxIslands; ++b)
-                    {
-                        if (islands[(size_t)b].members.empty())
-                            continue;
-                        const auto& left = islands[(size_t)a];
-                        const auto& right = islands[(size_t)b];
-                        const float dx = right.centreX - left.centreX;
-                        const float dy = right.centreY - left.centreY;
-                        const float dist = std::sqrt(dx * dx + dy * dy);
-                        const float required = left.radius + right.radius
-                                               + 0.006f;
-                        const float angle = (float)(a * 17 + b * 29)
-                            * 1.173f;
-                        const float nx = dist > 0.0001f
-                            ? dx / dist : std::cos(angle);
-                        const float ny = dist > 0.0001f
-                            ? dy / dist : std::sin(angle);
-                        if (dist < required)
-                        {
-                            const float push = (required - dist) * 0.41f;
-                            force[(size_t)a].x -= nx * push;
-                            force[(size_t)a].y -= ny * push;
-                            force[(size_t)b].x += nx * push;
-                            force[(size_t)b].y += ny * push;
-                        }
-                        else if (left.region == right.region
-                                 && dist < 0.24f
-                                 && std::abs(left.anchorX-right.anchorX) < 0.12f
-                                 && std::abs(left.anchorY-right.anchorY) < 0.17f)
-                        {
-                            // Gentle pull without distorting CLAP neighbours.
-                            const float pull = std::min(0.0024f,
-                                (dist-required) * 0.023f);
-                            force[(size_t)a].x += nx * pull;
-                            force[(size_t)a].y += ny * pull;
-                            force[(size_t)b].x -= nx * pull;
-                            force[(size_t)b].y -= ny * pull;
-                        }
-                    }
-                }
-                for (int i = 0; i < maxIslands; ++i)
-                {
-                    auto& island = islands[(size_t)i];
-                    if (island.members.empty())
-                        continue;
-                    const float x = island.centreX + force[(size_t)i].x
-                        + 0.055f * (island.anchorX - island.centreX);
-                    const float y = island.centreY + force[(size_t)i].y
-                        + 0.055f * (island.anchorY - island.centreY);
-                    const float bandStart = (float)island.region * 0.25f;
-                    const float bandEnd = bandStart + 0.25f;
-                    // Register-region boundaries remain stable.
-                    island.centreX = juce::jlimit(
-                        juce::jmax(bandStart + 0.024f,
-                                   island.anchorX - 0.035f),
-                        juce::jmin(bandEnd - 0.024f,
-                                   island.anchorX + 0.035f), x);
-                    island.centreY = juce::jlimit(
-                        juce::jmax(0.025f, island.anchorY - 0.055f),
-                        juce::jmin(0.975f, island.anchorY + 0.055f), y);
-                }
-            }
-
-            for (const auto& island : islands)
-            {
-                if (island.members.empty())
-                    continue;
-                const float scale = island.maxDistance > 0.00001f
-                    ? island.radius * 0.72f / island.maxDistance : 0.0f;
-                for (size_t order = 0; order < island.members.size(); ++order)
-                {
-                    auto& rec = records[island.members[order]];
-                    float dx, dy;
-                    if (scale > 0.0f)
-                    {
-                        dx = (rec.projectionX - island.sourceX) * scale;
-                        dy = (rec.projectionY - island.sourceY) * scale;
-                    }
-                    else
-                    {
-                        const float angle = 2.399963f * (float)order;
-                        const float r = island.radius * 0.28f *
-                            std::sqrt((float)(order + 1)
-                                / (float)island.members.size());
-                        dx = std::cos(angle) * r;
-                        dy = std::sin(angle) * r;
-                    }
-                    // Intra-island X respects musical register, while Y
-                    // stays determined solely by CLAP/UMAP neighbours.
-                    dx += juce::jlimit(-0.045f, 0.045f,
-                        0.45f * (frequencyPosition(rec) - island.anchorX));
-
-                    const float len = std::sqrt(dx * dx + dy * dy);
-                    const float maxR = island.radius * 0.93f;
-                    if (len > maxR)
-                    {
-                        dx *= maxR / len;
-                        dy *= maxR / len;
-                    }
-                    const float bandStart = (float)island.region * 0.25f;
-                    rec.neuralMapX = juce::jlimit(
-                        bandStart + 0.006f, bandStart + 0.244f,
-                        island.centreX + dx);
-                    rec.neuralMapY = juce::jlimit(0.0f, 1.0f,
-                                                 island.centreY + dy);
-                    rec.colourGroup = island.region;
-                    rec.attackShadeLevel = 1;
-                }
+                auto& rec = records[indices[i]];
+                const auto& pt = positions[i];
+                rec.neuralMapX = pt.x;
+                rec.neuralMapY = pt.y;
+                // The overlay now identifies a real CLAP family, not an
+                // artificial four-way register split (old 18 x 4 map).
+                rec.visualIslandGroup = rec.islandGroup;
+                // Red -> blue -> green -> gold always reflects X.
+                rec.colourGroup = pt.zone;
+                rec.attackShadeLevel = 1;
             }
             return true;
         }
